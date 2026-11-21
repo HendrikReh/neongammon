@@ -77,6 +77,33 @@ received over a network. For batches, use processes and independent seeds;
 avoid sharing mutable analyzers concurrently. In Sage Pro use Research's paced
 worker jobs rather than running large batches inside the API process.
 
+## Opponent difficulty
+
+Use a `DifficultyPolicy` in either player slot. The four presets in order of
+increasing strength are `beginner`, `casual`, `intermediate`, and
+`full_strength`. The `Difficulty` enum provides the same values. Use a fresh
+policy per player and match to replay its choices with the same seed.
+
+```python
+from neongammon import Difficulty, DifficultyPolicy, simulate_match
+
+match = simulate_match(
+    match_length=5,
+    seed=42,
+    players=(
+        DifficultyPolicy(Difficulty.BEGINNER, seed=101),
+        DifficultyPolicy(Difficulty.FULL_STRENGTH, seed=102),
+    ),
+)
+```
+
+A policy can also make decisions for an interactive opponent through
+`select_checker_move` and `cube_decision`. Its cube result's `should_double`
+and `should_take` are the policy choices. The equities and optimal action
+describe the underlying analyzer's recommendation. Use `BgBotAnalyzer` for
+reviewing the player's decisions. See the [five-point difficulty benchmark](MODEL_BENCHMARKS.md#five-point-difficulty-profiles)
+for measured PR and match conditions.
+
 ## PureTD checker policy
 
 `simulate_game()` uses PureTD with one opponent reply and a 0.075 equity

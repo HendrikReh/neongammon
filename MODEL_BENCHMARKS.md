@@ -173,6 +173,77 @@ N decisions: 1,145 purerace, 1,247 racing, 1,516 attacking, 848 priming, 1,570 a
 
 Scripts: `python/generate_benchmark_pr.py`, `python/score_benchmark_pr.py`
 
+## Five-point difficulty profiles
+
+The [opponent presets](SIMULATION.md#opponent-difficulty) use cubeful Stage 11.
+Beginner, Casual, and Intermediate sample from 1-ply decisions. Full Strength
+plays the 2-ply recommendation.
+
+| Preset | Checker loss limit | Checker temperature | Cube loss limit | Cube temperature | Expected fit PR |
+|--------|-------------------:|--------------------:|----------------:|-----------------:|----------------:|
+| Beginner | 0.160 | 0.500 | 0.060 | 0.025 | 20.45 |
+| Casual | 0.120 | 0.500 | 0.040 | 0.016 | 15.01 |
+| Intermediate | 0.080 | 0.072 | 0.025 | 0.009 | 7.89 |
+
+The fit uses 18,097 decisions from the archived 130-match benchmark and its
+stored 3-ply, truncated rollout, and full rollout evaluations. The checker
+temperature controls how strongly the selection favors lower estimated losses
+inside the preset's limit. The initial targets were 25, 15, and 8 PR. With the
+Beginner limits and cube temperature fixed, equal weights for all eligible
+checker moves gave 21.79 expected PR on the archive. The fitted preset retains
+the limits and gives better moves higher weight.
+
+The validation plays fresh matches, alternates the preset's side, and re-scores
+a uniform sample of turns with Stage 11 at 3-ply. It uses the actual match
+score and Cube context at each decision. An offered double counts. A forced
+or trivial checker play and a Take/Pass tie within 0.001 are excluded. PR pools
+equity lost across the counted decisions, multiplies by 500, and divides by
+the number of decisions. The 95% intervals bootstrap complete matches. A
+blunder means a measured equity loss above 0.08. The limits in the preset
+table apply to the bot's own estimate, so the reference can measure a larger
+loss.
+
+### Live results against Full Strength
+
+Measured on Apple M4 Pro with 100 matches per preset and 22% turn sampling.
+
+| Preset | PR | 95% interval | Counted decisions | Blunders | Match wins |
+|--------|---:|-------------:|------------------:|---------:|-----------:|
+| Beginner | 20.95 | 19.34–22.63 | 1,235 | 303 (24.5%) | 10/100 |
+| Casual | 14.44 | 13.21–15.75 | 1,303 | 189 (14.5%) | 20/100 |
+| Intermediate | 7.43 | 6.62–8.32 | 1,311 | 46 (3.5%) | 32/100 |
+| Full Strength | 0.87 | 0.70–1.05 | 1,406 | 2 (0.1%) | 46/100 |
+
+Checker PR was 23.06 for Beginner, 16.07 for Casual, 8.06 for Intermediate,
+and 0.79 for Full Strength. Of Beginner's 303 blunders, 302 came from checker
+play. Casual and Intermediate met the two-PR tolerance against Full Strength.
+Beginner measured roughly 21 PR with its configured loss limits.
+
+### Live results against Casual
+
+The second opponent used 60 matches per preset, new dice seeds, and 25% turn
+sampling with the same 3-ply reference.
+
+| Preset | PR | 95% interval | Counted decisions | Blunders | Match wins |
+|--------|---:|-------------:|------------------:|---------:|-----------:|
+| Beginner | 21.62 | 19.77–23.46 | 942 | 213 (22.6%) | 23/60 |
+| Casual | 16.07 | 14.37–17.88 | 960 | 162 (16.9%) | 25/60 |
+| Intermediate | 8.45 | 7.27–9.61 | 1,011 | 56 (5.5%) | 42/60 |
+| Full Strength | 1.09 | 0.81–1.41 | 980 | 2 (0.2%) | 43/60 |
+
+Both opponents produced the same ordering. Casual and Intermediate were within
+two PR of their targets in both comparisons.
+
+To reproduce the fit and validation from the repository root with the built
+extension on the Python path, run the following commands.
+
+```sh
+export PYTHONPATH=build:python
+python scripts/calibrate_difficulty.py fit
+python scripts/calibrate_difficulty.py validate --matches 100 --seed 700000 --sample .22
+python scripts/calibrate_difficulty.py validate --matches 60 --seed 710000 --sample .25 --opponent casual
+```
+
 ## Multi-Ply Results (Stage 3 weights, 24 threads, AVX2)
 
 | Metric | 1-ply | 2-ply (TINY) | 3-ply (TINY) |
