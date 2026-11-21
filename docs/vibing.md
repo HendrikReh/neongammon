@@ -1,8 +1,10 @@
 # Working with AI Agent Coding Tools
 
+> **Note:** The first section below is upstream author Mark Higgins's original essay from [markbgsage/bgsage](https://github.com/markbgsage/bgsage) (February 2026), preserved as project background. This Apple Silicon fork lives at [HendrikReh/neongammon](https://github.com/HendrikReh/neongammon).
+
 ## My Experience (February 2026)
 
-I used Claude Code, mostly with Opus 4.6, to write almost all the code in this project. It was a startling experience, and the first time that I built something really without much looking at the code. I gave it example code from an earlier personal bot project (that did not work very well!), a link to my old blog from when I tried to learn about neural networks by building a bot (compgammon.blotspot.com), and asked it to build an optimzed C++-based backgammon bot with a Python interface.
+I used Claude Code, mostly with Opus 4.6, to write almost all the code in this project. It was a startling experience, and the first time that I built something really without much looking at the code. I gave it example code from an earlier personal bot project (that did not work very well!), a link to my old blog from when I tried to learn about neural networks by building a bot (compgammon.blotspot.com), and asked it to build an optimized C++-based backgammon bot with a Python interface.
 
 I gave it clear benchmarks for training the cubeless bot: the GNUBG Contact and Race benchmark scores, which I knew from my earlier project were well correlated with playing performance. And I gave it specific examples where I knew what the bot outputs should be, so it could test against those. Just four or five, though.
 
@@ -22,16 +24,16 @@ First, download the Claude desktop application to your computer. This applicatio
 
 Next, download git to your computer, if you have not already. Ask an AI how to do it if you're not sure. git is a tool to manage different versions of code, so you can always walk back and attribute changes. We'll use it to download the code.
 
-Next, check out the markbgsage/bgsage git repository from github.com. If you do not know how to do this (like I do not), create a new folder (called neongammon) wherever you like on your computer, then run Claude Code and connect to that folder. Choose the Code tab at the top, then ask Claude Code to check out that repository, just like "check out the repository markbgsage/bgsage from github.com". It'll walk you through how to do it.
+Next, check out the [HendrikReh/neongammon](https://github.com/HendrikReh/neongammon) git repository from github.com. If you do not know how to do this, create a new folder (called `neongammon`) wherever you like on your computer, then run Claude Code and connect to that folder. Choose the Code tab at the top, then ask Claude Code to check out that repository, just like "check out the repository HendrikReh/neongammon from github.com". It'll walk you through how to do it.
 
-Now you've got all the files you need on your computer. There's a file called CLAUDE.md that has the context that Claude Code uses each time it starts a session - that acts like a memory for the project. It also has all the source code in various subdirectories.
+Now you've got all the files you need on your computer. There's a file called [CLAUDE.md](../CLAUDE.md) (mirrored by [AGENTS.md](../AGENTS.md)) that has the context that coding agents load at the start of a session — acting like a map and set of guardrails for the project, with deeper references under `docs/` and root spec files. It also has all the source code in various subdirectories.
 
 How do you do stuff with it? You just ask at the chat prompt (in the Code tab of the Claude app), in regular English. Like "run a contact benchmark on the best cubeless strategy so far", and it'll generate the code to run that benchmark calculation, then run it. Or, "I want to try out a different algorithm for game plan classification [describe it], then train a new strategy that has one neural network per each category in my new classification, and see if it performs better than the current best strategy." Or, "I've found a new best strategy - change the library so that evaluations use it."
 
 You can also write your own code that uses the library as a component - ask Claude Code what the specific interfaces are for things like checker play and cube action analytics. Then ask it to write whatever other code you want that ends up calling those interfaces. 
 
-This library is released under an open source license, the Mozilla Public License 2.0 (see the LICENSE file for details). You can use it commercially, including inside a closed-source product, and your own code stays yours - the license doesn't reach it. What it does ask is that if you change one of *our* files and then ship it, you publish that file's source under the same license, so the improvement comes back to everyone. The trained model weights are covered on exactly the same terms, so you're free to ship those too. And if you're just using it yourself and not distributing anything, there's nothing to worry about at all: make whatever changes you like!
+This library is released under an open source license, the Mozilla Public License 2.0 (see [LICENSE](../LICENSE) for details). You can use it commercially, including inside a closed-source product, and your own code stays yours - the license doesn't reach it. What it does ask is that if you change one of *our* files and then ship it, you publish that file's source under the same license, so the improvement comes back to everyone. The trained model weights are covered on exactly the same terms, so you're free to ship those too. And if you're just using it yourself and not distributing anything, there's nothing to worry about at all: make whatever changes you like!
 
 ## Submitting Changes
 
-Let's say you play around with this and train a better model. You can change the library to use it, then ask Claude Code to submit a PR (a "pull request") that has the changes in it. Claude Code will wrap that up for you and send it to us, the maintainers, and we'll take a look. If we like it, we'll merge it in with the main branch of the library that everyone sees.
+Let's say you play around with this and train a better model. You can change the library to use it, then ask your coding agent to open a pull request on the repository. Once reviewed, improvements can be merged into `main`.

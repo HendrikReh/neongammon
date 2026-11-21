@@ -231,7 +231,7 @@ See [docs/benchmarking.md](benchmarking.md) for all benchmarking commands.
 
 `MultiPlyStrategy` supports an optional separate filter strategy for 1-ply filtering
 and opponent move selection while keeping the main strategy at leaves. Full details live
-in [MULTI-PLY.md](../MULTI-PLY.md#9-hybrid-evaluator-mode); see
+in [docs/multi-ply.md](multi-ply.md#9-hybrid-evaluator-mode); see
 [docs/model-history.md](model-history.md#stage-5-small-s5s--fast-filter-model) for why
 halving hidden nodes did not meaningfully speed up 4-ply search.
 
@@ -332,7 +332,7 @@ The script runs these phases automatically:
 ### Step 6: Record Results
 
 After training completes:
-1. Update `MODEL_BENCHMARKS.md` with benchmark results
+1. Update `docs/model-benchmarks.md` with benchmark results
 2. Update `docs/model-history.md` with the new model details (hidden sizes, GPW values,
    pair-filtered ER results, training scripts)
 3. If promoting to `PRODUCTION_MODEL`, also add the new weight files to `sdist.include` in `pyproject.toml`

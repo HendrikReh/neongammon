@@ -45,7 +45,7 @@ Key regression tests to run when touching sensitive areas:
 
 1. Register the model in `MODELS` and set `PRODUCTION_MODEL` in [python/neongammon/weights.py](python/neongammon/weights.py) (currently `"stage11"`, a 24-NN backgame-aware phased pair strategy).
 2. Add any new required weight files to the `sdist.include` **allowlist** in [pyproject.toml](pyproject.toml) (the sdist excludes `models/` and `data/` by default; omitting a weight file breaks wheel/sdist builds).
-3. Record results in [MODEL_BENCHMARKS.md](MODEL_BENCHMARKS.md) and architecture/training details in [docs/model-history.md](docs/model-history.md).
+3. Record results in [docs/model-benchmarks.md](docs/model-benchmarks.md) and architecture/training details in [docs/model-history.md](docs/model-history.md).
 
 ## Core Domain Invariants
 
@@ -69,14 +69,14 @@ Key regression tests to run when touching sensitive areas:
 
 | When working on… | Read |
 |---|---|
-| Engine behavior, Stage 11 (24-NN) routing, PureTD hybrid, `DifficultyPolicy`, filters & rollout presets | [ENGINE.md](ENGINE.md) |
-| Game/match simulation (`simulate_game`, `simulate_match`, `GameConfig`, `PureTDPolicy`, `DifficultyPolicy`) | [SIMULATION.md](SIMULATION.md) |
+| Engine behavior, Stage 11 (24-NN) routing, PureTD hybrid, `DifficultyPolicy`, filters & rollout presets | [docs/engine.md](docs/engine.md) |
+| Game/match simulation (`simulate_game`, `simulate_match`, `GameConfig`, `PureTDPolicy`, `DifficultyPolicy`) | [docs/simulation.md](docs/simulation.md) |
 | Public Python/C++ APIs (`BgBotAnalyzer`, `BatchModels`, 2-ply details, `roll_luck`, `matchinfo`, GNUbg path, rollout Python snippets, glossary) | [docs/api.md](docs/api.md) |
-| Multi-ply search, cubeful tree (`cube_eval.cpp`), Janowski, money contact cube-life override, match play & MET, 2-ply detail extraction | [MULTI-PLY.md](MULTI-PLY.md) |
-| Rollouts, truncated rollouts (`1T`/`2T`/`3T`), variance reduction, `Move0Cache`/`Move1Cache`/`SharedPosCache`, `TrialEvalConfig` | [ROLLOUT.md](ROLLOUT.md) |
+| Multi-ply search, cubeful tree (`cube_eval.cpp`), Janowski, money contact cube-life override, match play & MET, 2-ply detail extraction | [docs/multi-ply.md](docs/multi-ply.md) |
+| Rollouts, truncated rollouts (`1T`/`2T`/`3T`), variance reduction, `Move0Cache`/`Move1Cache`/`SharedPosCache`, `TrialEvalConfig` | [docs/rollout.md](docs/rollout.md) |
 | One-sided bearoff DB (`data/bearoff_1sided.db`), combinatorial indexing, `BearoffStrategy`, EPC | [docs/bearoff.md](docs/bearoff.md) |
 | Training pipeline (TD, MLX GPU SL `neongammon.sl_train`, Modal cloud rollouts, 5-NN/17-NN/backgame recipes, `.bm`/train data formats) | [docs/training.md](docs/training.md) |
 | Benchmark scripts, 1-in-20 Benchmark PR rollout sample, XG referee, `bench_3t*.py` regression baselines | [docs/benchmarking.md](docs/benchmarking.md) |
-| XG comparison studies, `.xg` Batch Analyze workflow, `scripts/xg_h2h.py`, `neongammon.xg_compare` | [XG_COMPARISON.md](XG_COMPARISON.md) |
-| Historical benchmark tables (Stages 3–11, five-point difficulty profiles) | [MODEL_BENCHMARKS.md](MODEL_BENCHMARKS.md) |
+| XG comparison studies, `.xg` Batch Analyze workflow, `scripts/xg_h2h.py`, `neongammon.xg_compare` | [docs/xg-comparison.md](docs/xg-comparison.md) |
+| Historical benchmark tables (Stages 3–11, five-point difficulty profiles) | [docs/model-benchmarks.md](docs/model-benchmarks.md) |
 | Historical stage design & investigations (Stages 5–11m, cube-life tuning, `rank_distill`, Accelerate/PR #3 timings, 2026-09-06 cube postmortem) | [docs/model-history.md](docs/model-history.md) |

@@ -7,7 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The fork branched from upstream at `139427d` (2026-10-17, "Add compact
 all-roll legal move arrays for video reconstruction"). Everything before that
 commit is upstream's history; see `git log 139427d`. The fork targets macOS
-on Apple Silicon only (see "Platform Scope" in `CLAUDE.md`). Releases are
+on Apple Silicon only (see [Platform Scope & Repo Boundaries](CLAUDE.md#platform-scope--repo-boundaries)). Releases are
 published as GitHub releases with Apple Silicon wheels, not on PyPI.
 
 From 3.0.0 on, versions follow [Semantic Versioning](https://semver.org/):
@@ -26,11 +26,11 @@ Timings below were measured on an M4 Pro Mac mini (10P+4E cores).
 - `Difficulty` and `DifficultyPolicy` expose the Beginner, Casual, Intermediate,
   and Full Strength opponent presets. The first three sample bounded checker
   and cube deviations. Full Strength plays Stage 11 at 2-ply.
-- [Five-point calibration](MODEL_BENCHMARKS.md#five-point-difficulty-profiles)
+- [Five-point calibration](docs/model-benchmarks.md#five-point-difficulty-profiles)
   measured 20.95, 14.44, 7.43, and 0.87 PR against Full Strength, respectively.
   `scripts/calibrate_difficulty.py` reproduces the fit and match benchmarks.
 - Optional `PureTDPolicy` for cubeful checker play with a separately installed
-  PureTD native library and model checkpoint. [Setup](SIMULATION.md#puretd-checker-policy)
+  PureTD native library and model checkpoint. [Setup](docs/simulation.md#puretd-checker-policy)
 
 ### Changed
 

@@ -5,7 +5,7 @@ evaluation and doubling cube decisions in backgammon. This document describes th
 mathematics, data structures, variance reduction, caching, parallelization, and
 implementation details at a level sufficient for a complete reimplementation.
 
-This document assumes familiarity with the concepts in `MULTI-PLY.md`, particularly
+This document assumes familiarity with the concepts in [docs/multi-ply.md](multi-ply.md), particularly
 Janowski interpolation, cubeful equity, the evaluate-all-and-decide N-ply recursion,
 and the 5-probability NN output format.
 
@@ -425,7 +425,7 @@ whenever the evaluator supports it. Three cube evaluation modes are supported:
   as doubles escalate to a single batched `cube_decision_nply_multi(board,
   cubes[], n, base, ply, …)` call over all flagged branches (one shared
   cubeful recursion with `cci = 2*n` and `fTop=true`, with the deep PubEval
-  pre-filter enabled — see `MULTI-PLY.md` section 6). This keeps the deep
+  pre-filter enabled — see `docs/multi-ply.md` section 6). This keeps the deep
   recursion off the common no-double moves.
 
   **In the endgame the screen runs twice per branch** — once at the position's
@@ -565,7 +565,7 @@ If the trial reaches `truncation_depth` without terminating:
    share the truncation board and differ only in cube state) with the deep
    PubEval pre-filter enabled. The same tree walk also returns the node's
    **cubeless probabilities** (accumulated through the cubeful recursion —
-   see `MULTI-PLY.md` section 4), which become the trial's cubeless
+   see `docs/multi-ply.md` section 4), which become the trial's cubeless
    truncation result after inverting to the last mover's perspective and
    clamping against `last_mover_board`. One tree walk serves both outputs;
    no separate cubeless evaluation runs.
@@ -837,7 +837,7 @@ Strategies are built from `TrialEvalConfig` at `RolloutStrategy` construction:
 
 When a filter base strategy is provided, `MultiPlyStrategy` instances are created
 in hybrid mode: the filter strategy handles 1-ply candidate scoring and opponent
-move selection, while the base strategy handles leaf evaluations. See `MULTI-PLY.md`
+move selection, while the base strategy handles leaf evaluations. See `docs/multi-ply.md`
 section 9.
 
 ### VR Best-Candidate Reuse
@@ -885,7 +885,7 @@ independently from checker play strategy.
   `make_cube_pos`'s top-level DT expansion so the caller-constructed DT
   variants are used directly.
 - Move selection (1-ply cubeful against the primary state, batched — see
-  `MULTI-PLY.md` §6) and the per-roll NN evaluations are shared across all
+  `docs/multi-ply.md` §6) and the per-roll NN evaluations are shared across all
   branches; only the per-state Janowski leaf conversions and `get_ecf3`
   cube-decision collapses differ per state.
 - At half-move 1, escalated decisions are computed once per first roll and
@@ -1027,7 +1027,7 @@ production point in the trial: the VR mean (best-move probs over the 21
 rolls), the VR actual (chosen-move probs), the cube-decision pre-roll probs,
 the early-termination cubeless probs when all branches D/P, and the
 move0/move1 cache prefill. The clamp enforces the same four position
-invariants documented in `MULTI-PLY.md` §2 (player or opponent already has
+invariants documented in `docs/multi-ply.md` §2 (player or opponent already has
 bearoff progress; contact broken with the player or opponent absent from
 the danger zone). Cubeful N-ply truncation goes through
 `cubeful_equity_nply_multi`, where the leaf NN output is clamped inside the
@@ -1249,7 +1249,7 @@ Integration".)
 
 The in-trial N-ply cube decisions, the N-ply cubeful truncation, and the
 cubeful BMI rescore all run on the cubeful evaluation engine described in
-`MULTI-PLY.md` sections 4-6: batched delta-evaluation interior picks (grouped
+`docs/multi-ply.md` sections 4-6: batched delta-evaluation interior picks (grouped
 by per-candidate NN classification), leaf reuse at 2-ply nodes, hash-dedup
 move generation, the deep PubEval pre-filter (enabled for these
 rollout-internal calls), and a per-thread cube-state-keyed memoization cache
@@ -1478,7 +1478,7 @@ into it.
 |----------|-------|-------------|
 | Trial chunk size | 8 | Work-stealing granularity |
 | Internal filter (N-ply trials) | {2, 0.03} | MoveFilter inside trial MultiPly strategies |
-| Deep pre-filter (cubeful recursion) | 16 → 14 | Built-in PubEval prune at sub-entry-ply nodes of rollout-internal cubeful evaluations, including the dead-cube cubeless trees (see `MULTI-PLY.md` §6) |
+| Deep pre-filter (cubeful recursion) | 16 → 14 | Built-in PubEval prune at sub-entry-ply nodes of rollout-internal cubeful evaluations, including the dead-cube cubeless trees (see [docs/multi-ply.md](multi-ply.md#6-move-selection-within-the-cubeful-recursion)) |
 | VR pre-filter threshold | 0.12 | 1-ply threshold for N-ply VR candidate narrowing |
 | VR pre-filter max | 8 | Maximum candidates after VR pre-filter |
 | PosCache capacity | 256K | Thread-local N-ply position cache entries |
@@ -1500,7 +1500,7 @@ into it.
 (`truncation_ply=2`) — neither is shown as a column above.)
 
 These per-level defaults are defined in one place — the `BgBotAnalyzer.__init__`
-dispatch in [python/neongammon/analyzer.py](python/neongammon/analyzer.py), in the
+dispatch in [python/neongammon/analyzer.py](../python/neongammon/analyzer.py), in the
 `elif eval_level == "truncated1"/"truncated2"/"truncated3"/"rollout":` blocks.
 Change them there and all callers (including the host app) pick up the new
 defaults.
@@ -1519,3 +1519,8 @@ with `truncation_depth = 0`); 0 for 1T and for user-configured truncated
 rollouts (`eval_level="rollout"` with `truncation_depth > 0`). Users can
 override the per-level default by passing `prefilter_threshold=...` to
 `BgBotAnalyzer`.
+
+**Adaptive stopping (`target_se` / `max_batches`):** `BgBotAnalyzer` also accepts
+`target_se` (default `0.0`, disabled) and `max_batches` (default `50`). When
+`target_se > 0`, rollout evaluation runs in batches until the equity standard error
+reaches `target_se` or `max_batches` batches have completed.

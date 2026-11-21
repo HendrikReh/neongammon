@@ -2,7 +2,7 @@
 
 The public package exports `simulate_game`, `simulate_match`, `GameConfig`,
 `SimulationCancelled` and `SimulationLimitExceeded`. The package contains the
-implementation; no repository scripts, Sage Pro installation, account or network
+implementation; no repository scripts, external host app, account or network
 are needed. Python orchestrates rules and records; the native engine generates
 legal moves, detects game results, and evaluates decisions.
 
@@ -74,8 +74,8 @@ queried from the responder's policy with the **doubler's perspective**, because
 the public cube API's `should_take` describes the opponent's action. Do not flip
 that board before returning `should_take`. The API never runs arbitrary code
 received over a network. For batches, use processes and independent seeds;
-avoid sharing mutable analyzers concurrently. In Sage Pro use Research's paced
-worker jobs rather than running large batches inside the API process.
+avoid sharing mutable analyzers concurrently. In a host application, run large
+batches in paced background worker jobs rather than inside the request/API process.
 
 ## Opponent difficulty
 
@@ -101,7 +101,7 @@ A policy can also make decisions for an interactive opponent through
 `select_checker_move` and `cube_decision`. Its cube result's `should_double`
 and `should_take` are the policy choices. The equities and optimal action
 describe the underlying analyzer's recommendation. Use `BgBotAnalyzer` for
-reviewing the player's decisions. See the [five-point difficulty benchmark](MODEL_BENCHMARKS.md#five-point-difficulty-profiles)
+reviewing the player's decisions. See the [five-point difficulty benchmark](model-benchmarks.md#five-point-difficulty-profiles)
 for measured PR and match conditions.
 
 ## PureTD checker policy
@@ -119,7 +119,7 @@ policies explicitly.
 
 For explicit `PureTDPolicy` instances, the constructor defaults to choosing
 the move without lookahead. Pass `checker_plies=1`
-to search one opponent reply, equivalent to NeoGammon's 2-ply depth. With one
+to search one opponent reply, equivalent to NeonGammon's 2-ply depth. With one
 reply, `root_filter=0.075` searches moves within 0.075 equity of PureTD's best
 static estimate and includes game-ending moves. The default `root_filter=0.0`
 uses full-width search. A positive filter requires a native library that
@@ -133,8 +133,8 @@ Supply a local [PureTD C library with ABI 7](https://github.com/alexstrehl/puret
 and a cubeful model exported with PureTD's `export_weights.py`. The tested
 checkpoint at that commit is `best_models/cubeful_money_512_512_256_256.pt`.
 The policy loads both files directly and can run without importing PyTorch.
-For the local experiment, the build and export are in
-`logs/puretd_comparison/native`.
+For example, if you built and exported PureTD under
+`logs/puretd_comparison/native`:
 
 ```python
 from neongammon import BgBotAnalyzer, GameConfig, PureTDPolicy, simulate_game

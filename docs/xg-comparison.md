@@ -1,5 +1,17 @@
 # Comparing the NeonGammon Bot Engine to XG's Bot Engine
 
+> **Note:** Several historical study tables below retain the label `Sage` from the upstream benchmark runs; both names refer to the same engine lineage. See [docs/benchmarking.md](benchmarking.md) for the Benchmark PR rollout sample and XG referee runs.
+
+## Contents
+
+- [Rollout PR Analysis](#rollout-pr-analysis)
+- [Disputed Position Analysis](#disputed-position-analysis)
+- [Backgames, Containment Games and the Snake](#backgames-containment-games-and-the-snake)
+- [Paskogammon](#paskogammon)
+- [Match PR Agreement on Real Matches](#match-pr-agreement-on-real-matches)
+- [Conclusion](#conclusion)
+- [Operational Workflows (.xg Files and H2H)](#operational-workflows-xg-files-and-h2h)
+
 XG (eXtreme Gammon) is a standard reference for backgammon analysis, and its bot engine is considered a very strong one.
 
 XG does not include an API to run its bot engine programmatically, so we could not run head-to-head games between NeonGammon and XG at the scale required to identify small differences between them.

@@ -1,6 +1,6 @@
 # Benchmarking and Evaluation Scripts
 
-Historical model results live in [MODEL_BENCHMARKS.md](../MODEL_BENCHMARKS.md). Head-to-head and `.xg` Batch Analyze workflows live in [XG_COMPARISON.md](../XG_COMPARISON.md#operational-workflows-xg-files-and-h2h).
+Historical model results live in [docs/model-benchmarks.md](model-benchmarks.md). Head-to-head and `.xg` Batch Analyze workflows live in [docs/xg-comparison.md](xg-comparison.md#operational-workflows-xg-files-and-h2h).
 
 ## Benchmark Scripts
 
@@ -91,7 +91,7 @@ rollout, and only the moves Stage 5's 2-ply filter kept were rolled out, so a
 pick outside that set is charged the worst rolled-out move (GNUbg 1-ply lands
 outside it 159 times, stage11 about 80). No significance test was run, so gaps
 of a few hundredths (Stages 8-11 span 3.17-3.24 at 2-ply) may be noise. And
-the numbers are not comparable with the full-set PRs quoted in [MODEL_BENCHMARKS.md](../MODEL_BENCHMARKS.md).
+the numbers are not comparable with the full-set PRs quoted in [docs/model-benchmarks.md](model-benchmarks.md).
 
 **The pure-race gap.** The one clear gap to GNUbg on this reference is the
 pure race (979 decisions); against XG it disappears (end of this paragraph). Split by whether the pre-move position is in the bearoff database

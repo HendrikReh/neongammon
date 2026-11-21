@@ -1,6 +1,6 @@
 # Model Evolution, Experiments, and Performance Measurements
 
-Historical model stages, tuning experiments, Apple Silicon performance measurements, and resolved investigations. For current engine behavior see [ENGINE.md](../ENGINE.md); for summary benchmark tables see [MODEL_BENCHMARKS.md](../MODEL_BENCHMARKS.md).
+Historical model stages, tuning experiments, Apple Silicon performance measurements, and resolved investigations. For current engine behavior see [docs/engine.md](engine.md); for summary benchmark tables see [docs/model-benchmarks.md](model-benchmarks.md).
 
 ## Contents
 
@@ -98,7 +98,7 @@ has positions. Constructing a 3-ply analyzer takes 17-20 ms instead of
 
 ## Money Contact Cube Life Tuning
 
-Operational specification lives in [MULTI-PLY.md](../MULTI-PLY.md#money-contact-cube-life-by-depth).
+Operational specification lives in [docs/multi-ply.md](multi-ply.md#money-contact-cube-life-by-depth).
 
 **Tuning.** Tuned 2026-11-18 on the odd seeds of the money benchmark's 2,842
 cube decisions and checked on the even seeds. Cube PR, old -> new:
@@ -297,7 +297,7 @@ Not shipped. The candidates are in `models/rank_diag/` (untracked).
 These are Stage 5's numbers, kept as the baseline the later stages are measured
 against. **The production model is `stage11`** (`PRODUCTION_MODEL` in
 `python/neongammon/weights.py`); its results live in the Stage 11 sections below and
-in `MODEL_BENCHMARKS.md`. The 1-ply contact/race ER and PubEval figures here have
+in `docs/model-benchmarks.md`. The 1-ply contact/race ER and PubEval figures here have
 not been re-run for Stage 11 — re-run `scripts/run_full_benchmark.py --model
 stage11` before quoting a headline 1-ply ER for the current engine.
 

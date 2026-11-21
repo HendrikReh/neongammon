@@ -1,7 +1,23 @@
 # Model Benchmarks
 
-Historical benchmark results for all trained models. When a new model stage is
-trained, append its results to the tables below.
+Historical benchmark results across trained models. Stages 3–9 timings were measured
+upstream on Windows (RTX 4070S); the [five-point difficulty profiles](#five-point-difficulty-profiles)
+and [Stage 11](#stage-10--stage-11-24-nn-backgame-aware-phased-model--production)
+production results were measured on Apple Silicon. When a new model stage is trained,
+append its results to the tables below.
+
+## Contents
+
+- [Summary Table (1-ply)](#summary-table-1-ply)
+- [Per-Plan Benchmark Detail](#per-plan-benchmark-detail)
+- [Model Details (Single NN – Stage 6)](#model-details)
+- [Benchmark PR (Performance Rating)](#benchmark-pr-performance-rating)
+- [Five-point difficulty profiles](#five-point-difficulty-profiles)
+- [Multi-Ply & Truncated Rollout Benchmarks (Stages 3–6)](#multi-ply-results-stage-3-weights-24-threads-avx2)
+- [Stage 7](#stage-7-17-nn-pair-strategy-100h-purerace--300h-contact)
+- [Stage 8](#stage-8-17-nn-pair-strategy-100h-purerace--400h-contact-s5-fallback)
+- [Stage 9](#stage-9-19-nn-backgame-aware-pair-strategy-100h-purerace--400h-contact-2-backgame-nns)
+- [Stage 10 & Stage 11 (Production)](#stage-10--stage-11-24-nn-backgame-aware-phased-model--production)
 
 ## Summary Table (1-ply)
 
@@ -175,7 +191,7 @@ Scripts: `python/generate_benchmark_pr.py`, `python/score_benchmark_pr.py`
 
 ## Five-point difficulty profiles
 
-The [opponent presets](SIMULATION.md#opponent-difficulty) use cubeful Stage 11.
+The [opponent presets](simulation.md#opponent-difficulty) use cubeful Stage 11.
 Beginner, Casual, and Intermediate sample from 1-ply decisions. Full Strength
 plays the 2-ply recommendation.
 
@@ -274,7 +290,7 @@ Script: `scripts/run_top100_safe.py`
 
 Settings key: `Nt` = N trials, `trunc=D` = truncation depth (half-moves),
 `dp=P` = decision ply for move selection, `late=P@M` = switch to ply P after
-half-move M. See [ROLLOUT.md](ROLLOUT.md#17-configuration-reference) for full parameter docs.
+half-move M. See [docs/rollout.md](rollout.md#17-configuration-reference) for full parameter docs.
 
 Benchmark run: 2026-03-18, 16 threads (RTX 4070S / Windows), Stage 5 production model.
 Rollout levels run in separate subprocesses to avoid OOM from cache accumulation.
@@ -479,7 +495,7 @@ using S7 pair strategy at 1-ply.
 
 Benchmark run: 2026-03-24, RTX 4070S / Windows, Stage 7 pair model.
 N-ply levels run at 16 threads; rollout levels at 4 threads (16 threads causes
-segfault with pair strategy due to thread-local cache accumulation — see [docs/model-history.md](docs/model-history.md)).
+segfault with pair strategy due to thread-local cache accumulation — see [docs/model-history.md](model-history.md)).
 
 | Strategy | Settings | ER | Time |
 |----------|----------|------|------|
@@ -719,8 +735,8 @@ ordering.
 backgame/containment/snake/massive NNs).
 
 - Benchmark PR rollout sample (1-in-20 sample, Stage 5 rollout & XG 4-ply referee):
-  see [docs/benchmarking.md](docs/benchmarking.md#benchmark-pr-rollout-sample-this-fork).
+  see [docs/benchmarking.md](benchmarking.md#benchmark-pr-rollout-sample-this-fork).
 - Detailed Stage 10 / Stage 11 / 11p / 11s / 11m development benchmarks and backgame
-  folder PRs: see [docs/model-history.md](docs/model-history.md#backgame-stages-s10-s11-s11p-s11s-s11m-and-cube-scoring-investigation).
+  folder PRs: see [docs/model-history.md](model-history.md#backgame-stages-s10-s11-s11p-s11s-s11m-and-cube-scoring-investigation).
 - Cross-engine money, match, and Paskogammon PR studies against XG: see
-  [XG_COMPARISON.md](XG_COMPARISON.md).
+  [docs/xg-comparison.md](xg-comparison.md).

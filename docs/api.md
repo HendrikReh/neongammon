@@ -1,6 +1,6 @@
 # Python and C++ API Reference
 
-For game/match simulation (`simulate_game`, `simulate_match`, `PureTDPolicy`, `DifficultyPolicy`), see [SIMULATION.md](../SIMULATION.md) and [ENGINE.md](../ENGINE.md). For algorithmic details of multi-ply search and rollouts, see [MULTI-PLY.md](../MULTI-PLY.md) and [ROLLOUT.md](../ROLLOUT.md).
+For game/match simulation (`simulate_game`, `simulate_match`, `PureTDPolicy`, `DifficultyPolicy`), see [docs/simulation.md](simulation.md) and [docs/engine.md](engine.md). For algorithmic details of multi-ply search and rollouts, see [docs/multi-ply.md](multi-ply.md) and [docs/rollout.md](rollout.md).
 
 ## Interfaces
 
@@ -184,7 +184,7 @@ of `cubeful_equity` across all 21 DT player rolls equals `equity_dt`.
 
 Move selection is the engine's at every level, the captured ones included:
 1-ply cubeful equity against the ND scenario's cube state of the side to move
-(see [MULTI-PLY.md](../MULTI-PLY.md#4-n-ply-cubeful-evaluation-evaluate-all-and-decide)), after the PubEval keep-15 prefilter when a roll
+(see [docs/multi-ply.md](multi-ply.md#4-n-ply-cubeful-evaluation-evaluate-all-and-decide)), after the PubEval keep-15 prefilter when a roll
 has >16 candidates, with root routing (a snake root pins the whole tree, as in
 the plain call). Equities are evaluated at (N-1)-ply for player rolls and
 (N-2)-ply for opponent rolls — so at 3-ply, player-roll equities are 2-ply
@@ -374,7 +374,7 @@ many rolls** — summing per-roll luck across a game isolates dice fortune from
 decision quality (a player with high total luck won the dice, not necessarily the
 game). This is the app-facing per-roll Luck shown in PR breakdowns; it is
 distinct from **VR** (variance-reduction luck used internally to denoise
-rollouts — see [ROLLOUT.md](../ROLLOUT.md#4-variance-reduction-vr)).
+rollouts — see [docs/rollout.md](rollout.md#4-variance-reduction-vr)).
 
 **This is a pure function over analytics, not a fresh evaluation.** The per-roll
 equities are exactly the **ND (No Double) per-roll cubeful equities** that
@@ -480,7 +480,7 @@ resolve the binary the same way.
 
 ## Rollout Python Examples
 
-See [ROLLOUT.md](../ROLLOUT.md) for the full rollout specification, `RolloutConfig` / `TrialEvalConfig` reference, and `truncated1`/`truncated2`/`truncated3` presets.
+See [docs/rollout.md](rollout.md) for the full rollout specification, `RolloutConfig` / `TrialEvalConfig` reference, and `truncated1`/`truncated2`/`truncated3` presets.
 
 ```python
 from neongammon import BgBotAnalyzer

@@ -27,9 +27,9 @@ preset_game = simulate_game(players=(DifficultyPolicy(Difficulty.INTERMEDIATE), 
 
 ## What It Contains
 
-- **24-NN production evaluator (`stage11`):** 17 game-plan pair networks (with Stage 5's 200h pure-race network) plus 7 specialized backgame, containment, snake, and massive-backgame networks, combined with an exact one-sided bearoff database (`data/bearoff_1sided.db`). See [ENGINE.md](ENGINE.md).
-- **Multi-ply search & rollouts:** Parallelized CPU N-ply cubeful search ([MULTI-PLY.md](MULTI-PLY.md)) and full/truncated Monte Carlo rollouts with stratified dice and variance reduction ([ROLLOUT.md](ROLLOUT.md)).
-- **Game & match simulation:** Seeded `simulate_game()` and `simulate_match()` with full turn/dice/cube recording, optional PureTD hybrid money play (`PureTDPolicy`), and calibrated opponent presets (`DifficultyPolicy`). See [SIMULATION.md](SIMULATION.md).
+- **24-NN production evaluator (`stage11`):** 17 game-plan pair networks (with Stage 5's 200h pure-race network) plus 7 specialized backgame, containment, snake, and massive-backgame networks, combined with an exact one-sided bearoff database (`data/bearoff_1sided.db`). See [docs/engine.md](docs/engine.md).
+- **Multi-ply search & rollouts:** Parallelized CPU N-ply cubeful search ([docs/multi-ply.md](docs/multi-ply.md)) and full/truncated Monte Carlo rollouts with stratified dice and variance reduction ([docs/rollout.md](docs/rollout.md)).
+- **Game & match simulation:** Seeded `simulate_game()` and `simulate_match()` with full turn/dice/cube recording, optional PureTD hybrid money play (`PureTDPolicy`), and calibrated opponent presets (`DifficultyPolicy`). See [docs/simulation.md](docs/simulation.md).
 - **Training & benchmarking framework:** CPU TD(0) self-play, Apple GPU supervised learning via MLX (`neongammon.sl_train`), Modal cloud rollouts (`scripts/modal_rollout.py`), and benchmark/XG comparison tooling.
 - **Test suite:** Automated `pytest` coverage across move generation, encoding golden fixtures, cubeful/match rules, simulation, PureTD, difficulty presets, and MLX training.
 
@@ -69,7 +69,7 @@ NeonGammon uses the **XG ply convention** (`1ply` = raw neural-network evaluatio
 | `truncated3` (3T) | 360-trial truncated rollout | 7 half-moves, 3-ply early then 2-ply |
 | `rollout` | Full rollout (1,296 trials default) | Configurable checker/cube trial strengths & `target_se` |
 
-See [ENGINE.md](ENGINE.md) for filter behavior and default simulation policies.
+See [docs/engine.md](docs/engine.md) for filter behavior and default simulation policies.
 
 ## Interfaces
 
@@ -87,25 +87,25 @@ Both Python (`neongammon`) and C++ (`bgbot` / `bgbot_cpp`) interfaces are provid
 
 Money games, 5-point matches, backgames, Paskogammon, and real tournament matches were benchmarked against eXtreme Gammon (XG). At matched truncated-rollout strength (`3T` vs XG Roller++), NeonGammon and XG are very close — with NeonGammon slightly ahead in the rollout PR studies and matching XG's tournament match PR ratings to within `+0.002` PR (`r = 0.98`).
 
-Full results and replication instructions — including running XG under CrossOver on macOS with Batch Analyze and `scripts/xg_h2h.py` — are in [XG_COMPARISON.md](XG_COMPARISON.md) and [docs/benchmarking.md](docs/benchmarking.md).
+Full results and replication instructions — including running XG under CrossOver on macOS with Batch Analyze and `scripts/xg_h2h.py` — are in [docs/xg-comparison.md](docs/xg-comparison.md) and [docs/benchmarking.md](docs/benchmarking.md).
 
 ## Documentation
 
 | Document | Contents |
 |---|---|
-| [ENGINE.md](ENGINE.md) | Engine behavior by game situation, Stage 11 routing, PureTD hybrid, difficulty presets, filters, rollouts |
-| [SIMULATION.md](SIMULATION.md) | `simulate_game` / `simulate_match`, `GameConfig`, `PureTDPolicy`, `DifficultyPolicy` |
+| [docs/engine.md](docs/engine.md) | Engine behavior by game situation, Stage 11 routing, PureTD hybrid, difficulty presets, filters, rollouts |
+| [docs/simulation.md](docs/simulation.md) | `simulate_game` / `simulate_match`, `GameConfig`, `PureTDPolicy`, `DifficultyPolicy` |
 | [docs/api.md](docs/api.md) | Full Python & C++ API reference, batch APIs, 2-ply detail schema, luck, matchinfo, GNUbg path, glossary |
 | [docs/bearoff.md](docs/bearoff.md) | One-sided bearoff database format, indexing, API, and EPC |
-| [MULTI-PLY.md](MULTI-PLY.md) | Technical specification of N-ply cubeful/cubeless search, Janowski, money cube life, match play, and caching |
-| [ROLLOUT.md](ROLLOUT.md) | Technical specification of full/truncated rollouts, stratified dice, variance reduction, and configuration |
+| [docs/multi-ply.md](docs/multi-ply.md) | Technical specification of N-ply cubeful/cubeless search, Janowski, money cube life, match play, and caching |
+| [docs/rollout.md](docs/rollout.md) | Technical specification of full/truncated rollouts, stratified dice, variance reduction, and configuration |
 | [docs/training.md](docs/training.md) | Input encodings, TD+SL pipeline, Apple MLX GPU trainer, Modal cloud rollouts, and data formats |
 | [docs/benchmarking.md](docs/benchmarking.md) | Benchmark scripts, 1-in-20 Benchmark PR rollout sample, XG referee, and regression baselines |
-| [XG_COMPARISON.md](XG_COMPARISON.md) | Head-to-head and Batch Analyze PR studies against eXtreme Gammon + `.xg` workflows |
-| [MODEL_BENCHMARKS.md](MODEL_BENCHMARKS.md) | Historical benchmark tables across model stages and five-point difficulty profiles |
+| [docs/xg-comparison.md](docs/xg-comparison.md) | Head-to-head and Batch Analyze PR studies against eXtreme Gammon + `.xg` workflows |
+| [docs/model-benchmarks.md](docs/model-benchmarks.md) | Historical benchmark tables across model stages and five-point difficulty profiles |
 | [docs/model-history.md](docs/model-history.md) | Model evolution (Stages 5–11m), tuning experiments, Apple Silicon speedups, and resolved investigations |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
-| [VIBING.md](VIBING.md) | Notes on AI-assisted development workflow in this codebase |
+| [docs/vibing.md](docs/vibing.md) | Notes on AI-assisted development workflow in this codebase |
 
 ## License
 

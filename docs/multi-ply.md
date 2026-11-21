@@ -161,7 +161,7 @@ No Double for the side with initiative):
   are included in the cubeful cache key. C++ callers that omit them keep `0.68`.
 - **Tests & tuning history:** `tests/test_contact_cube_life.py` (`tests/test_2ply_details.py`
   pins the table empty to compare interior nodes with standalone shallower calls). Tuning
-  and XG validation tables live in [docs/model-history.md](docs/model-history.md#money-contact-cube-life-tuning).
+  and XG validation tables live in [docs/model-history.md](model-history.md#money-contact-cube-life-tuning).
 
 ### Money Game: Janowski Formula
 
@@ -564,9 +564,10 @@ must go through EVERY `BearoffStrategy` layer (the analyzer wraps once and
 the bindings wrap again), and the pin is part of the eval-cache fingerprint,
 since pinned and unpinned evaluations of one board are different values.
 Today only `BackgameAwarePairStrategy` pins, and only for the snake net on
-the 23-NN layout (`root_pinned_`, default `{22}`); every other strategy
+23+ NN layouts (`root_pinned_`, default `{22}`, including Stage 11's 24-NN layout;
+`NEONGAMMON_NO_ROOT_ROUTING` disables it); every other strategy
 returns -1 and routes per node exactly as above. Rationale and results:
-[docs/model-history.md](docs/model-history.md) ("Stage 11s", round 2).
+[docs/model-history.md](model-history.md) ("Stage 11s", round 2).
 
 ### Leaf Reuse at 2-Ply Nodes
 
@@ -1067,7 +1068,7 @@ key = h | 1    // ensure non-zero (0 is the empty marker)
 For parallel rollouts, a lock-free shared position cache prevents redundant
 evaluations across threads. It is fed both by this recursion's nodes and by
 the dead-cube (cubeless) nodes of the cubeful evaluation engine, under
-disjoint (salted) keys — see `ROLLOUT.md` §12.
+disjoint (salted) keys — see `docs/rollout.md` §12.
 
 **Structure:**
 - 2M entries, lock-free via CAS (compare-and-swap)
@@ -1394,7 +1395,8 @@ These defaults are configurable per `MultiPlyStrategy` instance via
 
 | Position Type | x Value |
 |---------------|---------|
-| Contact/crashed | 0.68 |
+| Contact/crashed (C++ default, match, 3-ply+, rollouts) | 0.68 |
+| Contact/crashed (Python money 1-ply / 2-ply) | `0.7375 + 0.00175*(avg_pips-120)` / `0.7625 + 0.00125*(avg_pips-120)`, clamped `[0.5, 1.0]` (see [§3](#money-contact-cube-life-by-depth)) |
 | Race (avg_pips ≤ 40) | 0.60 |
 | Race (avg_pips = 80) | 0.65 |
 | Race (avg_pips ≥ 120) | 0.70 |
@@ -1424,6 +1426,6 @@ n_threads = min(configured_threads, target)
 | 4-ply | 12 |
 | 5-ply | 16 |
 
-The per-thread position cache (256K entries, ~7 MB) is small enough that 12-16
-threads at 4-5 ply depth have acceptable total memory consumption (~100-110 MB)
-while providing good parallelism across the 21 dice rolls.
+The legacy per-thread `PosCache` (256K entries of 136 bytes, ~36 MB) is allocated
+lazily on first insert — the default cubeful evaluation engine bypasses it and uses
+only the compact 32K-entry cubeful eval cache per thread.

@@ -4,8 +4,8 @@ NeonGammon has two entry points for different tasks. Use `simulate_game()` or
 `simulate_match()` to play out games with a policy. Use `BgBotAnalyzer` to rank
 moves, examine equities, or analyze cube decisions. Automatic PureTD selection
 belongs to game simulation. The analyzer defaults to cubeful Stage 11 at
-1-ply, with optional weights and evaluation levels. [Simulation API](SIMULATION.md)
-· [Analyzer configuration](python/neongammon/analyzer.py) · [Model registry](python/neongammon/weights.py)
+1-ply, with optional weights and evaluation levels. [Simulation API](simulation.md)
+· [Analyzer configuration](../python/neongammon/analyzer.py) · [Model registry](../python/neongammon/weights.py)
 
 ## Which engine plays the position?
 
@@ -26,7 +26,7 @@ The simulation calls the Cube policy only when a double is legal. There is no
 Cube decision on the opening contest, while the opponent owns the cube, in a
 Crawford game, or at the cube cap. After a take, the checker policy receives
 the doubled cube value and ownership by the taker. The first roll from a
-custom pre-roll position follows ordinary turn rules. [Simulation rules](SIMULATION.md)
+custom pre-roll position follows ordinary turn rules. [Simulation rules](simulation.md)
 
 Explicit `players=(policy1, policy2)` take precedence. An explicit
 `PureTDPolicy` defaults to no lookahead and delegates all Cube decisions to
@@ -34,13 +34,13 @@ its analyzer, which defaults to Stage 11 at 2-ply. It also delegates checker
 play for match or Crawford contexts, money games without Jacoby, Beaver rules,
 and positions at the cube cap. Simulation itself plays without Beavers.
 For a forced PureTD move or pass, the single legal successor is returned
-directly. [PureTD policy](SIMULATION.md#puretd-checker-policy)
+directly. [PureTD policy](simulation.md#puretd-checker-policy)
 
 `DifficultyPolicy` configures an explicit opponent preset. Beginner, Casual,
 and Intermediate sample cubeful Stage 11 1-ply checker alternatives within
 a preset equity-loss limit and sometimes vary close Cube decisions. Full
 Strength chooses the Stage 11 2-ply recommendation. The PR measurements are
-for five-point matches. [Opponent difficulty](SIMULATION.md#opponent-difficulty)
+for five-point matches. [Opponent difficulty](simulation.md#opponent-difficulty)
 
 ### When PureTD is available
 
@@ -50,7 +50,7 @@ both variables are unset, the simulator looks for `build/puretd/libpuretd_cblas.
 and `build/puretd/cubeful.bin`. The tested filter requires a compatible ABI 7
 library that exports `bgc_set_search`. Missing or unloadable files, incompatible
 libraries and rejected models use the Stage 11 simulation fallback. An error
-from PureTD while selecting a move surfaces to the caller. [Loading and fallback](python/neongammon/puretd.py)
+from PureTD while selecting a move surfaces to the caller. [Loading and fallback](../python/neongammon/puretd.py)
 
 ## How Stage 11 evaluates board positions
 
@@ -59,8 +59,8 @@ probabilities. Cube-aware evaluation also accounts for ownership and
 redoubles. At 1-ply it uses Janowski's cube-life model when the cube is live.
 Cube analysis compares No Double, Double/Take and Double/Pass. Match play
 uses the players' scores and the match equity table, with Jacoby disabled.
-[Cubeful equity](MULTI-PLY.md#3-1-ply-cubeful-evaluation-janowski-interpolation)
-· [Match play](MULTI-PLY.md#12-match-play)
+[Cubeful equity](multi-ply.md#3-1-ply-cubeful-evaluation-janowski-interpolation)
+· [Match play](multi-ply.md#12-match-play)
 
 | Board situation | Stage 11 evaluation |
 | --- | --- |
@@ -74,8 +74,8 @@ before the three backgame categories, then checks early containment before
 using the ordinary plan pair. A snake at the root can pin its network for
 contact nodes in the search. Race and bearoff positions retain their own
 evaluators. This routing applies when Stage 11 evaluates the position,
-including Cube decisions in the PureTD hybrid. [Network routing](cpp/src/neural_net.cpp)
-· [Bearoff database](docs/bearoff.md) · [Root routing](MULTI-PLY.md#root-routing-pinned-nn-selection)
+including Cube decisions in the PureTD hybrid. [Network routing](../cpp/src/neural_net.cpp)
+· [Bearoff database](bearoff.md) · [Root routing](multi-ply.md#root-routing-pinned-nn-selection)
 
 ## Lookahead and move filters
 
@@ -92,7 +92,7 @@ corresponds to NeonGammon's `2ply`. The two filters use their own scores and
 candidate rules. In `BgBotAnalyzer.checker_play()`, use `force_boards` to give a
 specific legal post-move board, such as the move actually played, the full
 requested evaluation depth even if a filter would otherwise discard it.
-[Analyzer and filter dispatch](python/neongammon/analyzer.py) · [Multi-ply search](MULTI-PLY.md)
+[Analyzer and filter dispatch](../python/neongammon/analyzer.py) · [Multi-ply search](multi-ply.md)
 
 ## Rollouts
 
@@ -102,7 +102,7 @@ configured half-move depth and estimates the remaining equity. A full
 rollout runs to the end, subject to endgame shortcuts where applicable.
 Cubeful trials can end when a double is passed. Rollouts use stratified dice
 and variance reduction, and can report standard errors for the estimates.
-[Rollout methods](ROLLOUT.md)
+[Rollout methods](rollout.md)
 
 | Analyzer level | Default trials | Truncation | Checker play during trials |
 | --- | ---: | --- | --- |
@@ -119,5 +119,5 @@ apply a wider 1-ply prefilter followed by a tighter 2-ply filter. When more
 than one legal candidate reaches the final filter, the analyzer aims to roll
 at least two. Cubeful analysis can also promote promising moves that were
 initially filtered out. Cube rollouts evaluate the decision branches from the
-pre-roll position. [Rollout candidate selection](ROLLOUT.md#16-best-move-selection-via-rollout)
-· [Preset and trial configuration](ROLLOUT.md#17-configuration-reference)
+pre-roll position. [Rollout candidate selection](rollout.md#16-best-move-selection-via-rollout)
+· [Preset and trial configuration](rollout.md#17-configuration-reference)
