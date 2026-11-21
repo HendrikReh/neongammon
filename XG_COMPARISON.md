@@ -415,3 +415,63 @@ NeonGammon and XG are close at every matched evaluation level. In the Rollout PR
 On the position families where engines have historically been weakest, Sage's play is measured to the same standard: pooled over the ten classic backgames its 3T PR is under 0.7 and its 3-ply PR under 1.0, containment games and massive backgames score between 2 and 3 at the truncated-rollout levels, and the snake remains the hardest family by a wide margin. In Paskogammon, the whole-game variant that produces these positions constantly, Sage is ahead of XG at every matched level from 3-ply up — 3T 0.88 against Roller ++'s 1.92 — and the margin is widest at 3-ply, where XG's cube PR is 3.04 against Sage's 1.78.
 
 And on real matches, the two engines assign nearly identical Performance Ratings: across 290 tournament matches, the average difference between a player's Sage PR and XG PR is statistically indistinguishable from zero. Whether the test is strength against a rolled-out truth or simple agreement on how a real game was played, NeonGammon and XG land in the same place.
+
+## Operational Workflows (.xg Files and H2H)
+
+On macOS, XG runs under CrossOver and its **Batch Analyze** reads both the `.txt` transcripts and the `.xg` files this repo writes. Run Batch Analyze manually in XG's GUI.
+
+### 1. Head-to-Head Play via Batch Analyze (`scripts/xg_h2h.py`)
+
+XG has no API, so `scripts/xg_h2h.py` replays every game to a fixed point using XG's Batch Analyze:
+
+- NeonGammon plays its seat and predicts XG's.
+- Each round writes unanswered XG decisions as one-decision `.xg` games; Batch-Analyze the round's folder once in XG.
+- The next `round` reads XG's #1 moves and cube recommendations back (double iff `FlagDouble > 0`, take iff `DT <= DP`), replays every game from the start, and re-predicts the tail after any disagreement.
+- A game finishes when every XG decision in it is XG's own answer.
+
+Dice are drawn per `(game pair, turn)` so a changed move never changes a later roll (`tests/test_xg_h2h.py` verifies equivalence to live play). Openings are standard (no doubles, higher die moves first), each dice sequence is played twice with seats swapped, and no game is skipped. Rules are money, Jacoby on, Beaver off. `report --luck` subtracts each roll's luck (from NeonGammon 2-ply analytics) times the cube; because expected luck is zero, the adjusted mean stays unbiased with much lower variance.
+
+```bash
+python scripts/xg_h2h.py init --dir data/xg_h2h/pilot --pairs 50 --sage-level 3ply
+python scripts/xg_h2h.py round --dir data/xg_h2h/pilot   # then Batch Analyze round_NNN in XG
+python scripts/xg_h2h.py report --dir data/xg_h2h/pilot --luck
+```
+
+Keep one XG evaluation level for the whole run (`round` prints harvested levels and warns on inconsistencies). Upstream's `play_sage_vs_xg.py` and `run_sage_vs_xg_games.py` are retired stubs.
+
+### 2. Self-Play Transcripts Scored by XG
+
+Three steps (step 2 is manual in XG's GUI):
+
+1. **Generate NeonGammon-vs-NeonGammon transcripts** (`scripts/run_sage_vs_sage_games.py`):
+
+```bash
+# 200 money games (Jacoby + Beaver on) at 3-ply, 6 parallel worker processes
+python scripts/run_sage_vs_sage_games.py 1 200 --level 3P --workers 6
+```
+
+Writes `seed_<N>.txt` per game in `<repo>/logs/sage_vs_sage` by default (Galaxy/XG-import compatible). Each worker runs with `parallel_threads=1` to avoid CPU oversubscription. Programmatic entry: `run_sage_vs_sage_games(initial_seed=1, n_games=200, level="3P", workers=6, out_dir=None)` (`level`: `1P`–`4P`, `1T`–`3T`).
+
+2. **Run XG Batch Analyze on the `.txt` folder** (manual):
+   XG → File → Batch Analyze → select folder. **Check "Save Games after analyze"** so XG writes a matching `seed_<N>.xg` next to each `seed_<N>.txt`.
+
+3. **Aggregate PR stats** (`scripts/aggregate_xg_pr.py`):
+
+```bash
+python scripts/aggregate_xg_pr.py [folder] [--pattern '*.xg']
+```
+
+Parses turns via `neongammon.xg_compare.parse_xg_game`, applies XG-style decision filters, and prints per-game PR mean / std dev / SEM plus decision-weighted aggregate PR.
+
+### Public `.xg` Parser API (`neongammon.xg_compare`)
+
+```python
+from neongammon.xg_compare import parse_xg_game, compute_game_pr_stats
+
+with open("seed_8.xg", "rb") as f:
+    turns = parse_xg_game(f.read())
+stats = compute_game_pr_stats(turns)
+# stats: {user_err, user_dec, bot_err, bot_dec, total_err, total_dec, pr}
+```
+
+`parse_xg_game` returns turn dicts (`cube_action`, `cube_analysis`, `checker_analysis`, `board_before`, `board_after`, `dice`, …) and raises `ValueError` unless the `.xg` file contains exactly one game. `compute_game_pr_stats` calls `apply_decision_flags` (also exported) to populate `is_cube_decision` / `is_checker_decision` and error fields.

@@ -100,7 +100,7 @@ bgbot_cpp.score_benchmarks_5nn(scenarios,
     120, 250, 250, 250, 250)
 ```
 
-### Stage 5 (5-NN, 200h purerace / 400h contact, 244 inputs, per-NN gpw) — CURRENT BEST
+### Stage 5 (5-NN, 200h purerace / 400h contact, 244 inputs, per-NN gpw) — Historical 5-NN Baseline
 
 Larger hidden layers. TD: 200k@0.1 + ~890k@0.02.
 SL: per-NN schedules with gpw=5.0 (racing/attacking/priming), gpw=1.5 (anchoring).
@@ -274,7 +274,7 @@ Script: `scripts/run_top100_safe.py`
 
 Settings key: `Nt` = N trials, `trunc=D` = truncation depth (half-moves),
 `dp=P` = decision ply for move selection, `late=P@M` = switch to ply P after
-half-move M. See `CLAUDE.md` Truncated Rollouts section for full parameter docs.
+half-move M. See [ROLLOUT.md](ROLLOUT.md#17-configuration-reference) for full parameter docs.
 
 Benchmark run: 2026-03-18, 16 threads (RTX 4070S / Windows), Stage 5 production model.
 Rollout levels run in separate subprocesses to avoid OOM from cache accumulation.
@@ -479,7 +479,7 @@ using S7 pair strategy at 1-ply.
 
 Benchmark run: 2026-03-24, RTX 4070S / Windows, Stage 7 pair model.
 N-ply levels run at 16 threads; rollout levels at 4 threads (16 threads causes
-segfault with pair strategy due to thread-local cache accumulation — see CLAUDE.md).
+segfault with pair strategy due to thread-local cache accumulation — see [docs/model-history.md](docs/model-history.md)).
 
 | Strategy | Settings | ER | Time |
 |----------|----------|------|------|
@@ -711,3 +711,16 @@ because the worst-case 1-ply positions are mostly crashed positions where the
 TINY 1-ply prefilter occasionally drops the right move from 3/4-ply rescoring;
 XG Roller++ at 249.67 is the strongest evaluator and matches the expected
 ordering.
+
+## Stage 10 & Stage 11 (24-NN Backgame-Aware Phased Model — Production)
+
+`stage11` is the current `PRODUCTION_MODEL` in `python/neongammon/weights.py`
+(24 NNs: Stage 9's 17 pair NNs with Stage 5's 200h pure-race net + 7 specialized
+backgame/containment/snake/massive NNs).
+
+- Benchmark PR rollout sample (1-in-20 sample, Stage 5 rollout & XG 4-ply referee):
+  see [docs/benchmarking.md](docs/benchmarking.md#benchmark-pr-rollout-sample-this-fork).
+- Detailed Stage 10 / Stage 11 / 11p / 11s / 11m development benchmarks and backgame
+  folder PRs: see [docs/model-history.md](docs/model-history.md#backgame-stages-s10-s11-s11p-s11s-s11m-and-cube-scoring-investigation).
+- Cross-engine money, match, and Paskogammon PR studies against XG: see
+  [XG_COMPARISON.md](XG_COMPARISON.md).

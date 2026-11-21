@@ -51,8 +51,8 @@ After a C++ change, rerun the `ninja` and `rm`/`cp` lines. Remove the old module
 copying over the installed `.so` makes every later `import bgbot_cpp` die with SIGKILL (exit 137, no output).
 
 Accelerate is on by default; `-DBGBOT_USE_ACCELERATE=OFF` builds the NEON delta kernels instead. For the
-measured speedups, and for comparing against GNUbg (set its location with `NEONGAMMON_GNUBG` or
-`neongammon.settings.set_gnubg_path`), see CLAUDE.md.
+measured speedups, see [docs/model-history.md](docs/model-history.md), and for comparing against GNUbg (set its location with `NEONGAMMON_GNUBG` or
+`neongammon.settings.set_gnubg_path`), see [docs/api.md](docs/api.md#gnubg-path).
 
 ## What Evaluation Levels Does It Support?
 

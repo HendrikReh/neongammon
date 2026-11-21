@@ -130,12 +130,38 @@ N-ply search tree.
 The Janowski parameter `x` (cube efficiency) controls how much of the live-cube
 premium is realized:
 
-- **Contact/crashed positions:** x = 0.68
-- **Race positions:** x = 0.55 + 0.00125 * avg_pips, clamped to [0.6, 0.7]
+- **Contact/crashed positions (base C++ default):** `x = 0.68`
+- **Race positions:** `x = 0.55 + 0.00125 * avg_pips`, clamped to `[0.6, 0.7]`
 
 Where `avg_pips = (player_pips + opponent_pips) / 2`. Using the average (rather than
 just the roller's pips) makes the evaluation perspective-independent, eliminating a
 systematic bias at odd ply levels.
+
+### Money Contact Cube Life by Depth
+
+`BgBotAnalyzer` and `neongammon.batch` override the contact cube efficiency for
+**money analysis at 1-ply and 2-ply** (because 1-ply and 2-ply trees terminate in a
+1-ply Janowski leaf before the player's next cube node, where `0.68` under-values
+No Double for the side with initiative):
+
+- `MONEY_CONTACT_CUBE_LIFE = {1: 0.7375, 2: 0.7625}` (`python/neongammon/analyzer.py`,
+  values at 120 average pips)
+- `MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE = {1: 0.00175, 2: 0.00125}`:
+  `x = value + slope * (avg_pips - 120)`, clamped to `[0.5, 1.0]`
+- Races keep their pip-based formula; match play, 3-ply+, and rollouts keep `0.68`.
+- **Where it applies:** `cube_action` (1-ply, N-ply), checker play (1-ply Janowski and
+  N-ply cube-aware tree), 1-ply `post_move_analytics`, and `batch_checker_play` at
+  matching depths. `batch_evaluate`, `batch_cube_action`, and
+  `batch_post_move_evaluate` apply the **1-ply** value at every depth
+  (`ROOT_JANOWSKI_CUBE_LIFE_PLY` in `batch.py`) because they run Janowski once at the
+  root on N-ply cubeless probabilities rather than building a cube tree.
+- **Mechanism:** `CubeInfo.contact_x` (`-1` = default `cube_efficiency()`) and
+  `CubeInfo.contact_x_pip_slope` (default `0`), resolved in `resolve_cube_x()` /
+  `contact_cube_x()` in `cpp/src/cube.cpp` (bound as `bgbot_cpp.contact_cube_x`). Both
+  are included in the cubeful cache key. C++ callers that omit them keep `0.68`.
+- **Tests & tuning history:** `tests/test_contact_cube_life.py` (`tests/test_2ply_details.py`
+  pins the table empty to compare interior nodes with standalone shallower calls). Tuning
+  and XG validation tables live in [docs/model-history.md](docs/model-history.md#money-contact-cube-life-tuning).
 
 ### Money Game: Janowski Formula
 
@@ -540,7 +566,7 @@ since pinned and unpinned evaluations of one board are different values.
 Today only `BackgameAwarePairStrategy` pins, and only for the snake net on
 the 23-NN layout (`root_pinned_`, default `{22}`); every other strategy
 returns -1 and routes per node exactly as above. Rationale and results:
-CLAUDE.md, "Stage 11s", round 2.
+[docs/model-history.md](docs/model-history.md) ("Stage 11s", round 2).
 
 ### Leaf Reuse at 2-Ply Nodes
 
