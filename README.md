@@ -1,5 +1,11 @@
 # NeonGammon
 
+[![Release](https://img.shields.io/github/v/release/HendrikReh/neongammon)](https://github.com/HendrikReh/neongammon/releases)
+[![Build wheels](https://github.com/HendrikReh/neongammon/actions/workflows/wheels.yml/badge.svg)](https://github.com/HendrikReh/neongammon/actions/workflows/wheels.yml)
+[![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon%20%28arm64%29-000000?logo=apple&logoColor=white)](#installation--building-on-apple-silicon)
+[![Python](https://img.shields.io/badge/python-3.10%20%E2%80%93%203.14-3776AB?logo=python&logoColor=white)](pyproject.toml)
+[![License: MPL-2.0](https://img.shields.io/github/license/HendrikReh/neongammon)](LICENSE)
+
 A neural-network backgammon engine with a C++17 core and Python interface, forked from [markbgsage/bgsage](https://github.com/markbgsage/bgsage) (the Open Sage bot engine) and focused on Apple Silicon.
 
 Ask NeonGammon what the best checker play is, whether to double/take/pass, how lucky a roll was, or simulate full games and matches with configurable policies and calibrated opponent difficulty presets.
