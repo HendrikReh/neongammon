@@ -36,6 +36,12 @@ and positions at the cube cap. Simulation itself plays without Beavers.
 For a forced PureTD move or pass, the single legal successor is returned
 directly. [PureTD policy](SIMULATION.md#puretd-checker-policy)
 
+`DifficultyPolicy` configures an explicit opponent preset. Beginner, Casual,
+and Intermediate sample cubeful Stage 11 1-ply checker alternatives within
+a preset equity-loss limit and sometimes vary close Cube decisions. Full
+Strength chooses the Stage 11 2-ply recommendation. The PR measurements are
+for five-point matches. [Opponent difficulty](SIMULATION.md#opponent-difficulty)
+
 ### When PureTD is available
 
 Set `NEONGAMMON_PURETD_LIBRARY` and `NEONGAMMON_PURETD_MODEL` to the native
