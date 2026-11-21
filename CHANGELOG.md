@@ -19,6 +19,26 @@ Timings below were measured on an M4 Pro Mac mini (10P+4E cores).
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-11-21
+
+### Added
+
+- `Difficulty` and `DifficultyPolicy` expose the Beginner, Casual, Intermediate,
+  and Full Strength opponent presets. The first three sample bounded checker
+  and cube deviations. Full Strength plays Stage 11 at 2-ply.
+- [Five-point calibration](MODEL_BENCHMARKS.md#five-point-difficulty-profiles)
+  measured 20.95, 14.44, 7.43, and 0.87 PR against Full Strength, respectively.
+  `scripts/calibrate_difficulty.py` reproduces the fit and match benchmarks.
+- Optional `PureTDPolicy` for cubeful checker play with a separately installed
+  PureTD native library and model checkpoint. [Setup](SIMULATION.md#puretd-checker-policy)
+
+### Changed
+
+- Jacoby money-game simulation uses filtered PureTD checker play when a
+  compatible library and checkpoint are available, with Stage 11 at 2-ply for
+  cube decisions. Stage 11 handles play when PureTD cannot be loaded. Explicit
+  player policies still take precedence.
+
 ## [3.0.0] - 2026-11-20
 
 ### Added
