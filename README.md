@@ -1,38 +1,43 @@
 # NeonGammon
 
-A fork of [markbgsage/bgsage](https://github.com/markbgsage/bgsage) (the Open Sage bot engine), focused on Apple Silicon.
+A neural-network backgammon engine with a C++17 core and Python interface, forked from [markbgsage/bgsage](https://github.com/markbgsage/bgsage) (the Open Sage bot engine) and focused on Apple Silicon.
 
-NeonGammon is a "backgammon bot engine" - that is, a library that you can ask questions like "what's the best
-move in this situation, with all the analytics to back it up", or "is this a double, and if so, is it a take or a pass 
-(including analytics)?".
+Ask NeonGammon what the best checker play is, whether to double/take/pass, how lucky a roll was, or simulate full games and matches with configurable policies and calibrated opponent difficulty presets.
 
-> **This is an Apple Silicon fork.** NeonGammon ([HendrikReh/neongammon](https://github.com/HendrikReh/neongammon),
-> formerly `HendrikReh/bgsage`) is a fork of [markbgsage/bgsage](https://github.com/markbgsage/bgsage). It targets **macOS on Apple Silicon (arm64) only**, and is
-> optimised for it. Batched neural-network evaluation runs through Apple's Accelerate framework on the CPU's matrix unit
-> (SME on M4, AMX on M1-M3). Upstream's Windows, Linux and NVIDIA/CUDA code has been removed; the one build for
-> anything else is the Linux x86-64 image `scripts/modal_rollout.py` uses for cloud rollouts.
+> **Apple Silicon fork.** NeonGammon ([HendrikReh/neongammon](https://github.com/HendrikReh/neongammon), formerly `HendrikReh/bgsage`) targets **macOS on Apple Silicon (arm64) only**. Batched neural-network evaluation runs through Apple's Accelerate framework on the CPU's matrix unit (SME on M4, AMX on M1–M3), and supervised training runs on the Apple GPU via [MLX](https://github.com/ml-explore/mlx). Upstream's Windows, Linux, and NVIDIA/CUDA code has been removed; the sole non-macOS target is the Linux x86-64 image used by `scripts/modal_rollout.py` for cloud rollouts.
 
-## What it Contains
+## Quick Start
 
-See [ENGINE.md](ENGINE.md) for checker and cube policies by game situation,
-fallbacks, lookahead, move filters, and rollouts.
+```python
+from neongammon import BgBotAnalyzer, STARTING_BOARD, simulate_game, Difficulty, DifficultyPolicy
 
-Complete, seeded game and match simulation is available through
-`from neongammon import simulate_game, simulate_match, GameConfig`. It records
-positions, dice, cube actions and scores for custom research. See
-[SIMULATION.md](SIMULATION.md) for examples, policy customization and rules.
+# Analyze checker play and cube decisions (defaults to Stage 11, 24-NN production model)
+analyzer = BgBotAnalyzer(eval_level="2ply")
+play = analyzer.checker_play(STARTING_BOARD, 3, 1)
+for m in play.moves[:3]:
+    print(f"{m.equity:+.3f}  win={m.probs.win:.1%}  diff={m.equity_diff:+.4f}")
 
-It is a joint Python/C++ library that includes:
-* A neural network-based backgammon bot.
-* Neural network training framework using both self play and supervised learning, including training code, benchmark scoring, with customizable inputs. Supervised learning runs on the Apple GPU through Apple's MLX framework (`pip install mlx`).
-* The post-training weights for several different versions of the bot engine.
-* Multi-ply and rollout calculations that efficiently parallelize on the CPU. Full technical specifications of the algorithms are in MULTI-PLY.md (N-ply search and the cubeful evaluation engine) and ROLLOUT.md (truncated and full rollouts with variance reduction).
-* Test framework.
-* VIBING.md: information on how to use Claude Code-style tools to interact with and change it, and how to submit changes back to us (the maintainers). Most of this code was written by Anthropic's Claude Code and OpenAI's Codex.
+cube = analyzer.cube_action(STARTING_BOARD, cube_value=1, cube_owner="centered")
+print(cube.optimal_action, f"ND={cube.equity_nd:+.3f} DT={cube.equity_dt:+.3f}")
 
-## Building on Apple Silicon
+# Simulate a complete seeded game (or play against a calibrated difficulty preset)
+game = simulate_game(seed=1)
+preset_game = simulate_game(players=(DifficultyPolicy(Difficulty.INTERMEDIATE), analyzer), seed=1)
+```
 
-You need Xcode's command-line tools (`xcode-select --install`) and Python 3.10 or newer. From the repo root:
+## What It Contains
+
+- **24-NN production evaluator (`stage11`):** 17 game-plan pair networks (with Stage 5's 200h pure-race network) plus 7 specialized backgame, containment, snake, and massive-backgame networks, combined with an exact one-sided bearoff database (`data/bearoff_1sided.db`). See [ENGINE.md](ENGINE.md).
+- **Multi-ply search & rollouts:** Parallelized CPU N-ply cubeful search ([MULTI-PLY.md](MULTI-PLY.md)) and full/truncated Monte Carlo rollouts with stratified dice and variance reduction ([ROLLOUT.md](ROLLOUT.md)).
+- **Game & match simulation:** Seeded `simulate_game()` and `simulate_match()` with full turn/dice/cube recording, optional PureTD hybrid money play (`PureTDPolicy`), and calibrated opponent presets (`DifficultyPolicy`). See [SIMULATION.md](SIMULATION.md).
+- **Training & benchmarking framework:** CPU TD(0) self-play, Apple GPU supervised learning via MLX (`neongammon.sl_train`), Modal cloud rollouts (`scripts/modal_rollout.py`), and benchmark/XG comparison tooling.
+- **Test suite:** Automated `pytest` coverage across move generation, encoding golden fixtures, cubeful/match rules, simulation, PureTD, difficulty presets, and MLX training.
+
+## Installation & Building on Apple Silicon
+
+Prebuilt macOS arm64 wheels (Python 3.10–3.14) are published on [GitHub Releases](https://github.com/HendrikReh/neongammon/releases).
+
+To build from source, you need Xcode Command Line Tools (`xcode-select --install`) and Python 3.10+. From the repo root:
 
 ```bash
 python3 -m venv build/venv
@@ -47,40 +52,60 @@ rm -f build/bgbot_cpp*.so && cp build/cmake_accel/bgbot_cpp*.so build/
 PYTHONPATH="$PWD/build:$PWD/python" python -m pytest -q tests
 ```
 
-After a C++ change, rerun the `ninja` and `rm`/`cp` lines. Remove the old module before copying: on macOS,
-copying over the installed `.so` makes every later `import bgbot_cpp` die with SIGKILL (exit 137, no output).
+After a C++ change, rerun the `ninja` and `rm`/`cp` lines. **Remove the old module before copying:** on macOS, overwriting an installed `.so` in place leaves a stale cached code signature for that inode, causing subsequent `import bgbot_cpp` calls to die with `SIGKILL` (exit 137, no output).
 
-Accelerate is on by default; `-DBGBOT_USE_ACCELERATE=OFF` builds the NEON delta kernels instead. For the
-measured speedups, see [docs/model-history.md](docs/model-history.md), and for comparing against GNUbg (set its location with `NEONGAMMON_GNUBG` or
-`neongammon.settings.set_gnubg_path`), see [docs/api.md](docs/api.md#gnubg-path).
+Accelerate is enabled by default; `-DBGBOT_USE_ACCELERATE=OFF` builds the NEON delta kernels instead. For measured speedups see [docs/model-history.md](docs/model-history.md); for GNUbg CLI configuration (`NEONGAMMON_GNUBG` or `neongammon.settings.set_gnubg_path`), see [docs/api.md](docs/api.md#gnubg-path).
 
-## What Evaluation Levels Does It Support?
+## Evaluation Levels
 
-The library supports "multi-ply" lookahead calculations. 1-ply is the raw neural network evaluation (we follow the XG/eXtreme Gammon
-numbering convention; GNUbg calls this "0-ply"). Adding a ply makes the calculation roughly 20x slower. It efficiently parallelizes
-these multi-ply calculations on your CPUs.
+NeonGammon uses the **XG ply convention** (`1ply` = raw neural-network evaluation = GNUbg `0-ply`):
 
-It supports truncated rollout calculations, where it simulates the game several turns into the future and then stops the simulation, using bot evaluations at the leaves.
+| `eval_level` | Method | Notes |
+|---|---|---|
+| `1ply` | Direct NN evaluation | Instant; Janowski cubeful conversion |
+| `2ply`, `3ply`, `4ply` | N-ply cubeful search | Lookahead over opponent replies; each ply ~20× slower |
+| `truncated1` (1T) | 72-trial truncated rollout | 5 half-moves, 1-ply play, variance reduction |
+| `truncated2` (2T) | 360-trial truncated rollout | 7 half-moves, 2-ply first move/cube/truncation |
+| `truncated3` (3T) | 360-trial truncated rollout | 7 half-moves, 3-ply early then 2-ply |
+| `rollout` | Full rollout (1,296 trials default) | Configurable checker/cube trial strengths & `target_se` |
 
-It also supports full rollout calculations, which are simulations playing out the game over and over to completion. 
+See [ENGINE.md](ENGINE.md) for filter behavior and default simulation policies.
 
-Truncated and full rollouts both include variance reduction and efficiently parallelize on CPUs.
+## Interfaces
 
-## What are Its Interfaces?
+Both Python (`neongammon`) and C++ (`bgbot` / `bgbot_cpp`) interfaces are provided — prefer the Python public API ([docs/api.md](docs/api.md)) unless targeting low-level C++ internals:
 
-It offers both Python and C++ interfaces for:
-* Checker play analytics: given a list of checker positions, the two dice, and cube information, it returns you a list of information about the top possible moves, sorted in descending order of equity; for each it gives you equity and cubeless post-move probabilities. You can specify the evaluation level.
-* Post-move position analytics: given a list of checker positions and the cube information, it returns you cubeful equity, cubeless equity, and the cubeless probabilities - for a post-move position (right before the opponent's turn).
-* Cube action analytics: given a list of checker positions and the cube information, it returns you cubeful equity information about the three states (ND, D/T, and D/P), cubeless equity, and the cubeless probabilities - for a pre-roll position.
-* Game plan classification: given a list of checkers, it returns the optimal game plans of the player and the opponent.
-* Game utilities (flip a board, etc).
+- **Checker play analytics** (`BgBotAnalyzer.checker_play`, `batch_checker_play`): ranks all legal moves by cubeful or cubeless equity with post-move probabilities.
+- **Post-move analytics** (`BgBotAnalyzer.post_move_analytics`, `batch_post_move_evaluate`): cubeful equity, cubeless equity, and probabilities right before the opponent's turn.
+- **Cube action analytics** (`BgBotAnalyzer.cube_action`, `cube_decision`, `batch_cube_action`, `batch_evaluate`): No Double / Double-Take / Double-Pass equities, optimal action, and optional 2-ply per-roll details (`incl_2ply_details=True`).
+- **Per-roll luck & match info** (`roll_luck`, `luck_from_equities`, `neongammon.matchinfo`): signed dice-fortune equity from cube details, plus MET take points and gammon prices.
+- **Bearoff database & EPC** (`BgBotAnalyzer.epc`, `BearoffDB`): exact home-board bearoff probabilities and Effective Pip Count.
+- **Game plan classification & board utilities** (`classify_game_plans`, `possible_moves`, `flip_board`, `is_race`, `is_crashed`, `check_game_over`).
+- **Simulation & difficulty presets** (`simulate_game`, `simulate_match`, `PureTDPolicy`, `Difficulty`, `DifficultyPolicy`).
 
-## How Does it Compare to XG?
+## How Does It Compare to XG?
 
-We tested money games and match play against eXtreme Gammon (XG), another popular backgammon analysis application. In particular, upstream tested Open Sage's 3T evaluations (truncated rollouts) to XG Roller ++ (an equivalent truncated rollout). The two bots were very close, with some weak evidence that Open Sage 3T is a bit stronger.
+Money games, 5-point matches, backgames, Paskogammon, and real tournament matches were benchmarked against eXtreme Gammon (XG). At matched truncated-rollout strength (`3T` vs XG Roller++), NeonGammon and XG are very close — with NeonGammon slightly ahead in the rollout PR studies and matching XG's tournament match PR ratings to within `+0.002` PR (`r = 0.98`).
 
-Details of the tests, and instructions on how to replicate them, are in XG_COMPARISON.md. These tests were run upstream;
-on the Mac, XG runs under CrossOver, and its Batch Analyze reads the files this repo writes.
+Full results and replication instructions — including running XG under CrossOver on macOS with Batch Analyze and `scripts/xg_h2h.py` — are in [XG_COMPARISON.md](XG_COMPARISON.md) and [docs/benchmarking.md](docs/benchmarking.md).
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [ENGINE.md](ENGINE.md) | Engine behavior by game situation, Stage 11 routing, PureTD hybrid, difficulty presets, filters, rollouts |
+| [SIMULATION.md](SIMULATION.md) | `simulate_game` / `simulate_match`, `GameConfig`, `PureTDPolicy`, `DifficultyPolicy` |
+| [docs/api.md](docs/api.md) | Full Python & C++ API reference, batch APIs, 2-ply detail schema, luck, matchinfo, GNUbg path, glossary |
+| [docs/bearoff.md](docs/bearoff.md) | One-sided bearoff database format, indexing, API, and EPC |
+| [MULTI-PLY.md](MULTI-PLY.md) | Technical specification of N-ply cubeful/cubeless search, Janowski, money cube life, match play, and caching |
+| [ROLLOUT.md](ROLLOUT.md) | Technical specification of full/truncated rollouts, stratified dice, variance reduction, and configuration |
+| [docs/training.md](docs/training.md) | Input encodings, TD+SL pipeline, Apple MLX GPU trainer, Modal cloud rollouts, and data formats |
+| [docs/benchmarking.md](docs/benchmarking.md) | Benchmark scripts, 1-in-20 Benchmark PR rollout sample, XG referee, and regression baselines |
+| [XG_COMPARISON.md](XG_COMPARISON.md) | Head-to-head and Batch Analyze PR studies against eXtreme Gammon + `.xg` workflows |
+| [MODEL_BENCHMARKS.md](MODEL_BENCHMARKS.md) | Historical benchmark tables across model stages and five-point difficulty profiles |
+| [docs/model-history.md](docs/model-history.md) | Model evolution (Stages 5–11m), tuning experiments, Apple Silicon speedups, and resolved investigations |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+| [VIBING.md](VIBING.md) | Notes on AI-assisted development workflow in this codebase |
 
 ## License
 

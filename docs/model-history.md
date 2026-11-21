@@ -1,6 +1,19 @@
 # Model Evolution, Experiments, and Performance Measurements
 
-Historical model stages, tuning experiments, performance measurements, and resolved investigations extracted from `CLAUDE.md`. For current engine behavior see [ENGINE.md](../ENGINE.md); for summary benchmark tables see [MODEL_BENCHMARKS.md](../MODEL_BENCHMARKS.md).
+Historical model stages, tuning experiments, Apple Silicon performance measurements, and resolved investigations. For current engine behavior see [ENGINE.md](../ENGINE.md); for summary benchmark tables see [MODEL_BENCHMARKS.md](../MODEL_BENCHMARKS.md).
+
+## Contents
+
+- [Apple Silicon & Analyzer Performance Measurements](#apple-silicon--analyzer-performance-measurements)
+- [Money Contact Cube Life Tuning](#money-contact-cube-life-tuning)
+- [Interior Move-Pick Validation: Cubeful vs Cubeless (2026-11-19)](#interior-move-pick-validation-cubeful-vs-cubeless-2026-11-19)
+- [Search Distillation Experiment](#search-distillation-experiment)
+- [Stage 5 Scores](#stage-5-scores-historical-baseline--not-the-production-model)
+- [Stage 6 (S6)](#stage-6-s6--mid-size-model)
+- [Stage 7 (S7)](#stage-7-s7--17-nn-pair-strategy-model)
+- [Stage 8 (S8)](#stage-8-s8--17-nn-pair-strategy-400h-contact-s5-fallback)
+- [Stage 5 Small (S5S)](#stage-5-small-s5s--fast-filter-model)
+- [Backgame Stages (S10, S11, S11p, S11s, S11m) and Cube Scoring Investigation](#backgame-stages-s10-s11-s11p-s11s-s11m-and-cube-scoring-investigation)
 
 ## Apple Silicon & Analyzer Performance Measurements
 
@@ -394,7 +407,7 @@ rollout = bgbot_cpp.create_rollout_pair(weight_paths, hidden_sizes,
 ```
 
 **Training scripts:**
-- `scripts/run_s7_training.py` — TD training
+- `scripts/run_stage7_training.py` — TD training
 - `scripts/run_s7_sl_training.py` — GPW scan
 - `scripts/run_s7_sl_phase34.py` — Full SL training (phases 3-4)
 
@@ -758,7 +771,7 @@ bear-offs), GNUbg targets — as `data/s11-bg-containment-general-rollout`.
 alpha 3.1 then 60k @ 1.0, best-holdout-ER checkpointing). The installed net
 is the S9 `prim_race` warm start trained on family rows x4 plus the general
 rows (`--extra-data s11-bg-containment-general-rollout --family-weight 4`).
-The family-only version was the narrow-subset failure this file warns about
+The family-only version was the narrow-subset failure [docs/training.md](training.md) warns about
 elsewhere: on the money benchmark's 237 containment-routed decisions it
 scored PR 4.62 with 6 blunders against 2.91 / 2 for Stage 9's ordinary nets,
 while ordinary-game containment simply never appeared in its data. The

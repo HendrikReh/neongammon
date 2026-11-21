@@ -16,7 +16,7 @@ to override. Scripts live in `scripts/`.
 | `test_evaluate_probs.py` | Single position eval at 1-4 ply + GNUbg + rollouts | `--model`, `--checkers`, `--ply N` |
 | `test_cube_decision.py` | Cube decisions vs 3 reference positions at 1-4 ply + rollout | `--model` |
 | `test_unified_rollout.py` | Verify cubeful(max_cube=1) == cubeless at N-ply + rollout | `--model` |
-| `eval_position.py` | Side-by-side Stage 5 vs GNUbg evaluation (cube action or checker play, 1-4 ply + rollout, money or match play) | `cube`/`checker` subcommand, `--checkers`, `--dice`, `--match`, `--score`, `--cube-value`, `--cube-owner` |
+| `eval_position.py` | Side-by-side NeonGammon (production model) vs GNUbg evaluation (cube action or checker play, 1-4 ply + rollout, money or match play) | `cube`/`checker` subcommand, `--checkers`, `--dice`, `--match`, `--score`, `--cube-value`, `--cube-owner` |
 | `profile_cube_benchmark.py` | Profiling benchmark: 8 fixed cube positions (mix of money/match, bearoff/contact) evaluated serially with timing. For verifying optimisations don't change values. | level positional arg: `1ply`–`4ply`, `1T`, `2T`, `3T` |
 
 ```bash
@@ -34,7 +34,7 @@ python scripts/run_full_benchmark.py --ply 3 --scenarios 500
 # Score all registered models on Benchmark PR
 python scripts/score_benchmark_pr.py --all-models
 
-# Side-by-side Stage 5 vs GNUbg cube analysis (money game)
+# Side-by-side NeonGammon vs GNUbg cube analysis (money game)
 python scripts/eval_position.py cube --checkers "0,-2,0,0,0,0,5,0,3,0,0,0,-5,5,0,0,0,-3,0,-5,0,0,0,0,2,0"
 
 # Side-by-side cube analysis (match play: 5-point match, player 3pts, opp 0pts)
@@ -91,8 +91,7 @@ rollout, and only the moves Stage 5's 2-ply filter kept were rolled out, so a
 pick outside that set is charged the worst rolled-out move (GNUbg 1-ply lands
 outside it 159 times, stage11 about 80). No significance test was run, so gaps
 of a few hundredths (Stages 8-11 span 3.17-3.24 at 2-ply) may be noise. And
-the numbers are not comparable with the full-set PRs quoted elsewhere in this
-file.
+the numbers are not comparable with the full-set PRs quoted in [MODEL_BENCHMARKS.md](../MODEL_BENCHMARKS.md).
 
 **The pure-race gap.** The one clear gap to GNUbg on this reference is the
 pure race (979 decisions); against XG it disappears (end of this paragraph). Split by whether the pre-move position is in the bearoff database

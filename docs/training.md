@@ -107,10 +107,12 @@ running and billing until stopped with `modal app stop -y <app id>`. Modal
 pre-empts containers now and then; the affected boards are restarted
 automatically. Re-running the same command resumes.
 
-### Training a New Model from Scratch
+### Training a New 5-NN Model from Scratch
 
 To train a new 5-NN model (e.g., with different hidden sizes), follow these steps.
-The process is long-running (~25-30 hours total for the current production schedule).
+The process is long-running (~25-30 hours total for the historical Stage 5 5-NN schedule;
+the current `stage11` production model builds on a 17-NN pair model plus specialized
+backgame/containment nets — see the pair-strategy and backgame sections below).
 
 **Step 1: Create a training script** based on `scripts/run_stage5_training.py`.
 Key parameters to customize:
@@ -127,7 +129,7 @@ MODELS["stage5small"] = {
 ```
 
 **Step 3: Launch training as a detached process.**
-Training is long-running and must survive past Claude Code's ~1h timeout.
+Training is long-running and should be detached from your terminal or agent session.
 Run from the neongammon repo root:
 ```bash
 # IMPORTANT: Use python -u for unbuffered output.
@@ -180,14 +182,19 @@ slower per game due to the larger matrix multiplies.
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/run_stage5_training.py` | Stage 5 (200h/400h) full training |
-| `scripts/run_stage5small_training.py` | Stage 5 Small (100h/200h) full training |
+| `scripts/run_stage5_training.py` | Stage 5 (5-NN, 200h/400h) full training |
+| `scripts/run_stage5small_training.py` | Stage 5 Small (5-NN, 100h/200h) full training |
+| `scripts/run_s8_training.py` | Stage 8 (17-NN pair strategy, 400h contact) end-to-end training |
+| `scripts/run_s11_backgame_td.py` | Stage 11 backgame TD pre-training |
+| `scripts/run_s11_backgame_sl.py` | Stage 11 backgame SL training |
+| `scripts/run_s11_containment_sl.py` | Stage 11 containment / snake / massive SL training |
+| `scripts/modal_rollout.py` | Cloud rollout target generation on Modal CPU containers |
 | `scripts/run_td_gameplan_training.py` | TD self-play (standalone, low-level) |
-| `scripts/run_gpu_sl_training.py` | GPU SL training (standalone, per-NN) |
+| `scripts/run_gpu_sl_training.py` | GPU SL training via MLX (standalone, per-NN) |
 
-### Standard TD + SL Schedule
+### Standard 5-NN TD + SL Schedule (Stage 5 Baseline)
 
-The production training schedule (used for Stage 5):
+The standard 5-NN training schedule (used for Stage 5):
 
 **TD (CPU, serial):**
 - Phase 1: 200k games @ α=0.1 (high learning rate for initial learning)
@@ -222,43 +229,11 @@ See [docs/benchmarking.md](benchmarking.md) for all benchmarking commands.
 
 ### Hybrid Evaluator (Multi-Ply with Separate Filter Model)
 
-The `MultiPlyStrategy` supports an optional separate filter strategy for 1-ply
-filtering and opponent move selection, while using the main (leaf) strategy for
-leaf evaluations. This allows using a fast/small model for filtering with an
-accurate/large model for final evaluation.
-
-**C++ API:**
-```cpp
-// Standard (single strategy for both):
-auto strat = std::make_shared<MultiPlyStrategy>(base, n_plies, filter);
-
-// Hybrid (separate filter + leaf):
-auto strat = std::make_shared<MultiPlyStrategy>(base, filter_strat, n_plies, filter);
-```
-
-**Python API:**
-```python
-# Standard multi-ply
-multipy = bgbot_cpp.create_multipy_5nn(*w.weight_args, n_plies=3)
-
-# Hybrid multi-ply (fast filter + accurate leaf)
-multipy = bgbot_cpp.create_multipy_hybrid_5nn(
-    *w_leaf.weight_args,      # 10 args: 5 weight paths + 5 hidden sizes
-    *w_filter.weight_args,    # 10 args: 5 weight paths + 5 hidden sizes
-    n_plies=3)
-
-# Hybrid rollout
-rollout = bgbot_cpp.create_rollout_hybrid_5nn(
-    *w_leaf.weight_args,
-    *w_filter.weight_args,
-    n_trials=360, truncation_depth=7, decision_ply=2)
-```
-
-The hybrid mode affects:
-- `best_move_index_impl`: filter strategy scores candidates for ranking/pruning
-- `evaluate_probs_nply_impl`: filter strategy selects opponent's best move at 1-ply
-- Leaf evaluation (`plies=0`): always uses the base (accurate) strategy
-- VR in rollouts: always uses base strategy (unaffected by hybrid mode)
+`MultiPlyStrategy` supports an optional separate filter strategy for 1-ply filtering
+and opponent move selection while keeping the main strategy at leaves. Full details live
+in [MULTI-PLY.md](../MULTI-PLY.md#9-hybrid-evaluator-mode); see
+[docs/model-history.md](model-history.md#stage-5-small-s5s--fast-filter-model) for why
+halving hidden nodes did not meaningfully speed up 4-ply search.
 
 
 ## Training a New Pair Strategy Model (End-to-End Process)
@@ -319,8 +294,7 @@ Check training progress periodically (e.g. every 10 minutes via a scheduled task
 Summarize the current phase (TD Phase 1, TD Phase 2, GPW scan, SL phases 3-4, benchmarks), progress, and any errors.
 
 The training script also prints its own progress updates every 10 minutes to the log
-(via the `ProgressTracker` class), but the cron job gives the user a live interactive
-summary without needing to manually check logs.
+(via the `ProgressTracker` class).
 
 You can also check manually:
 ```bash

@@ -7,15 +7,15 @@ For game/match simulation (`simulate_game`, `simulate_match`, `PureTDPolicy`, `D
 **IMPORTANT: When writing scripts or code that needs checker play or cube action
 analysis without targeting a specific model, always use `BgBotAnalyzer` from
 `neongammon`.** This is the standard model-independent Python interface — it
-abstracts away whether the production model is a 5-NN or 17-NN pair strategy.
+abstracts away whether the production model is a 5-NN, 17-NN pair, or 24-NN
+backgame-aware phased strategy (`stage11`).
 Do NOT call low-level `bgbot_cpp` functions directly (e.g.
 `cube_decision_nply`, `cube_decision_nply_pair`) unless you need to target a
 specific model type or need parameters not exposed by the public API.
 
-The library provides both **Python** and **C++** interfaces for five categories
-of functionality. All Python functions default to the production model; pass
-`weights=WeightConfig.from_model("stage3")` (or `model="stage3"` where
-applicable) to use a different model.
+The library provides both **Python** and **C++** interfaces across seven categories
+of functionality. All Python functions default to the production model (`stage11`); pass
+`weights=WeightConfig.from_model("stage5")` to use a different model.
 
 ### 1. Checker Play Analytics
 
@@ -195,33 +195,30 @@ grouped NN output). A DT per-roll equity can differ more from a standalone
 cube-2 analysis, since its subtree's picks are made against the ND cube state
 (`tests/test_2ply_details.py`).
 
-Until 2026-11-19 the details ran on an older recursion in `cube.cpp` with 1-ply
-cubeless picks at the captured levels, scalar NN calls and no root routing: its
-headline equities drifted from the plain call's by up to 0.09, and it cost
-1.1-1.3x a plain call. On 76 random positions (half 5-away/3-away) the switch
-changed 4-7% of the per-roll boards and moved ND per-roll equities (and so
-luck values) by a median 0.001, p95 0.003-0.026.
-
 **2-ply behavior**: at 2-ply only the player-roll level is captured — the
 opponent-roll level would sit below the 1-ply leaf. Each post-move position is
 evaluated directly at the 1-ply Janowski leaf (the same subtree the plain 2-ply
 call evaluates), so per-roll equities are 1-ply accurate, `opponent_rolls` is
-absent from every entry, and the cost is that of a plain 2-ply cube evaluation. (Before 2026-06 the
-details path always ran its two manual recursion levels, so a 2-ply details
-request silently returned 3-ply-grade headline equities at ~21x the cost.)
+absent from every entry, and the cost is that of a plain 2-ply cube evaluation.
 
-**Python (batch, pre-roll)** — `batch_evaluate()` (`python/neongammon/batch.py`):
+**Python (batch, pre-roll)** — `batch_evaluate()` and `batch_cube_action()` (`python/neongammon/batch.py`):
 ```python
-from neongammon import batch_evaluate
+from neongammon import batch_evaluate, batch_cube_action
 
 positions = [{"board": b, "cube_value": 1, "cube_owner": "centered"} for b in boards]
 results = batch_evaluate(positions, eval_level="3ply", n_threads=0)
 # results: list[PositionEval] — includes probs, cubeless/cubeful equity, cube decision
 
+# Same root-Janowski batch evaluation returned as list[CubeActionResult]:
+cube_results = batch_cube_action(positions, eval_level="3ply", n_threads=0)
+
 # Match play: add optional away1, away2, is_crawford to position dicts
 positions = [{"board": b, "cube_value": 1, "cube_owner": "centered",
               "away1": 5, "away2": 3} for b in boards]
 ```
+Note: `batch_evaluate` and `batch_cube_action` apply Janowski once at the root on N-ply
+cubeless probabilities (using the 1-ply money contact cube life at every depth) rather
+than running the recursive N-ply cubeful cube tree.
 
 **C++** — `evaluate_cube_decision()` (1-ply), `cube_decision_nply()` (N-ply),
 `cube_decision_rollout()`:
@@ -317,10 +314,12 @@ Board manipulation, move generation, and game state queries.
 |----------|---------|
 | `flip_board(board)` | Flip to opponent's perspective |
 | `possible_moves(board, die1, die2)` | All legal resulting positions |
+| `possible_moves_all(board)` | Compact legal resulting positions across all 21 rolls |
 | `possible_single_die_moves(board, die)` | Single-die moves with from/to (for UI) |
 | `check_game_over(board)` | 0=not over, ±1/±2/±3 = single/gammon/backgammon |
 | `is_race(board)` | True if contact is broken |
 | `is_crashed(board)` | True if position is crashed |
+| `can_double_match(away1, away2, cube_value, owner, is_crawford=False)` | Whether doubling is legal at a match score |
 | `invert_probs(probs)` | Swap player/opponent probabilities |
 | `STARTING_BOARD` | Standard 26-element starting position |
 
@@ -375,7 +374,7 @@ many rolls** — summing per-roll luck across a game isolates dice fortune from
 decision quality (a player with high total luck won the dice, not necessarily the
 game). This is the app-facing per-roll Luck shown in PR breakdowns; it is
 distinct from **VR** (variance-reduction luck used internally to denoise
-rollouts — see the Rollout section).
+rollouts — see [ROLLOUT.md](../ROLLOUT.md#4-variance-reduction-vr)).
 
 **This is a pure function over analytics, not a fresh evaluation.** The per-roll
 equities are exactly the **ND (No Double) per-roll cubeful equities** that
@@ -509,16 +508,21 @@ analyzer = BgBotAnalyzer(eval_level="rollout",
 
 ### Low-Level `bgbot_cpp` Rollout API (`TrialEvalConfig` & Progress Callback)
 
-**Python API — low-level (`bgbot_cpp.cube_decision_rollout`):**
+> Prefer `BgBotAnalyzer(eval_level="rollout", checker=..., cube=..., target_se=...)`
+> for model-independent rollouts (including the 24-NN `stage11` production model).
+> The low-level `bgbot_cpp.cube_decision_rollout` and `create_rollout_5nn` helpers
+> below accept a 5-NN `WeightConfig` (10 unpacked args) — use `WeightConfig.from_model("stage5")`,
+> not `WeightConfig.default()` (which returns a 24-NN `WeightConfigPair`).
 
 ```python
 import bgbot_cpp
 from neongammon.weights import WeightConfig
-w = WeightConfig.default()
+
+w = WeightConfig.from_model("stage5")
 
 # Full rollout, 3-ply for both checker and cube, no ply reductions
-# IMPORTANT: set ultra_late_threshold=9999 for accurate full rollouts
-# (default=2 drops to 1-ply at move 2+, biasing results)
+# IMPORTANT: C++ defaults ultra_late_threshold=2 (drops to 1-ply at move 2+);
+# pass ultra_late_threshold=9999 for accurate full rollouts (BgBotAnalyzer defaults to 9999).
 result = bgbot_cpp.cube_decision_rollout(
     checkers=board,
     *w.weight_args[:5],   # 5 weight paths
@@ -562,20 +566,15 @@ result = rollout.cube_decision(checkers=board, cube_value=1,
 ```
 
 **`ultra_late_threshold` guidance:**
-- Default `2`: fast, suitable for truncated rollouts (short games, ~5-7 moves)
-  where most moves are within the threshold anyway
-- `9999`: use configured strategies for the entire game — required for accurate
-  full rollouts (`truncation_depth=0`) with N-ply or rollout cube evaluators
-- Full rollout with 3-ply checker + 3-ply cube + `ultra_late_threshold=9999` gives
-  results matching XG at ~100s/position (1296 trials, 16 threads)
+- `BgBotAnalyzer` defaults to `ultra_late_threshold=9999` (no late 1-ply drop); C++ `RolloutConfig` defaults to `2` (fast for short truncated rollouts).
+- Set `ultra_late_threshold=9999` whenever running full rollouts (`truncation_depth=0`) directly through C++ with N-ply or rollout evaluators.
+
+**Adaptive stopping (`target_se` / `max_batches`):** `BgBotAnalyzer(eval_level="rollout", target_se=0.01, max_batches=50)` runs batches until standard error reaches `target_se` (or `max_batches` is hit); `target_se=0.0` (default) runs a fixed `n_trials`.
 
 **Progress callback**: Both `cube_decision_rollout()` and `rollout.cube_decision()`
 accept `progress=callable` — called with `(completed, total)` periodically during
 execution. Useful for progress bars in UI. The callback is called from worker threads
 with the GIL automatically acquired.
-
-**Not yet implemented:**
-- Early stopping (XG Roller+ stops at 0.010 confidence, minimum 180 games)
 
 ## Glossary
 
@@ -587,7 +586,7 @@ with the GIL automatically acquired.
 - **gpw**: Game plan weight — gradient multiplier for matching positions in SL
 - **TINY filter**: Default move filter (5 moves, 0.08 threshold)
 - **VR**: Variance Reduction — luck-tracking for rollout noise reduction (always 1-ply, decoupled from decision ply). Internal to rollouts; distinct from the app-facing per-roll **Luck** metric.
-- **Luck** (per-roll): How lucky an actual roll was, in equity units — `actual_equity - average_equity` from the roller's perspective (see Interfaces §7 Luck). Positive = lucky, averages to zero over many rolls. Not the same as VR.
+- **Luck** (per-roll): How lucky an actual roll was, in equity units — `actual_equity - average_equity` from the roller's perspective (see [§7 Luck](#7-luck-per-roll-dice-fortune)). Positive = lucky, averages to zero over many rolls. Not the same as VR.
 - **BMI**: Best Move Index — the core function that selects the best move from legal candidates (1-ply score + filter + N-ply rescore)
 - **Move0Cache/Move1Cache**: Pre-computed move decisions for the first/second half-moves of a rollout trial, shared across all trials
 - **SharedPosCache**: Lock-free cross-thread N-ply position evaluation cache for rollout trials
