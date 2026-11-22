@@ -107,6 +107,8 @@ running and billing until stopped with `modal app stop -y <app id>`. Modal
 pre-empts containers now and then; the affected boards are restarted
 automatically. Re-running the same command resumes.
 
+For primary Modal documentation links and rollout policy-dependence references (Tesauro & Galperin), see [docs/strength-references.md](strength-references.md#modal-and-rollout-measurements).
+
 ### Training a New 5-NN Model from Scratch
 
 To train a new 5-NN model (e.g., with different hidden sizes), follow these steps.

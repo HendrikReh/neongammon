@@ -155,3 +155,5 @@ with PureTDPolicy(
 
 Use `select_checker_move(board, die1, die2, ...)` for a single decision. Use
 `analysis.checker_play` to score and rank all legal moves with Stage 11.
+
+For the PureTD preprint benchmarks (vs. Open Sage Stage 11 and GNUbg) and license summary, see [docs/strength-references.md](strength-references.md#puretd-and-directly-trained-cubeful-play).

@@ -26,6 +26,7 @@ Reference guides, technical specifications, training runbooks, and benchmark arc
 | [benchmarking.md](benchmarking.md) | Benchmark scripts, 1-in-20 Benchmark PR rollout sample, XG referee runs, and `bench_3t*.py` regression baselines |
 | [xg-comparison.md](xg-comparison.md) | Rollout PR, disputed positions, backgames, Paskogammon, and tournament match studies against eXtreme Gammon + `.xg` Batch Analyze & `xg_h2h.py` workflows |
 | [model-benchmarks.md](model-benchmarks.md) | Historical benchmark tables across model stages and five-point difficulty profiles |
+| [strength-references.md](strength-references.md) | Primary sources on playing strength and evaluation methodology: PureTD preprint, GNUbg/XG specs & usage rights, Modal rollouts, and rollout policy dependence |
 
 ## History, Development & Archives
 

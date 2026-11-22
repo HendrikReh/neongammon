@@ -1,6 +1,6 @@
 # Benchmarking and Evaluation Scripts
 
-Historical model results live in [docs/model-benchmarks.md](model-benchmarks.md). Head-to-head and `.xg` Batch Analyze workflows live in [docs/xg-comparison.md](xg-comparison.md#operational-workflows-xg-files-and-h2h).
+Historical model results live in [docs/model-benchmarks.md](model-benchmarks.md). Head-to-head and `.xg` Batch Analyze workflows live in [docs/xg-comparison.md](xg-comparison.md#operational-workflows-xg-files-and-h2h). Primary literature and external engine/rollout references live in [docs/strength-references.md](strength-references.md).
 
 ## Benchmark Scripts
 

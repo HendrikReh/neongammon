@@ -109,6 +109,7 @@ Full results and replication instructions — including running XG under CrossOv
 | [docs/benchmarking.md](docs/benchmarking.md) | Benchmark scripts, 1-in-20 Benchmark PR rollout sample, XG referee, and regression baselines |
 | [docs/xg-comparison.md](docs/xg-comparison.md) | Head-to-head and Batch Analyze PR studies against eXtreme Gammon + `.xg` workflows |
 | [docs/model-benchmarks.md](docs/model-benchmarks.md) | Historical benchmark tables across model stages and five-point difficulty profiles |
+| [docs/strength-references.md](docs/strength-references.md) | Primary sources on playing strength, PureTD preprint, GNUbg/XG specs & usage rights, and rollout policy dependence |
 | [docs/model-history.md](docs/model-history.md) | Model evolution (Stages 5–11m), tuning experiments, Apple Silicon speedups, and resolved investigations |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 | [docs/vibing.md](docs/vibing.md) | Notes on AI-assisted development workflow in this codebase |

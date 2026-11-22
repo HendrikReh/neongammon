@@ -79,4 +79,5 @@ Key regression tests to run when touching sensitive areas:
 | Benchmark scripts, 1-in-20 Benchmark PR rollout sample, XG referee, `bench_3t*.py` regression baselines | [docs/benchmarking.md](docs/benchmarking.md) |
 | XG comparison studies, `.xg` Batch Analyze workflow, `scripts/xg_h2h.py`, `neongammon.xg_compare` | [docs/xg-comparison.md](docs/xg-comparison.md) |
 | Historical benchmark tables (Stages 3–11, five-point difficulty profiles) | [docs/model-benchmarks.md](docs/model-benchmarks.md) |
+| Primary sources on playing strength (PureTD preprint, GNUbg/XG specs & usage rights, Modal/Tesauro rollout bias) | [docs/strength-references.md](docs/strength-references.md) |
 | Historical stage design & investigations (Stages 5–11m, cube-life tuning, `rank_distill`, Accelerate/PR #3 timings, 2026-09-06 cube postmortem) | [docs/model-history.md](docs/model-history.md) |

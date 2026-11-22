@@ -1,6 +1,6 @@
 # Comparing the NeonGammon Bot Engine to XG's Bot Engine
 
-> **Note:** Several historical study tables below retain the label `Sage` from the upstream benchmark runs; both names refer to the same engine lineage. See [docs/benchmarking.md](benchmarking.md) for the Benchmark PR rollout sample and XG referee runs.
+> **Note:** Several historical study tables below retain the label `Sage` from the upstream benchmark runs; both names refer to the same engine lineage. See [docs/benchmarking.md](benchmarking.md) for the Benchmark PR rollout sample and XG referee runs. For primary sources on XGRoller++ truncation, usage-rights boundaries, and rollout policy dependence (Tesauro & Galperin), see [docs/strength-references.md](strength-references.md).
 
 ## Contents
 
