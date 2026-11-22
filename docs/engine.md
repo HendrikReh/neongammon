@@ -39,8 +39,30 @@ directly. [PureTD policy](simulation.md#puretd-checker-policy)
 `DifficultyPolicy` configures an explicit opponent preset. Beginner, Casual,
 and Intermediate sample cubeful Stage 11 1-ply checker alternatives within
 a preset equity-loss limit and sometimes vary close Cube decisions. Full
-Strength chooses the Stage 11 2-ply recommendation. The PR measurements are
-for five-point matches. [Opponent difficulty](simulation.md#opponent-difficulty)
+Strength chooses the Stage 11 2-ply recommendation by default.
+[Opponent difficulty](simulation.md#opponent-difficulty)
+
+### NeonDojo five-point PR benchmark
+
+All four NeonDojo presets were scored on the same **6,912 decisions** from 130
+archived five-point matches against the same **Stage 9 full-rollout reference**.
+The sample contains 6,610 checker decisions and 302 cube decisions. NeonDojo's
+Full Strength used Stage 11 at **3-ply for checker moves** and **2-ply for cube
+decisions**.
+
+| Preset | PR | 95% bootstrap interval |
+| --- | ---: | ---: |
+| Beginner | 20.26 | 19.77–20.75 |
+| Casual | 15.85 | 15.48–16.21 |
+| Intermediate | 9.26 | 9.04–9.48 |
+| Full Strength | 0.99 | 0.91–1.09 |
+
+The benchmark reused the archived full-rollout equities and ran 1,296 full
+games for each of the 47,955 missing checker alternatives that a preset could
+select. Close best-move comparisons received 2,309 additional batches. PR
+pools checker and cube equity loss. For stochastic presets it uses the
+expected loss under each preset's choice probabilities. The intervals use
+10,000 bootstrap resamples of whole matches. [Match benchmark](xg-comparison.md#match-play)
 
 ### When PureTD is available
 
