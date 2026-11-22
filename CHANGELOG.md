@@ -19,6 +19,12 @@ Timings below were measured on an M4 Pro Mac mini (10P+4E cores).
 
 ## [Unreleased]
 
+### Added
+
+- Documentation site on GitHub Pages ([hendrikreh.github.io/neongammon](https://hendrikreh.github.io/neongammon/)),
+  built with MkDocs from `docs/` by `.github/workflows/docs.yml`. Links to
+  repository files outside `docs/` point to GitHub.
+
 ## [3.1.0] - 2026-11-21
 
 ### Added
