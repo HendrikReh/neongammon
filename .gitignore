@@ -86,3 +86,6 @@ data/s11-bg-containment-general-s9-*
 models/race_diag/
 models/s11_diag/
 models/rank_diag/
+
+# MkDocs output
+site/
