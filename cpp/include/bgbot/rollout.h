@@ -372,8 +372,11 @@ private:
     // once and shared across all trials with the same first roll. This avoids
     // (n_trials - 21) redundant N-ply evaluations at move 0.
     //
-    // Thread-safe: the first trial to encounter each dice combo computes the
-    // result (CAS state 0→1); others spin-wait briefly then read the cache.
+    // Parallel nonbatched cubeful rollouts reserve all scheduled move-0 and
+    // move-1 entries before dispatch. One prefill worker per first roll
+    // writes each entry and release-stores ready. Readers acquire-load the
+    // state and wait only for their required roll. Unreserved entries may
+    // be claimed on demand by a trial using compare_exchange.
     struct Move0Cache {
         static constexpr int N_ROLLS = 21;
         std::atomic<int> state[N_ROLLS];  // 0=empty, 1=computing, 2=ready
@@ -384,6 +387,8 @@ private:
                 state[i].store(0, std::memory_order_relaxed);
         }
     };
+
+    struct VarianceReductionCache;
 
     // Precomputed move-1 data for cubeful pre-roll rollouts.
     // After move 0 there are only 21 possible boards (one per first roll), so
@@ -399,7 +404,6 @@ private:
             std::array<double, NUM_OUTPUTS> cl_mean_probs = {0, 0, 0, 0, 0};
             double cl_mean_eq = 0.0;
             std::array<Board, Move0Cache::N_ROLLS> chosen = {};
-            std::array<std::array<float, NUM_OUTPUTS>, Move0Cache::N_ROLLS> actual_probs = {};
         };
 
         std::atomic<int> state[Move0Cache::N_ROLLS];  // 0=empty, 1=computing, 2=ready
@@ -415,12 +419,10 @@ private:
         uint64_t cd_fp[Move0Cache::N_ROLLS][2] = {};
         CubeDecision cd[Move0Cache::N_ROLLS][2] = {};
 
-        Move1Cache() {
-            for (int i = 0; i < Move0Cache::N_ROLLS; ++i) {
-                state[i].store(0, std::memory_order_relaxed);
-                cd_state[i].store(0, std::memory_order_relaxed);
-            }
-        }
+        // Shared between trials of this position, including after move 1.
+        std::unique_ptr<VarianceReductionCache> vr_cache;
+        explicit Move1Cache(const RolloutConfig& config);
+        ~Move1Cache();
     };
 
     // --- Cubeful rollout internals ---
@@ -507,6 +509,11 @@ private:
         const CubeInfo* sel_cubes = nullptr,
         int n_sel_cubes = 0,
         float sel_cube_x = 0.0f) const;
+
+    void evaluate_vr_rolls(
+        const Board& board, const std::array<std::vector<Board>, 21>& candidates,
+        const CubeInfo* cubes, int cube_count, float cube_x, std::array<int, 21>& picks,
+        std::array<std::array<float, NUM_OUTPUTS>, 21>& probabilities) const;
 
     // Precompute the move-0 choice for each opening roll.
     //

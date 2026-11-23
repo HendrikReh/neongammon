@@ -144,3 +144,82 @@ def test_wrong_arity_progress_callback_does_not_kill_the_process():
         expected="TypeError",
     )
     _assert_clean(proc, "TypeError")
+
+
+def test_checker_progress_is_opt_in():
+    from neongammon import BgBotAnalyzer
+
+    analyzer = BgBotAnalyzer(
+        eval_level="rollout", parallel_threads=4, n_trials=36,
+        truncation_depth=2, decision_ply=1, seed=42,
+    )
+    inner = analyzer._analyzer._inner
+    native = inner._rollout_strategy
+    bridges = []
+
+    class Monitor:
+        def cubeful_evaluate_board(self, *args, **kwargs):
+            bridges.append(kwargs["progress"])
+            return native.cubeful_evaluate_board(*args, **kwargs)
+
+    inner._rollout_strategy = Monitor()
+    without = analyzer.checker_play(_BOARD, 4, 2)
+    assert bridges and all(callback is None for callback in bridges)
+
+    bridges.clear()
+    assert analyzer.checker_play(_BOARD, 4, 2, progress_callback=False) == without
+    assert bridges and all(callback is None for callback in bridges)
+
+    bridges.clear()
+    reports = []
+    with_progress = analyzer.checker_play(
+        _BOARD, 4, 2,
+        progress_callback=lambda done, total, partial: reports.append((done, total)),
+    )
+    assert with_progress == without
+    assert any(callable(callback) for callback in bridges)
+    assert reports and any(done == total > 0 for done, total in reports)
+
+
+def test_checker_native_cancellation_without_progress():
+    from neongammon import BgBotAnalyzer
+    from neongammon.analyzer import RolloutCancelled
+
+    analyzer = BgBotAnalyzer(
+        eval_level="rollout", parallel_threads=4, n_trials=36,
+        truncation_depth=2, decision_ply=1, seed=42,
+    )
+    inner = analyzer._analyzer._inner
+    native = inner._rollout_strategy
+
+    class CancelAtTrialEntry:
+        def cubeful_evaluate_board(self, *args, **kwargs):
+            assert kwargs["progress"] is None
+            native.cancel()
+            return native.cubeful_evaluate_board(*args, **kwargs)
+
+    inner._rollout_strategy = CancelAtTrialEntry()
+    with pytest.raises(RolloutCancelled):
+        analyzer.checker_play(_BOARD, 4, 2)
+    inner._rollout_strategy = native
+    analyzer.reset_cancel()
+    assert analyzer.checker_play(_BOARD, 4, 2).moves
+
+
+@pytest.mark.parametrize("threads,reports_per_batch", [(1, 37), (4, 5)])
+@pytest.mark.parametrize("target_se,batches", [(0.0, 1), (1e-12, 2)])
+def test_full_game_cube_progress_cadence(threads, reports_per_batch, target_se, batches):
+    from neongammon import BgBotAnalyzer
+
+    # An odd batch size exercises the final partial notification; the tight
+    # target exercises the same reporting policy in a second full-game batch.
+    board = [0, 1, 0, 3, 3, 3, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0,
+             -1, -2, -4, -1, -3, -1, -2, 0]
+    analyzer = BgBotAnalyzer(eval_level="rollout", n_trials=37, truncation_depth=0,
+                             parallel_threads=threads, target_se=target_se, max_batches=2, seed=42)
+    reports = []
+    result = analyzer.cube_action(board, progress_callback=lambda done, total, partial: reports.append((done, total)))
+    assert result.equity_nd_se > target_se
+    assert len(reports) == reports_per_batch * batches
+    assert reports.count((37, 37)) == batches
+    assert all(1 <= done <= total == 37 for done, total in reports)

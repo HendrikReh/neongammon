@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (C) 2026 Mark Higgins
 #include "bgbot/rollout.h"
+#include "bgbot/rollout_vr.h"
 #include "bgbot/multipy.h"
 #include "bgbot/cube.h"
 #include "bgbot/match_equity.h"
@@ -77,11 +78,117 @@ constexpr std::array<std::array<int, 7>, 7> kOrderedRollToIndex = {{
     {-1, 10, 14, 17, 19, 20,  5},
 }};
 
-constexpr int kTrialChunkSize = 8;
+int trial_chunk_size(int depth, int trials, int workers) {
+    // Full games vary widely in length. Let each idle worker take the next
+    // game, as for short truncated batches with few trials per worker.
+    return depth <= 0 || trials / workers < 32 ? 1 : 8;
+}
+
+int trial_report_interval(int depth, int trials, int workers) {
+    // Full-game workers claim individual paths, but a caller can publish
+    // every progress event. Keep updates at least eight paths apart in
+    // parallel full rollouts, including each batch of an adaptive cube call.
+    const int minimum = depth <= 0 && workers > 1 ? 8 : 1;
+    return std::max(minimum, trials / 100);
+}
+
+// A nested checker rollout can enter the same generator on the same worker
+// while its caller still holds a candidate index. An active frame owns its
+// buffer. Sequential frames reuse the idle allocation on this worker.
+template<class T>
+class TrialMoveScratch {
+    inline static thread_local std::unique_ptr<T> idle_;
+    std::unique_ptr<T> storage_ = std::move(idle_);
+public:
+    TrialMoveScratch() {
+        if (!storage_) storage_ = std::make_unique<T>();
+    }
+    ~TrialMoveScratch() { idle_ = std::move(storage_); }
+    T& get() { return *storage_; }
+};
 
 } // namespace
 
 // ======================== Cache Management ========================
+
+// The same board can occur in several trials even after the opening rolls.
+// The VR policy depends on the board and the active selection cubes. The base
+// evaluator and bearoff database are fixed for the lifetime of this table.
+struct RolloutStrategy::VarianceReductionCache {
+    static constexpr int capacity = 2048;
+    using Probabilities = std::array<std::array<float, NUM_OUTPUTS>, Move0Cache::N_ROLLS>;
+    using Picks = std::array<int, Move0Cache::N_ROLLS>;
+
+    struct Entry {
+        Board board;
+        std::array<CubeInfo, 4> cubes;
+        int cube_count;
+        float cube_x;
+        Probabilities probabilities;
+        Picks picks;
+    };
+    std::array<std::atomic<uint8_t>, capacity> state;
+    std::array<Entry, capacity> entries;
+
+    VarianceReductionCache() {
+        for (auto& slot : state) slot.store(0, std::memory_order_relaxed);
+    }
+
+    static size_t slot_for(const Board& board) {
+        return rollout_board_hash(board) & (capacity - 1);
+    }
+
+    static bool same_cube(const CubeInfo& a, const CubeInfo& b) {
+        return a.cube_value == b.cube_value && a.owner == b.owner &&
+            a.match.away1 == b.match.away1 && a.match.away2 == b.match.away2 &&
+            a.match.is_crawford == b.match.is_crawford &&
+            a.cube_x_override == b.cube_x_override && a.jacoby == b.jacoby &&
+            a.beaver == b.beaver && a.max_cube_value == b.max_cube_value &&
+            a.contact_x == b.contact_x &&
+            a.contact_x_pip_slope == b.contact_x_pip_slope;
+    }
+
+    const Entry* lookup(size_t slot, const Board& board, const CubeInfo* cubes,
+                        int cube_count, float cube_x) const {
+        if (state[slot].load(std::memory_order_acquire) != 2) return nullptr;
+        const Entry& entry = entries[slot];
+        if (entry.board != board || entry.cube_count != cube_count || entry.cube_x != cube_x)
+            return nullptr;
+        for (int b = 0; b < cube_count; ++b) {
+            if (!same_cube(entry.cubes[b], cubes[b])) return nullptr;
+        }
+        return &entry;
+    }
+
+    void publish(size_t slot, const Board& board, const CubeInfo* cubes, int cube_count,
+                 float cube_x, const Probabilities& probabilities, const Picks& picks) {
+        // Every slot has a single writer; a concurrent fill or a collision
+        // leaves the original evaluation intact. Published data is immutable.
+        uint8_t empty = 0;
+        if (!state[slot].compare_exchange_strong(empty, 1, std::memory_order_relaxed)) return;
+        Entry& entry = entries[slot];
+        entry.board = board;
+        entry.cube_count = cube_count;
+        for (int b = 0; b < cube_count; ++b) entry.cubes[b] = cubes[b];
+        entry.cube_x = cube_x;
+        entry.probabilities = probabilities;
+        entry.picks = picks;
+        state[slot].store(2, std::memory_order_release);
+    }
+};
+
+RolloutStrategy::Move1Cache::Move1Cache(const RolloutConfig& config) {
+    for (int i = 0; i < Move0Cache::N_ROLLS; ++i) {
+        state[i].store(0, std::memory_order_relaxed);
+        cd_state[i].store(0, std::memory_order_relaxed);
+    }
+    // Allocate once per rollout. Short or low-trial runs have limited reuse.
+    if (config.enable_vr && config.truncation_depth > 2 && config.n_trials >= 288) {
+        vr_cache = std::make_unique<VarianceReductionCache>();
+    }
+}
+
+RolloutStrategy::Move1Cache::~Move1Cache() = default;
 
 void RolloutStrategy::clear_internal_caches() const {
     // Clear thread-local PosCache (shared by all MultiPlyStrategy instances
@@ -453,7 +560,8 @@ std::array<float, NUM_OUTPUTS> RolloutStrategy::best_move_probs(
     const Board& board, int d1, int d2,
     const Strategy& strat) const
 {
-    thread_local std::vector<Board> candidates;
+    TrialMoveScratch<std::vector<Board>> scratch;
+    auto& candidates = scratch.get();
     possible_boards(board, d1, d2, candidates);
     return best_move_probs_for_candidates(board, candidates, strat);
 }
@@ -689,7 +797,8 @@ void RolloutStrategy::prefill_move0_cache(
     auto compute_roll = [&](int roll_idx) {
         if (shared) MultiPlyStrategy::set_shared_cache(shared);
 
-        thread_local std::vector<Board> candidates;
+        TrialMoveScratch<std::vector<Board>> scratch;
+        auto& candidates = scratch.get();
         candidates.clear();
         possible_boards_unsorted(start_board,
                                  ALL_ROLLS[roll_idx].d1,
@@ -736,21 +845,28 @@ void RolloutStrategy::prefill_move0_cache(
     }
 }
 
+void RolloutStrategy::evaluate_vr_rolls(
+    const Board& board, const std::array<std::vector<Board>, 21>& candidates,
+    const CubeInfo* cubes, int cube_count, float cube_x, std::array<int, 21>& picks,
+    std::array<std::array<float, NUM_OUTPUTS>, 21>& probabilities) const
+{
+    if (try_rollout_vr_rolls(*base_, bearoff_db_, board, candidates, cubes, cube_count,
+                             cube_x, picks, probabilities)) return;
+    const Strategy& evaluator = base_bearoff_ ? *base_bearoff_ : *base_;
+    for (size_t i = 0; i < ALL_ROLLS.size(); ++i) {
+        probabilities[i] = best_move_probs_for_candidates(
+            board, candidates[i], evaluator, &picks[i], cubes, cube_count, cube_x);
+    }
+}
+
 void RolloutStrategy::populate_move1_cache_entry(
     const Move0Cache& move0_cache, int first_roll_idx, Move1Cache::Entry& entry,
     const CubeInfo* select_cubes, int n_select_cubes) const
 {
-    thread_local std::vector<Board> candidates;
-
     const Board& move0_chosen = move0_cache.chosen[first_roll_idx];
     const Board move1_board = flip(move0_chosen);
     entry.race = is_race(move1_board);
 
-    // For cube-aware selection at move 1, flip every cube state's perspective
-    // to match move1_board (current mover at move 1 is the opponent-of-move-0-
-    // mover). The flipped cubes remain valid for the cache's lifetime
-    // (per-rollout). Multi-cube path is used so the BMI call matches the
-    // trial loop's multi call exactly.
     const bool cube_aware = (select_cubes != nullptr && n_select_cubes > 0);
     std::array<CubeInfo, 4> m1_cubes;
     if (cube_aware) {
@@ -759,97 +875,31 @@ void RolloutStrategy::populate_move1_cache_entry(
         }
     }
 
-    // Move1 uses 1-ply for move selection. The VR averaging over many trials
-    // makes higher-ply move selection unnecessary here. When the bearoff DB
-    // is set, use the DB-wrapped 1-ply (base_bearoff_) so move-1 evaluations
-    // are DB-exact at bearoff positions.
-    const auto& current_strat = base_bearoff_ ? *base_bearoff_ : *base_;
-    const bool using_base = true;
-
     const Board opp_board = flip(move1_board);
-    // mover_probs are always 1-ply (used for 1-ply Janowski cube decisions and
-    // as fallback). When cube strategy is N-ply or rollout, the trial code
-    // bypasses these cached probs and calls cube_decision_nply or
-    // cubeful_cube_decision directly.
-    // Use bearoff DB for exact probs when available. For non-bearoff,
-    // use base_bearoff_ if set so any 1-ply leaves that happen to be
-    // bearoff are evaluated exactly.
     if (bearoff_db_ && bearoff_db_->is_bearoff(move1_board)) {
         entry.mover_probs = bearoff_db_->lookup_probs(move1_board);
     } else {
         const Strategy& mover_strat = base_bearoff_ ? *base_bearoff_ : *base_;
         entry.mover_probs = invert_probs(mover_strat.evaluate_probs(opp_board, opp_board));
     }
-    // mover_probs is the pre-roll cubeless prob from the mover's POV at
-    // move1_board. Clamp against move1_board so impossible outcomes are
-    // exactly zero (matters when the mover already has bearoff progress
-    // or contact has broken).
     clamp_probs_to_board(entry.mover_probs, move1_board);
     {
         auto [pp, op] = pip_counts(move1_board);
         entry.cube_x = cube_efficiency(entry.mover_probs, entry.race, pp, op);
     }
 
-    for (size_t second_roll = 0; second_roll < ALL_ROLLS.size(); ++second_roll) {
-        candidates.clear();
-        possible_boards_unsorted(move1_board,
-                                 ALL_ROLLS[second_roll].d1,
-                                 ALL_ROLLS[second_roll].d2,
-                                 candidates);
-
-        // VR CONTRACT: rank by the same rule used to pick `chosen` below, so
-        // entry.cl_mean_probs (built from roll_best_probs) is the mean over
-        // the moves the trial will actually play.
-        int best_idx = -1;
-        entry.roll_best_probs[second_roll] = best_move_probs_for_candidates(
-            move1_board, candidates, current_strat, &best_idx,
-            cube_aware ? m1_cubes.data() : nullptr,
-            cube_aware ? n_select_cubes : 0, entry.cube_x);
-        entry.best_candidate_idx[second_roll] = best_idx;
-
-        Board chosen;
-        if (candidates.empty()) {
-            chosen = move1_board;
-        } else if (candidates.size() == 1) {
-            chosen = candidates[0];
-        } else if (cube_aware) {
-            // Multi-cube cubeful BMI matches the trial loop's call exactly.
-            // Uses base (1-ply) per ROLLOUT.md §10's move-1 convention.
-            std::array<int, 4> picks{0, 0, 0, 0};
-            current_strat.best_move_index_cubeful_multi(
-                candidates, move1_board,
-                m1_cubes.data(), n_select_cubes,
-                entry.cube_x, picks.data());
-            chosen = candidates[picks[0]];
-        } else if (using_base) {
-            if (best_idx >= 0 && best_idx < static_cast<int>(candidates.size())) {
-                chosen = candidates[best_idx];
-            } else {
-                chosen = candidates[current_strat.best_move_index(candidates, move1_board)];
-            }
-        } else {
-            chosen = candidates[current_strat.best_move_index(candidates, move1_board)];
-        }
-        entry.chosen[second_roll] = chosen;
-
-        GameResult r = check_game_over(chosen);
-        if (r != GameResult::NOT_OVER) {
-            entry.actual_probs[second_roll] = terminal_probs(r);
-        } else if (best_idx >= 0 &&
-                   best_idx < static_cast<int>(candidates.size()) &&
-                   chosen == candidates[best_idx]) {
-            // Chosen matches the 1-ply cubeless-best (the common path when
-            // cube_aware is off, or when cubeful and cubeless picks happen
-            // to agree). Reuse roll_best_probs — already clamped inside
-            // best_move_probs_for_candidates.
-            entry.actual_probs[second_roll] = entry.roll_best_probs[second_roll];
-        } else {
-            // Chosen differs from cubeless-best (cube_aware path picked the
-            // cubeful-best instead). Evaluate the actual chosen move at
-            // 1-ply so VR's "actual" matches the move the trial will play.
-            entry.actual_probs[second_roll] = current_strat.evaluate_probs(chosen, move1_board);
-            clamp_probs_to_board(entry.actual_probs[second_roll], chosen);
-        }
+    TrialMoveScratch<std::array<std::vector<Board>, 21>> scratch;
+    auto& reply_candidates = scratch.get();
+    for (size_t i = 0; i < ALL_ROLLS.size(); ++i) {
+        possible_boards_unsorted(move1_board, ALL_ROLLS[i].d1, ALL_ROLLS[i].d2,
+                                 reply_candidates[i]);
+    }
+    const CubeInfo* cubes = cube_aware ? m1_cubes.data() : nullptr;
+    evaluate_vr_rolls(move1_board, reply_candidates, cubes, n_select_cubes, entry.cube_x,
+                      entry.best_candidate_idx, entry.roll_best_probs);
+    for (size_t i = 0; i < ALL_ROLLS.size(); ++i) {
+        const int pick = entry.best_candidate_idx[i];
+        entry.chosen[i] = pick < 0 ? move1_board : reply_candidates[i][pick];
     }
 
     entry.cl_mean_probs = {0, 0, 0, 0, 0};
@@ -941,12 +991,8 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
     Move0Cache* move0_cache,
     Move1Cache* move1_cache) const
 {
-    thread_local std::array<std::vector<Board>, ALL_ROLLS.size()> move_candidates;
-    thread_local bool candidates_initialized = false;
-    if (!candidates_initialized) {
-        for (auto& c : move_candidates) c.reserve(24);
-        candidates_initialized = true;
-    }
+    TrialMoveScratch<std::array<std::vector<Board>, ALL_ROLLS.size()>> scratch;
+    auto& move_candidates = scratch.get();
 
     // Determine if ANY branch has an active (non-dead) cube.
     // When cube_active=false, ALL cubeful overhead is skipped.
@@ -1481,34 +1527,6 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
         const bool use_cubeful_select_now =
             use_cubeful_select && (move_num < cubeful_late_threshold);
 
-        ROLLOUT_TIMER_START;
-        if (move1_entry) {
-            // Fully precomputed for move 1.
-            // Exception: cube-aware checker selection bypasses the move1
-            // cache's `chosen[]` (cubeless) and needs candidates for the
-            // actual roll to re-pick via cubeful BMI.
-            if (use_cubeful_select) {
-                move_candidates[actual_idx].clear();
-                possible_boards_unsorted(board, d1, d2,
-                                         move_candidates[actual_idx]);
-            }
-        } else if (do_vr) {
-            for (size_t i = 0; i < ALL_ROLLS.size(); ++i) {
-                move_candidates[i].clear();
-                possible_boards_unsorted(board, ALL_ROLLS[i].d1, ALL_ROLLS[i].d2,
-                                         move_candidates[i]);
-            }
-            // No VR candidate prefiltering — evaluating all candidates at 1-ply
-            // is fast and avoids the bias that prefiltering introduces (selecting
-            // the best from a filtered subset systematically underestimates the
-            // VR mean, biasing luck positive and the VR-corrected result negative).
-        } else {
-            move_candidates[actual_idx].clear();
-            possible_boards_unsorted(board, d1, d2,
-                                     move_candidates[actual_idx]);
-        }
-
-
         // Phase 3: VR mean — always use base_ (1-ply) for efficiency.
         // Checker play strategy for move selection (N-ply or truncated rollout).
         const auto& current_strat =
@@ -1532,6 +1550,34 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
             cube_x_ready = true;
         }
 
+        ROLLOUT_TIMER_START;
+        std::array<CubeInfo, 4> vr_sel_cubes;
+        int vr_n_sel = 0;
+        if (do_vr && !move1_entry && use_cubeful_select_now) {
+            for (int b = 0; b < n_branches && vr_n_sel < 4; ++b) {
+                if (!branches[b].finished) vr_sel_cubes[vr_n_sel++] = branches[b].cube;
+            }
+        }
+        const CubeInfo* vr_sel_ptr = vr_n_sel ? vr_sel_cubes.data() : nullptr;
+        auto* cache = do_vr && !move1_entry && move1_cache ? move1_cache->vr_cache.get() : nullptr;
+        const size_t slot = cache ? VarianceReductionCache::slot_for(board) : 0;
+        const auto* entry = cache ? cache->lookup(slot, board, vr_sel_ptr, vr_n_sel, cube_x) : nullptr;
+
+        // Only the played roll needs legal boards on a VR hit. Generate it
+        // in the same canonical die order used when the indices were saved.
+        if (!move1_entry) {
+            if (do_vr && !entry) {
+                for (size_t i = 0; i < ALL_ROLLS.size(); ++i) {
+                    possible_boards_unsorted(board, ALL_ROLLS[i].d1, ALL_ROLLS[i].d2,
+                                             move_candidates[i]);
+                }
+            } else {
+                const auto& roll = ALL_ROLLS[actual_idx];
+                possible_boards_unsorted(board, do_vr ? roll.d1 : d1, do_vr ? roll.d2 : d2,
+                                         move_candidates[actual_idx]);
+            }
+        }
+
         // Per-branch cubeful VR mean (only when cube_active)
         double mean_cf_branch[2] = {0.0, 0.0};
         // Cubeless VR mean
@@ -1545,35 +1591,16 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
                 cl_mean_probs = move1_entry->cl_mean_probs;
                 cl_mean_eq = move1_entry->cl_mean_eq;
             } else {
-                // Evaluate all 21 rolls at 1-ply. Use base_bearoff_ when the
-                // bearoff DB is set so the VR mean is DB-exact for bearoff
-                // candidates. This is essential at low trial counts: with
-                // unwrapped NN the VR luck = (NN_actual − NN_mean) is finite
-                // even though the DB outcome is deterministic, and the move-1+
-                // luck doesn't fully sum to zero unless the trial count
-                // stratifies all the way to that move.
-                const Strategy& vr_base = base_bearoff_ ? *base_bearoff_ : *base_;
-
-                // Mirror Phase 4's selection rule: when the trial plays the
-                // cubeful-best move, the mean must be over cubeful-best moves
-                // too. Same cube set and driver branch as Phase 4 (picks[0]).
-                std::array<CubeInfo, 4> vr_sel_cubes;
-                int vr_n_sel = 0;
-                if (use_cubeful_select_now) {
-                    for (int b = 0; b < n_branches && vr_n_sel < 4; ++b) {
-                        if (!branches[b].finished)
-                            vr_sel_cubes[vr_n_sel++] = branches[b].cube;
+                if (entry) {
+                    roll_best_probs = entry->probabilities;
+                    best_candidate_idx = entry->picks;
+                } else {
+                    evaluate_vr_rolls(board, move_candidates, vr_sel_ptr, vr_n_sel, cube_x,
+                                      best_candidate_idx, roll_best_probs);
+                    if (cache) {
+                        cache->publish(slot, board, vr_sel_ptr, vr_n_sel, cube_x,
+                                       roll_best_probs, best_candidate_idx);
                     }
-                }
-                const CubeInfo* vr_sel_ptr =
-                    (vr_n_sel > 0) ? vr_sel_cubes.data() : nullptr;
-
-                for (size_t i = 0; i < ALL_ROLLS.size(); ++i) {
-                    int idx = -1;
-                    roll_best_probs[i] = best_move_probs_for_candidates(
-                        board, move_candidates[i], vr_base, &idx,
-                        vr_sel_ptr, vr_n_sel, cube_x);
-                    best_candidate_idx[i] = idx;
                 }
 
                 // Cubeless VR mean (always computed)
@@ -1659,6 +1686,13 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
                 chosen = board;
             } else if (candidates.size() == 1) {
                 chosen = candidates[0];
+            } else if (do_vr && using_base && !(move_num == 0 && move0_cache) &&
+                       (!base_bearoff_ || std::any_of(candidates.begin(), candidates.end(),
+                           [&](const Board& c) { return !bearoff_db_->is_bearoff(c); }))) {
+                // The opening cache determines the board used by its reply
+                // table. At later rolls the DB wrapper delegates mixed or
+                // outside-DB ranking to the raw checker strategy.
+                chosen = candidates[best_candidate_idx[actual_idx]];
             } else if (move0_cache && move_num == 0) {
                 // Move 0: try cube-stamped cache. CAS to claim/populate. The
                 // fallback BMI call matches the prefill: multi-cube with all
@@ -1786,7 +1820,7 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
         if (do_vr) {
             std::array<float, NUM_OUTPUTS> actual_probs;
             if (move1_entry) {
-                actual_probs = move1_entry->actual_probs[actual_idx];
+                actual_probs = move1_entry->roll_best_probs[actual_idx];
             } else if (using_base &&
                        best_candidate_idx[actual_idx] >= 0 &&
                        best_candidate_idx[actual_idx] <
@@ -2131,11 +2165,12 @@ RolloutResult RolloutStrategy::run_trials_parallel(
 
     // Determine thread count
     int n_threads = rollout_thread_count(n_trials);
+    const int chunk_size = trial_chunk_size(config_.truncation_depth, n_trials, n_threads);
 
     // Move-0 and Move-1 shared caches: all trials share the same starting
     // position, so first two moves can be precomputed and shared.
     Move0Cache move0_cache;
-    Move1Cache move1_cache;
+    Move1Cache move1_cache(config_);
     const bool uses_move1_cache =
         (config_.truncation_depth == 0) || (config_.truncation_depth > 1);
 
@@ -2154,7 +2189,8 @@ RolloutResult RolloutStrategy::run_trials_parallel(
         double sum_eq = 0.0, sum_eq_sq = 0.0;
         double sum_svr_eq = 0.0, sum_svr_eq_sq = 0.0;
 
-        const int report_interval = progress ? std::max(1, n_trials / 100) : 0;
+        const int report_interval = progress
+            ? trial_report_interval(config_.truncation_depth, n_trials, n_threads) : 0;
         for (int t = 0; t < n_trials; ++t) {
             auto r = run_trial_unified(board, true, nullptr, 0, all_dice[t].data(), max_moves,
                                        &move0_cache, &move1_cache);
@@ -2214,7 +2250,8 @@ RolloutResult RolloutStrategy::run_trials_parallel(
         SharedPosCache* shared_cache = shared_pos_cache_.get();
         std::atomic<int> next_trial{0};
         std::atomic<int> completed_trials{0};
-        const int report_interval = progress ? std::max(1, n_trials / 100) : 0;
+        const int report_interval = progress
+            ? trial_report_interval(config_.truncation_depth, n_trials, n_threads) : 0;
 
         // Use the persistent thread pool to avoid creating and destroying
         // threads for every rollout (thousands of cycles in a benchmark run).
@@ -2226,14 +2263,14 @@ RolloutResult RolloutStrategy::run_trials_parallel(
             clear_cubeful_eval_cache();
             MultiPlyStrategy::set_shared_cache(shared_cache);
             int start;
-            while ((start = next_trial.fetch_add(kTrialChunkSize, std::memory_order_relaxed))
+            while ((start = next_trial.fetch_add(chunk_size, std::memory_order_relaxed))
                    < n_trials) {
                 // Check cancellation between trial chunks
                 if (config_.cancel_flag &&
                     config_.cancel_flag->load(std::memory_order_relaxed)) {
                     break;
                 }
-                int end = std::min(start + kTrialChunkSize, n_trials);
+                int end = std::min(start + chunk_size, n_trials);
                 for (int t = start; t < end; ++t) {
                     trial_results[t] = run_trial_unified(
                         board, true, nullptr, 0,
@@ -2242,7 +2279,7 @@ RolloutResult RolloutStrategy::run_trials_parallel(
                 }
                 if (report_interval) {
                     int done = completed_trials.fetch_add(end - start, std::memory_order_relaxed) + (end - start);
-                    if (done % report_interval < kTrialChunkSize || done >= n_trials) {
+                    if (done % report_interval < chunk_size || done >= n_trials) {
                         progress(std::min(done, n_trials), n_trials);
                     }
                 }
@@ -2347,9 +2384,10 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision(
 
     // Determine thread count
     int n_threads = rollout_thread_count(n_trials);
+    const int chunk_size = trial_chunk_size(config_.truncation_depth, n_trials, n_threads);
 
     Move0Cache move0_cache;
-    Move1Cache move1_cache;
+    Move1Cache move1_cache(config_);
     const bool uses_move1_cache =
         (config_.truncation_depth == 0) || (config_.truncation_depth > 1);
 
@@ -2366,7 +2404,8 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision(
         n_select_cubes = 2;
     }
 
-    const int report_interval = progress ? std::max(1, n_trials / 100) : 0;
+    const int report_interval = progress
+        ? trial_report_interval(config_.truncation_depth, n_trials, n_threads) : 0;
 
     if (n_threads == 1) {
         // Serial: prefill + trials on a single thread (PosCache stays warm)
@@ -2411,6 +2450,16 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision(
         // Precompute move0 strategy selection (same for all rolls).
         const Strategy* m0_strat = checker_strat_.get();
 
+        // Reserve every scheduled entry before any worker can start a trial.
+        // Otherwise an early trial can claim an entry that a prefill worker
+        // is still writing and publish partially accumulated VR probabilities.
+        for (int r = 0; r < Move0Cache::N_ROLLS; ++r) {
+            move0_cache.state[r].store(1, std::memory_order_relaxed);
+            if (uses_move1_cache) {
+                move1_cache.state[r].store(1, std::memory_order_relaxed);
+            }
+        }
+
         // Use persistent thread pool — same rationale as cubeless path.
         multipy_parallel_run(n_threads, [&]() {
             // Clear thread-local N-ply cache (same as cubeless path).
@@ -2431,7 +2480,8 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision(
 
             int r;
             while ((r = next_roll.fetch_add(1, std::memory_order_relaxed)) < 21) {
-                thread_local std::vector<Board> candidates;
+                TrialMoveScratch<std::vector<Board>> scratch;
+                auto& candidates = scratch.get();
                 candidates.clear();
                 const auto& roll = ALL_ROLLS[r];
                 possible_boards_unsorted(pre_roll_board,
@@ -2469,18 +2519,19 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision(
                 }
             }
 
-            // No barrier: trials start immediately, cache entries computed on demand.
+            // Trials can start before all rolls finish. Each waits only for
+            // its own reserved entries to be published by the prefill worker.
 
             // Phase 3: Trials (work-stealing)
             int start;
-            while ((start = next_trial.fetch_add(kTrialChunkSize, std::memory_order_relaxed))
+            while ((start = next_trial.fetch_add(chunk_size, std::memory_order_relaxed))
                    < n_trials) {
                 // Check cancellation between trial chunks
                 if (config_.cancel_flag &&
                     config_.cancel_flag->load(std::memory_order_relaxed)) {
                     break;
                 }
-                int end = std::min(start + kTrialChunkSize, n_trials);
+                int end = std::min(start + chunk_size, n_trials);
                 for (int t = start; t < end; ++t) {
                     CubefulBranch branches[2] = {nd_template, dt_template};
                     trial_results[t].cubeless = run_trial_unified(
@@ -2491,7 +2542,7 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision(
                 }
                 if (report_interval) {
                     int done = completed_trials.fetch_add(end - start, std::memory_order_relaxed) + (end - start);
-                    if (done % report_interval < kTrialChunkSize || done >= n_trials) {
+                    if (done % report_interval < chunk_size || done >= n_trials) {
                         progress(std::min(done, n_trials), n_trials);
                     }
                 }
@@ -2592,6 +2643,7 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision_bat
     std::vector<CubefulTrialResult> trial_results(n_trials);
 
     const int n_threads = rollout_thread_count(n_trials);
+    const int chunk_size = trial_chunk_size(config_.truncation_depth, n_trials, n_threads);
     const bool uses_move1_cache =
         (config_.truncation_depth == 0) || (config_.truncation_depth > 1);
 
@@ -2606,7 +2658,7 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision_bat
     // Move0/Move1 caches are prefilled ONCE and reused across every batch: they
     // are determined by the board + strategy, independent of the trial dice/seed.
     Move0Cache move0_cache;
-    Move1Cache move1_cache;
+    Move1Cache move1_cache(config_);
 
     if (n_threads > 1 && !shared_pos_cache_) {
         shared_pos_cache_ = std::make_unique<SharedPosCache>();
@@ -2647,7 +2699,8 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision_bat
 
             int r;
             while ((r = next_roll.fetch_add(1, std::memory_order_relaxed)) < 21) {
-                thread_local std::vector<Board> candidates;
+                TrialMoveScratch<std::vector<Board>> scratch;
+                auto& candidates = scratch.get();
                 candidates.clear();
                 const auto& roll = ALL_ROLLS[r];
                 possible_boards_unsorted(pre_roll_board, roll.d1, roll.d2, candidates);
@@ -2704,7 +2757,8 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision_bat
             config_.seed + static_cast<uint32_t>(b) * 0x9E3779B9u;
         generate_stratified_dice(n_trials, max_moves, batch_seed, batch_dice);
 
-        const int report_interval = progress ? std::max(1, n_trials / 100) : 0;
+        const int report_interval = progress
+            ? trial_report_interval(config_.truncation_depth, n_trials, n_threads) : 0;
 
         if (n_threads == 1) {
             for (int t = 0; t < n_trials; ++t) {
@@ -2726,13 +2780,13 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision_bat
                 clear_cubeful_eval_cache();
                 MultiPlyStrategy::set_shared_cache(shared_cache);
                 int start;
-                while ((start = next_trial.fetch_add(kTrialChunkSize, std::memory_order_relaxed))
+                while ((start = next_trial.fetch_add(chunk_size, std::memory_order_relaxed))
                        < n_trials) {
                     if (config_.cancel_flag &&
                         config_.cancel_flag->load(std::memory_order_relaxed)) {
                         break;
                     }
-                    int end = std::min(start + kTrialChunkSize, n_trials);
+                    int end = std::min(start + chunk_size, n_trials);
                     for (int t = start; t < end; ++t) {
                         CubefulBranch branches[2] = {nd_template, dt_template};
                         trial_results[t].cubeless = run_trial_unified(
@@ -2743,7 +2797,7 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision_bat
                     }
                     if (report_interval) {
                         int done = completed_trials.fetch_add(end - start, std::memory_order_relaxed) + (end - start);
-                        if (done % report_interval < kTrialChunkSize || done >= n_trials) {
+                        if (done % report_interval < chunk_size || done >= n_trials) {
                             progress(std::min(done, n_trials), n_trials);
                         }
                     }
