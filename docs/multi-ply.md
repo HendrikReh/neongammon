@@ -398,12 +398,17 @@ function cubeful_recursive(board, cubeStates, cci, plies, fTop):
 ```
 
 **Top-level parallelism:** when the caller passes `n_threads > 1` and
-`n_plies > 2` (standalone analytics calls), the 21 rolls at the top tree
+`n_plies >= 2` (standalone analytics calls), the 21 rolls at the top tree
 levels are distributed across the shared thread pool (children stay parallel
-while `plies - 1 > 2`). Each roll writes into its own slot and accumulation
-runs in fixed roll order, so results are independent of thread count.
-Rollout-internal calls run serial — trial dispatch already saturates the
-cores.
+only while `plies - 1 > 2` and `n_threads > 21`; Linux builds keep 2-ply races
+serial via `root_roll_threads`, whereas macOS Apple Silicon benefits from
+parallelism on both races and contact). For `4 <= n_threads <= 21`, workers
+claim rolls dynamically from an atomic counter starting with the 6 expensive
+doubles rolls; nested 4-ply checker calls use `multipy_cooperative_for`
+(see [section 11](#11-parallelization)). Each roll writes into its own slot and
+accumulation runs in fixed roll order, so results are independent of thread
+count. Rollout-internal calls run serial — trial dispatch already saturates
+the cores.
 
 ### Perspective Semantics
 
@@ -538,16 +543,52 @@ batched kernel rather than one full NN forward pass per candidate:
 2. **Bearoff candidates** get exact DB probabilities (when the strategy is
    bearoff-wrapped).
 3. The rest are **classified per candidate** (game-plan NN selection from the
-   candidate board) and **grouped by NN index**. Within each group, the first
-   candidate runs a full forward pass that saves the pre-sigmoid hidden sums
-   and input vector; every sibling is then evaluated by **sparse delta
-   updates** — only the input columns that differ from the group's base
-   candidate touch the hidden layer (a backgammon move typically changes
-   4-12 of 196/244 inputs). This is the same incremental-evaluation kernel
-   the cubeless batch paths use.
+   candidate board) and **grouped by NN index**. Every worker caches a per-depth
+   `DiceNode` base for the pre-roll board across the node's 21 rolls (outer
+   bases survive recursive children because depths differ):
+   - **Apple Silicon (`BGBOT_USE_ACCELERATE`, default):** caches the pre-roll
+     encoded input vector per encoding kind (race / contact), encodes every
+     candidate incrementally via `encode_board_from_base`, and runs one dense
+     Accelerate `cblas_sgemm` (`NeuralNetwork::forward_group`) per NN group.
+   - **Portable / Linux x86-64 Modal (`-DBGBOT_USE_ACCELERATE=OFF`):** saves the
+     pre-sigmoid hidden sums and input vector for the pre-roll board once per
+     network (`save_hidden_base`) and evaluates every candidate with **sparse
+     delta updates** (`forward_board_from_base`) — only input columns that
+     differ from the pre-roll board touch the hidden layer (typically 4–12 of
+     196/244 inputs).
+   - **Sigmoid parity:** on arm64, all hidden-layer forward paths (`forward`,
+     `forward_batch`, `forward_save_base`, `forward_with_deltas`, and
+     `forward_group`) use exact NEON Cephes sigmoid (`sigmoid_inplace_neon`),
+     matching x86-64 AVX2 `sigmoid256_ps` without LUT clamp drift between
+     single-board and batched evaluations.
 
 Probabilities are not clamped before the pick; the leaf conversion clamps
 (see section 2).
+
+### Cube / Cubeless Candidate Batch Reuse (`CandidateBatchCache`)
+
+`cube_decision_nply_unified` (when `decision_only=false` and
+`incl_2ply_details=false`) evaluates both the live cube decision and the
+independent cubeless probability tree through
+`MultiPlyStrategy::cube_decision_with_cubeless_probs` (at 2-, 3-, and 4-ply).
+Because the two searches visit many identical `(board, roll)` candidate lists,
+a call-local `CandidateBatchCache` lets the live cube search record evaluated
+candidate probabilities per `(roll_path, roll)` node and lets the subsequent
+dead-cube cubeless search read them back:
+
+- **Unfiltered rolls** (`n_cand <= 16`, `full == true`): the live search saves
+  all candidate probabilities and the cubeless search copies them directly
+  without calling the NN.
+- **Filtered rolls** (`n_cand > 16`, where the live search PubEval-filters to
+  15 candidates): on non-Accelerate delta builds (`share_survivors = true`), the
+  15 survivor probabilities are stored in move-generator order and merged into
+  the cubeless search's full candidate batch; on Accelerate builds
+  (`share_survivors = false`), filtered rolls evaluate as a single `cblas_sgemm`
+  batch so row-tiling float32 accumulation remains bit-identical to an
+  independent cubeless traversal (`tests/test_cube_candidate_batch_reuse.py`).
+- Any divergent continuation (where the live and cubeless policies picked
+  different moves at an ancestor roll) misses `match_node` on board, strategy,
+  or root-pin mismatch and falls back to normal evaluation.
 
 ### Root Routing (pinned NN selection)
 
@@ -631,7 +672,7 @@ The standalone entry uses `deep_prefilter=false` (conservative — no deep
 PubEval prune); the best-move rescoring in section 8 uses `deep_prefilter=true`
 (its band-level shifts were validated on the checker benchmark and the
 benchmark ER, which improved). Top-level 21-roll parallelism is requested via
-the engine's `n_threads` when `parallel_evaluate_` is set and `plies > 2`.
+the engine's `n_threads` when `parallel_evaluate_` is set and `plies >= 2`.
 
 **Classification convention:** the engine's candidate kernel classifies each
 candidate by its own board (per-candidate `nn_index_for`), whereas the
@@ -1011,43 +1052,56 @@ hash table.
 **Key:** a 64-bit hash mixing the board, `plies`, `cci`, `fTop`, and the
 cube-state fingerprint. The fingerprint covers every field of every cube
 state (cube value, owner, match away scores, Crawford, Jacoby, beaver,
-max-cube cap, cube-x override), and its seed folds in two pieces of caller
-context: the **evaluator identity** (`Strategy::eval_identity()`: distinct
-models never collide, even across strategy objects sharing a pool thread; a
-`BearoffStrategy` mixes the identity of its database's data, new on every
-load or generate, into the wrapped strategy's, so an evaluation with the
+max-cube cap, and exact IEEE-754 bit patterns of `cube_x_override`,
+`contact_x`, and `contact_x_pip_slope` via `float_bits`), and its seed folds in
+the caller context: the **evaluator identity** (`Strategy::eval_identity()`:
+distinct models never collide, even across strategy objects sharing a pool
+thread; a `BearoffStrategy` mixes the identity of its database's data, new on
+every load or generate, into the wrapped strategy's, so an evaluation with the
 database never serves one without it, while nested wrappers over the same
-database share entries) and the **deep-prefilter flag** (the
-same node evaluated with and without the deep prune has different values).
-So two calls that reach the same board under different cube contexts,
-models, or prune contexts can never alias.
+database share entries), the **entry move-filter identity**
+(`ctx.move_filter->eval_identity()`), the **root-routing pin** (`pinned_nn`),
+and the **deep-prefilter context** (both `deep_prefilter` and `plies < top_plies`,
+since a node visited as the root vs an interior node differs under deep
+pruning). So two calls that reach the same board under different cube, model,
+filter, or prune contexts can never alias.
 
-**No epochs:** because the cube context is part of the key, entries remain
-valid across top-level calls, and threads never invalidate each other's
-caches. Entries persist for the lifetime of an evaluation batch;
-`clear_cubeful_eval_cache()` resets the calling thread's table (the rollout
-dispatch clears every worker's table at the start of each rollout, and
-`clear_internal_caches()` clears the calling thread's). This per-thread
-persistence is what lets repeated in-trial cube decisions on recurring
-(board, cube) nodes hit the cache under parallel trial dispatch.
+**Per-thread generation counter (O(1) clear):** because the cube and evaluator
+context are part of the key, entries remain valid across top-level calls and
+threads never invalidate each other's caches. Each thread's `CubefulEvalCache`
+carries a `uint32_t generation` stamp on every slot: `clear_cubeful_eval_cache()`
+increments the calling thread's generation in O(1) without touching the ~7 MB
+table (wrapping only on 32-bit overflow), and `get()` terminates its linear
+probe immediately on the first slot whose `generation != current`. Entries
+persist for the lifetime of an evaluation batch; rollout dispatch clears every
+worker's table at the start of each rollout, and `clear_internal_caches()`
+clears the calling thread's. This per-thread persistence is what lets repeated
+in-trial cube decisions on recurring `(board, cube)` nodes hit the cache under
+parallel trial dispatch.
 
 **Scope:** only internal nodes (`plies >= 2`, `cci <= 16`) are cached — leaf
 evaluations are nearly free (2-ply leaves reuse the pick batch's NN output),
 so caching them would cost more in key hashing than it saves.
 
-**Replacement policy:** on collision, replace the first empty or matching
-slot within the 4 probe slots; otherwise evict the first slot.
+**Replacement policy:** on collision, replace the first vacant (`generation != current`)
+or matching slot within the 4 probe slots; otherwise evict the first slot.
 
 ### Checker Play Position Cache (PosCache)
 
-The `MultiPlyStrategy` uses a separate thread-local position cache for N-ply
-checker play evaluation.
+The `MultiPlyStrategy` uses a separate thread-local position cache for the
+legacy/hybrid N-ply checker recursion (`evaluate_probs_nply_impl`).
 
 **Structure:**
-- 256K entries (262,144), power of 2
+- 256K entries (262,144, ~36 MB), power of 2 — **lazily allocated** on the
+  first `insert()` so standard cubeful-delegated searches and rollout workers
+  that never enter the legacy recursion never allocate or zero it (`clear()` is
+  a no-op when `count == 0`).
 - Open addressing with max 8 probe steps
 - Auto-clear at 75% load factor
-- Each entry stores: hash, plies, probs[5]
+- Each entry stores: hash, plies, board, probs[5]
+- `cache_salt_` is seeded from `base_->eval_identity()` (updated on
+  `set_bearoff_db()`) so strategies sharing a base and bearoff DB share entries
+  without colliding across different models.
 
 **Hash function:**
 ```
@@ -1066,14 +1120,27 @@ key = h | 1    // ensure non-zero (0 is the empty marker)
 ### SharedPosCache (Cross-Thread)
 
 For parallel rollouts, a lock-free shared position cache prevents redundant
-evaluations across threads. It is fed both by this recursion's nodes and by
-the dead-cube (cubeless) nodes of the cubeful evaluation engine, under
-disjoint (salted) keys — see `docs/rollout.md` §12.
+evaluations across threads. It is fed both by the legacy recursion's nodes and
+by the dead-cube (cubeless) nodes of the cubeful evaluation engine, under
+disjoint (salted) keys — see [docs/rollout.md](rollout.md#12-parallelization).
 
 **Structure:**
-- 2M entries, lock-free via CAS (compare-and-swap)
+- 2M entries, **lazily materialized** via `std::call_once` (`ensure_entries()`)
+  on first lookup/insert so live-cube or 1-ply parallel rollouts never allocate
+  its backing array.
+- Lock-free via CAS with `alignas(64)` atomic hit/miss/insert counters (avoiding
+  false sharing) and a short yield spin when hitting a `STATE_CLAIMED` writer.
 - State machine per entry: EMPTY(0) → CLAIMED(1) → COMPUTING(2) → READY(3)
 - Max 8 linear probe steps
+
+### 4-Ply Checker Transposition Table (`CheckerSubtrees`)
+
+During a parallel 4-ply checker-play evaluation (`cubeful_checker_endpoints_nply`),
+different candidate moves frequently transpose into identical boards two
+half-moves later (`plies == 2, cci == 4`). A call-local `CheckerSubtrees` table
+(64 mutex-sharded `unordered_map` shards, capped at 128 entries per shard)
+shares those 2-ply subtrees across all concurrent candidate workers and is
+discarded when the call returns so concurrent top-level calls stay isolated.
 
 **Protocol:**
 ```
@@ -1117,56 +1184,62 @@ In the cubeful recursion, the 21 dice rolls at each internal node can be evaluat
 in parallel. This is enabled when:
 
 ```
-allow_parallel = (n_threads > 1) and (plies > 2)
+allow_parallel = (n_threads > 1) and (plies >= 2)
 ```
 
-Parallelism is restricted to the top levels of the tree to avoid excessive thread
-overhead. Child nodes use parallel evaluation only when `plies - 1 > 2`.
-Rollout-internal calls pass `n_threads = 1` (trial dispatch already saturates
-the cores).
+On Linux, `root_roll_threads` keeps 2-ply races serial (`1` thread) to avoid
+pool wake-up overhead on shallow races; on macOS Apple Silicon, 2-ply
+parallelism speeds up both contact and race positions (2.2–2.9x on M4 Pro).
+Child nodes use parallel evaluation only when `plies - 1 > 2` and
+`n_threads > 21`. Rollout-internal calls pass `n_threads = 1` (trial dispatch
+already saturates the cores).
 
-**Implementation:** `multipy_parallel_for(21, n_threads, fn)` distributes the 21 roll
-evaluations across threads. The calling thread participates as worker 0. Each thread
-writes its weighted contribution into its own roll slot, and accumulation runs
-in fixed roll order afterward — results are bit-identical regardless of thread
-count. A completion counter + condition variable signal when all threads finish.
+**Dispatch strategy:**
+- **Nested 4-ply checker subtrees (`ctx.checker != nullptr`, `2 <= n_threads <= 21`):**
+  uses `multipy_cooperative_for(21, n_threads, fn)`. Because the calling thread
+  may already be a pool worker, `cooperative_for` never blocks waiting for an
+  idle pool thread to pick up work — the caller claims items alongside queued
+  helpers and waits only for items another thread has already claimed, making
+  two-level parallelism deadlock-free.
+- **Ordinary parallel widths (`4 <= n_threads <= 21`):** uses
+  `multipy_parallel_run` with dynamic work-stealing (`atomic<int> next_roll`).
+  Because `ALL_ROLLS_21` lists the 6 doubles rolls first (indices 0–5), workers
+  start on the heaviest rolls immediately instead of leaving straggler doubles
+  on the tail.
+- **Other widths (`2–3` or `> 21`):** falls back to chunked
+  `multipy_parallel_for(21, min(n_threads, 21), fn)`.
+
+In every mode, each thread writes its weighted contribution into its own roll
+slot and accumulation runs in fixed roll order afterward — results are
+bit-identical regardless of thread count.
 
 ### Parallel Checker Play Evaluation
 
-The checker play system has two parallelization points:
+The checker play system has two parallelization entry points:
 
-**1. evaluate_probs_nply_impl:** The 21 opponent-roll evaluations at the top level
-of the recursion can be parallelized. Each thread evaluates a subset of the 21 rolls
-and writes results into a shared array (no lock needed — each slot is owned by one
-thread). Enabled only at the outermost recursion level:
+**1. `cubeful_checker_endpoints_nply` (native cubeful checker play in
+`score_checker_position`):** evaluates a set of candidate post-move endpoints
+under one cube state and root board:
 
-```
-allow_parallel = parallel_evaluate and (plies == n_plies) and (plies > 2)
-n_threads = min(parallel_thread_count(plies), 21)
-```
+- **2-ply / 3-ply (`count >= 2`):** dynamic work-stealing across endpoints
+  (`workers = clamp(threads, 1, count)`, `roll_threads = 1`).
+- **Single endpoint (`count == 1`, including stale-move promotion):** fans out
+  across the 21 rolls (`roll_threads = min(threads, 21)`).
+- **4-ply (`count >= 2` and `8 <= threads <= 21`):** two-level cooperative
+  parallelism — `workers = min(count, threads / 2)` endpoint workers, each
+  given `roll_threads = threads / workers` cooperative lanes via
+  `multipy_cooperative_for`, sharing a call-local `CheckerSubtrees` table for
+  transposed 2-ply nodes.
+- **Batch checker play (`batch_checker_play`):** passes `threads = 1` per
+  position and parallelizes across positions instead.
 
-All deeper recursions force `allow_parallel = false` to avoid nested parallelism.
-
-**2. best_move_index_impl:** After the filter chain narrows candidates, the surviving
-moves are evaluated at full N-ply depth. If multiple survivors remain and parallelism
-is enabled, they are distributed across threads:
-
-```
-use_parallel = parallel_evaluate and (n_plies > 2)
-n_threads = min(parallel_thread_count(n_plies), n_survivors)
-```
-
-**3. full_depth_opponent mode:** When `full_depth_opponent = true` and `plies > 2`,
-the evaluation of all opponent candidates at `(plies - 1)` depth can also be
-parallelized across threads.
-
-In all cases each parallel worker evaluates its item serially (the engine
-delegation is called with `n_threads = 1` from worker context; the hybrid
-recursion with `allow_parallel = false`). Engine-internal roll parallelism at
-4-ply+ only nests a second level when the requested thread count exceeds the
-21 top-level roll tasks, and `parallel_thread_count` is capped at hardware
-concurrency — a blocking nested `parallel_for` dispatch wider than the shared
-pool could otherwise deadlock it.
+**2. `MultiPlyStrategy` cubeless paths (`evaluate_probs_nply`,
+`best_move_index_impl`, and legacy hybrid `evaluate_probs_nply_impl`):**
+non-hybrid strategies delegate to `cubeless_tree_probs` (with `plies >= 2`
+parallelism at the top level); `best_move_index_impl` distributes surviving
+candidates across threads at `n_plies > 2` (with serial `n_threads = 1` inside
+each worker), and `full_depth_opponent` parallelizes opponent candidates at
+`plies > 2`.
 
 ## 12. Match Play
 
@@ -1359,9 +1432,11 @@ DT section.
 | Constant | Value | Description |
 |----------|-------|-------------|
 | MAX_CCI | 64 | Maximum simultaneous cube states |
-| Cubeful eval cache | 32,768 / thread | Per-thread internal-node cache (no epochs; key includes cube-state fingerprint) |
+| Cubeful eval cache | 32,768 / thread | Per-thread internal-node cache (generation-stamped O(1) clear; key includes `float_bits`, `move_filter->eval_identity()`, `deep_prefilter`, and cube-state fingerprint) |
 | Max probe distance | 4 | Linear probing for cubeful eval cache |
 | Cached-state cap | cci ≤ 16 | Nodes carrying more states are recomputed |
+| `CheckerSubtrees` | 64 shards × ≤128 entries | Call-local mutex-sharded 4-ply transposition table (up to 8,192 entries) shared across `cubeful_checker_endpoints_nply` workers |
+| `CandidateBatchCache` | 1 / 22 / 463 nodes | Call-local 1-ply candidate batch cache (2-/3-/4-ply) shared between the live and cubeless passes of `cube_decision_with_cubeless_probs` |
 
 ### Move Selection (Cubeful Recursion)
 
@@ -1405,10 +1480,16 @@ These defaults are configurable per `MultiPlyStrategy` instance via
 ### Thread Count
 
 **Cubeful recursion** (`cube_decision_nply`, `cubeful_equity_nply`): The `n_threads`
-parameter is passed through from the caller with no internal cap. Parallelism is
-enabled when `n_threads > 1 && n_plies > 2`. The 21 dice rolls at each internal node
-are distributed across the available threads. Child recursion restricts parallelism
-to deeper nodes only (`child_allow_parallel = allow_parallel && (plies - 1 > 2)`).
+parameter is passed through from the caller with no internal cap (on Linux,
+`root_roll_threads` forces `1` thread for 2-ply races to avoid thread-pool wakeup
+overhead; on macOS, `threads` passes through unchanged). Parallelism is enabled
+when `n_threads > 1 && n_plies >= 2`. At internal nodes, 4-ply `CheckerSubtrees`
+searches (`2 <= n_threads <= 21`) use cooperative scheduling
+(`multipy_cooperative_for`), ordinary searches with `4 <= n_threads <= 21` use
+dynamic `next_roll` work-stealing across the 21 rolls, and other configurations
+use `parallel_for`. Child recursion restricts nested parallelism to deeper nodes
+with more threads than rolls
+(`child_parallel = allow_parallel && (plies - 1 > 2) && ctx.n_threads > 21`).
 
 **Checker play evaluation** (`MultiPlyStrategy::evaluate_probs_nply_impl`,
 `best_move_index_impl`): Thread count is determined by `parallel_thread_count()`:

@@ -220,3 +220,23 @@ Saved-baseline regression scripts (each supports `--save`/`--compare` with a mat
 - `scripts/bench_3t_postmove.py` — post-move eval
 - `scripts/bench_3t_cubeless.py` — cubeless rollout of post-move positions
 - `scripts/bench_nply_cubeless.py` — standalone N-ply cubeless (post-move probs at 2–4 ply + contact/race benchmark ER)
+
+### Apple Silicon Timing Baselines (v3.1.1, M4 Pro)
+
+For fast local latency checks without external position files, run
+[`scripts/bench_analyzer_overhead.py`](../scripts/bench_analyzer_overhead.py)
+against `stage11` with `BGBOT_USE_ACCELERATE=ON`. On an idle Apple Silicon M4 Pro
+at `v3.1.1` (3 rounds, median ms per call):
+
+| Call | Median ms/call |
+|---|---:|
+| `cube_action` 1-ply | 0.011 |
+| `cube_action` 2-ply | 0.21–0.22 |
+| `cube_action` 3-ply | 2.36–2.38 |
+| `checker_play` 1-ply | 0.081–0.084 |
+| `checker_play` 2-ply | 0.79–0.84 |
+
+For the full 13-workload `v3.1.0` → `v3.1.1` speedup table (move generation,
+encoding, 2–4 ply cube/checker, 1T/2T/3T/full rollouts) and 2-ply cube thread
+scaling on M4 Pro, see
+[Apple Silicon & Analyzer Performance Measurements](model-history.md#apple-silicon--analyzer-performance-measurements).

@@ -966,33 +966,44 @@ struct Move1Cache::Entry {
     bool race;                         // Is the move-1 board a race?
     float cube_x;                      // Cube efficiency
     float mover_probs[5];              // Pre-roll probs for 1-ply cube decisions
-    float roll_best_probs[21][5];      // VR mean: best move probs per second roll
+    float roll_best_probs[21][5];      // VR mean & actual: best move probs per second roll
     int best_candidate_idx[21];        // Index of best candidate per second roll
     double cl_mean_probs[5];           // Precomputed cubeless VR mean
     double cl_mean_eq;                 // Precomputed cubeless VR mean equity
     Board chosen[21];                  // Best post-move board per second roll
-    float actual_probs[21][5];         // 1-ply probs of chosen move per second roll
 };
 ```
 
-**Population:** Move1 entries are populated after move0 entries. Each entry
-requires ~21 NN evaluations (one per second roll). When multithreaded, entries
-are distributed across workers. Like move0, a CAS protocol handles on-demand
-population for entries not yet prefilled when a trial reaches move 1.
+**Population:** Move1 entries are populated after move0 entries in a single
+`evaluate_vr_rolls` pass (see §14), deriving `chosen[i]` directly from
+`best_candidate_idx[i]` and reusing `roll_best_probs[i]` as `actual_probs`
+without a second or third pass. When multithreaded, entries are distributed
+across workers; a CAS protocol handles on-demand population if an entry was not
+pre-reserved.
 
 When `cubeful_trial_moves` is on, the prefill receives the active branch cube
-states (flipped to move-1 mover's perspective inside `populate_move1_cache_entry`)
-and `chosen[]` is the cubeful-best second move under those cube states. The
-other entry fields (`mover_probs`, `roll_best_probs`, `actual_probs`,
-`cl_mean_*`) are cube-state-independent and computed the same way in both
-modes.
+states (flipped to move-1 mover's perspective inside `populate_move1_cache_entry`),
+and `evaluate_vr_rolls` ranks and populates `best_candidate_idx[]`, `chosen[]`,
+`roll_best_probs[]`, and `cl_mean_*` under those same cube states so the VR
+baseline matches the played move. `mover_probs` stays cube-state-independent
+(1-ply cubeless) for per-move cube decisions.
 
 **Move1 uses 1-ply for move selection.** Unlike move0 which uses the full
 checker strategy, move1 always uses the base (1-ply) strategy. The VR
 averaging over many trials makes higher-ply move selection at move 1
-unnecessary — the VR correction dominates the accuracy gain. In cube-aware
-mode the 1-ply BMI is the cubeful variant against the active cube states;
-in cubeless mode it is the standard `best_move_index`.
+unnecessary — the VR correction dominates the accuracy gain.
+
+### Cross-Thread Variance Reduction Cache (`VarianceReductionCache`)
+
+`Move1Cache` also owns an optional 2,048-slot lock-free `VarianceReductionCache`
+allocated once per rollout when `enable_vr && truncation_depth > 2 && n_trials >= 288`.
+Different trials frequently reach the same post-opening board at moves 2+.
+Entries are keyed by `(board, active selection cubes [including contact_x and
+contact_x_pip_slope], cube_x)` and store all 21 `roll_best_probs` and
+`best_candidate_idx` picks with single-writer publish semantics (`CAS(0 → 1)`
+then `store(2, release)`). On a hit, the trial skips both VR evaluation and
+move generation for the 20 unrolled dice combinations, generating only the
+actually rolled dice's candidates in canonical `ALL_ROLLS` die order.
 
 ### Move-1 Cube-Decision Cache
 
@@ -1005,12 +1016,15 @@ later trial with the same first roll reads the cached decisions after
 validating the fingerprints. This turns up to `n_trials` deep cube
 evaluations at move 1 into at most 21.
 
-### No-Barrier Design
+### No-Barrier Design (Pre-Reserved Slots)
 
-Prefilling and trial execution are not separated by a barrier. Threads proceed
-from prefilling to trial work as soon as their prefill work is done. Trials that
-hit unpopulated cache entries compute them on demand via the CAS protocol. This
-eliminates idle time from uneven prefill work distribution.
+Prefilling and trial execution are not separated by a barrier. Before parallel
+`cubeful_cube_decision` workers start, all 21 `move0_cache.state[r]` and
+`move1_cache.state[r]` slots are pre-reserved to `1` (`computing`). Workers
+claim roll indices via `next_roll` and publish `state = 2` (`ready`) as each
+roll completes, then immediately begin trial work-stealing. Any early trial
+that reaches a roll still being prefilled waits only on that slot's `state == 2`
+without racing to double-compute or clobber in-flight writes.
 
 ## 11. Truncation Evaluation
 
@@ -1127,15 +1141,16 @@ making parallel execution slower than serial.
 
 ### Work-Stealing Pattern
 
-Trials are distributed using an atomic counter with chunked dispatch:
+Trials are distributed using an atomic counter with adaptive chunk sizing
+(`trial_chunk_size`):
 
 ```
-const chunk_size = 8
+chunk_size = (truncation_depth <= 0 || n_trials / workers < 32) ? 1 : 8
 
 atomic<int> next_trial = 0
 
 thread_function:
-    clear_thread_local_caches()          // N-ply PosCache + cubeful eval cache
+    clear_thread_local_caches()          // N-ply PosCache + O(1) cubeful eval cache
     enable_shared_pos_cache()
 
     while (start = next_trial.fetch_add(chunk_size)) < n_trials:
@@ -1146,11 +1161,20 @@ thread_function:
     disable_shared_pos_cache()
 ```
 
+Full-game rollouts (`truncation_depth <= 0`) vary widely in game length, so
+`chunk_size = 1` prevents long games from stranding an entire 8-trial chunk on
+the tail. Progress reporting (`trial_report_interval`) keeps updates at least 8
+completed paths apart in parallel full-game rollouts, and `_RolloutAnalyzer`
+only binds a Python trial-progress callback when the caller passes one (saving
+unnecessary GIL acquisitions).
+
 ### SharedPosCache for Cross-Thread Sharing
 
-When multiple threads run trials, a `SharedPosCache` (2M entries, lock-free CAS)
-is activated to share N-ply position evaluations across threads. This prevents
-redundant expensive evaluations when different trials reach the same positions.
+When multiple threads run trials, a `SharedPosCache` (2M entries, lock-free CAS,
+**lazily allocated** via `std::call_once` on first access so pure 1-ply /
+live-cube rollouts never materialize the table) is activated to share N-ply
+position evaluations across threads. This prevents redundant expensive
+evaluations when different trials reach the same positions.
 
 Two producers feed it:
 - `MultiPlyStrategy::evaluate_probs_nply_impl` nodes (the hybrid-evaluator
@@ -1230,20 +1254,41 @@ The `max(0, ...)` guard handles floating-point underflow.
 
 ## 14. Performance Optimizations
 
-### Move Candidate Pre-allocation
+### Re-Entrant Scratch Buffers (`TrialMoveScratch`)
 
-The trial function uses `thread_local` vectors for move candidates, pre-reserved
-to capacity 24 (the typical maximum for non-doubles). This avoids repeated
-allocation/deallocation within the hot loop.
+Move generation buffers use RAII `TrialMoveScratch<T>` frames backed by an
+idle `thread_local std::unique_ptr<T>` slot. Sequential calls reuse the same
+allocation with zero heap churn, while nested truncated rollouts (a cube-eval
+rollout inside an outer rollout on the same worker) own distinct buffers and
+never clobber an outer frame's candidate vector.
 
-### Batch Evaluation
+### Cross-Roll VR Batching (`rollout_vr.h`)
 
-When using the base (1-ply) strategy for VR mean computation at a position with
-no bearoff candidate, `batch_evaluate_candidates_best_prob` evaluates all
-candidates and returns both the best index and its probabilities in a single
-pass — no redundant NN calls. (When a candidate is in the bearoff range, the VR
-mean ranks candidates by exact DB equity instead; see "Bearoff Database
-Integration".)
+At every VR half-move (and during `populate_move1_cache_entry`),
+`evaluate_vr_rolls` dispatches to `try_rollout_vr_rolls`
+([`cpp/include/bgbot/rollout_vr.h`](../cpp/include/bgbot/rollout_vr.h)) whenever
+the base strategy is an unblended `BackgameAwarePairStrategy` and the opponent
+is not already in the bearoff home board (so no bearoff-DB boundary exists):
+
+- **Apple Silicon (`BGBOT_USE_ACCELERATE`, default):** deduplicates all
+  non-terminal post-move endpoints across all 21 rolls with a generation-stamped
+  `VrEndpointDedup` hash table, encodes each unique endpoint incrementally from
+  the pre-roll board via `encode_board_from_base`, and evaluates all unique
+  endpoints plus the pass board in **one Accelerate `cblas_sgemm`
+  (`forward_group`) call**. Supports both cubeful (`cl2cf` against `cubes[0]`
+  with `pick_best_with_tiebreak`) and cubeless VR fans.
+- **Portable / Linux x86-64 Modal (`-DBGBOT_USE_ACCELERATE=OFF`):** saves the
+  pre-roll hidden sums once (`forward_save_base`) and evaluates deduplicated
+  endpoints across the 21 cubeful rolls via `forward_board_from_base` deltas.
+- **Fallback (bearoff positions, blended backgames, or other strategies):**
+  falls back to per-roll `best_move_probs_for_candidates` (exact bearoff-DB
+  ranking when any candidate is in DB range; batched
+  `Strategy::best_move_index_cubeful_multi` for `BackgameAwarePairStrategy`;
+  `batch_evaluate_candidates_best_prob` otherwise).
+- **Phase 4 reuse:** at 1-ply moves (`using_base`), Phase 4 reuses
+  `best_candidate_idx[actual_idx]` directly for both cubeless and cube-aware
+  selection (with a bearoff-DB guard when `base_bearoff_` is active), avoiding
+  a second move-selection pass.
 
 ### Batched Interior Picks in the Cubeful Recursion
 
@@ -1476,7 +1521,9 @@ into it.
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| Trial chunk size | 8 | Work-stealing granularity |
+| Trial chunk size | 1 or 8 (`trial_chunk_size`) | `1` for full rollouts (`truncation_depth <= 0`) or `n_trials / n_threads < 32`; `8` otherwise |
+| Trial progress interval | `max(min, trials / 100)` (`trial_report_interval`) | `min = 8` for parallel full rollouts, `1` otherwise; only active when a progress callback is provided |
+| VarianceReductionCache capacity | 2,048 | Lock-free per-rollout VR cache for moves 2+ (`enable_vr && truncation_depth > 2 && n_trials >= 288`) |
 | Internal filter (N-ply trials) | {2, 0.03} | MoveFilter inside trial MultiPly strategies |
 | Deep pre-filter (cubeful recursion) | 16 → 14 | Built-in PubEval prune at sub-entry-ply nodes of rollout-internal cubeful evaluations, including the dead-cube cubeless trees (see [docs/multi-ply.md](multi-ply.md#6-move-selection-within-the-cubeful-recursion)) |
 | VR pre-filter threshold | 0.12 | 1-ply threshold for N-ply VR candidate narrowing |

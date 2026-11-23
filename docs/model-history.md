@@ -24,10 +24,12 @@ Apple arm64 runs each layer as one dense `cblas_sgemm` through Accelerate.
 Accelerate executes these on the CPU's matrix unit (SME on M4, AMX on M1-M3),
 which beats the sparse delta kernels even though ~77% of the inputs are zero.
 The hidden-layer sigmoid on this path is the exact Cephes one, not the lookup
-table the other NEON kernels use: the table clamps to exactly 0/1 beyond ±8
-(up to 3e-4 error per hidden unit), which moves equities by up to ~0.003.
-`-DBGBOT_USE_ACCELERATE=OFF` restores the NEON delta kernels (bit-identical to
-the pre-Accelerate engine).
+table the other NEON kernels originally used: the table clamped to exactly 0/1
+beyond ±8 (up to 3e-4 error per hidden unit), which moved equities by up to
+~0.003. Since v3.1.1 (PR #58), all arm64 forward paths share the vectorized
+polynomial `sigmoid_inplace_neon` (matching x86-64 AVX2 `sigmoid256_ps`),
+removing the single-board vs batched LUT discrepancy; `-DBGBOT_USE_ACCELERATE=OFF`
+still selects the portable NEON delta kernels instead of `cblas_sgemm`.
 
 Measured 2026-11-17 on an M4 Pro (10P+4E cores), together with the encoder
 optimisation below (which is bit-identical on every platform). Wall time of
@@ -94,6 +96,73 @@ The bearoff database is loaded once per process (`analyzer.load_bearoff_db`)
 and shared by analyzers and `BatchModels`, which loads it only when a batch
 has positions. Constructing a 3-ply analyzer takes 17-20 ms instead of
 35-41 ms; analysis times are unchanged (`tests/test_analyzer_model_reuse.py`).
+
+**Engine & Rollout Optimizations (v3.1.1, PR #58, 2026-11-23).** Ported and
+adapted 27 engine optimization commits for Apple Silicon (`BGBOT_USE_ACCELERATE=ON`),
+spanning:
+
+- **Cross-roll VR batching** ([`rollout_vr.h`](../cpp/include/bgbot/rollout_vr.h)):
+  evaluates all 21 rolls' candidates in one grouped `cblas_sgemm` pass on Apple
+  Accelerate with `VrEndpointDedup` endpoint deduplication (and a shared
+  pre-roll hidden base on the portable path), eliminating redundant `Move1Cache`
+  passes and adding a 2,048-slot lock-free `VarianceReductionCache` for moves 2+.
+- **Multi-ply batch & cache reuse**: `CandidateBatchCache` (call-local 1-ply
+  candidate batch reuse across the live and cubeless passes of
+  `cube_decision_with_cubeless_probs`), `DiceNode` per-depth pre-roll base
+  reuse, `CheckerSubtrees` (64 mutex-sharded shards × ≤128 entries call-local
+  4-ply transposition table), generation-stamped O(1) `CubefulEvalCache` clear,
+  and lazy `PosCache` / `SharedPosCache` with `STATE_CLAIMED` spin and
+  cache-line padding.
+- **Work-stealing & cooperative scheduling**: `allow_parallel` enabled at
+  `n_plies >= 2` (with dynamic `next_roll` work-stealing for `4 <= n_threads <= 21`),
+  two-level `multipy_cooperative_for` for 4-ply checker play, and adaptive
+  `trial_chunk_size` / `trial_report_interval` for rollouts.
+- **Hot-path kernels**: `possible_boards_unsorted`, faster contact encoding,
+  `TrialMoveScratch` buffer reuse, batched `BackgameAwarePairStrategy` cubeful
+  multi-evaluation, and unified arm64 `sigmoid_inplace_neon` across single-board
+  and grouped forward passes.
+
+Measured 2026-11-23 on an Apple Silicon M4 Pro (10 threads, `stage11`,
+`BGBOT_USE_ACCELERATE=ON`), comparing `v3.1.0` (`cd9c004`) vs `v3.1.1`
+(`abaedf9`):
+
+| Workload | v3.1.0 | v3.1.1 | Speed-up |
+|---|---:|---:|---:|
+| `move_gen_unsorted` (3,600 rolls) | 0.0186 s | 0.0094 s | 1.98x |
+| `move_gen_sorted` (3,600 rolls) | 0.0424 s | 0.0125 s | 3.39x |
+| `encode_contact` (20,000 boards) | 0.0538 s | 0.0368 s | 1.46x |
+| `2ply_cube` (10 positions) | 0.0194 s | 0.0035 s | 5.54x |
+| `2ply_checker` (6 positions) | 0.0277 s | 0.0120 s | 2.31x |
+| `3ply_cube` (10 positions) | 0.0473 s | 0.0249 s | 1.90x |
+| `3ply_checker` (6 positions) | 0.6126 s | 0.3171 s | 1.93x |
+| `4ply_checker` (2 positions) | 1.6733 s | 0.8336 s | 2.01x |
+| `truncated1` cube rollout (1 position) | 0.0449 s | 0.0148 s | 3.03x |
+| `truncated2` cube rollout (1 position) | 0.6784 s | 0.1761 s | 3.85x |
+| `truncated3` cube rollout (1 position) | 1.6851 s | 0.8484 s | 1.99x |
+| `full_rollout` cube (144 trials, 1-ply) | 1.0424 s | 0.2190 s | 4.76x |
+| `truncated2` checker rollout (1 position) | 0.9134 s | 0.2044 s | 4.47x |
+
+**2-ply cube thread scaling on M4 Pro** (100 calls, `v3.1.1`, Accelerate ON):
+because macOS passes `threads` through at 2-ply (unlike Linux, where
+`root_roll_threads` forces 1 thread on 2-ply races), both contact and race
+positions scale across threads:
+
+| Position class (100 calls) | 1 thread | 4 threads | 10 threads | 1T → 10T |
+|---|---:|---:|---:|---:|
+| Contact (2-ply cube) | 0.0615 s | 0.0245 s | 0.0214 s | 2.87x |
+| Race (2-ply cube) | 0.0277 s | 0.0125 s | 0.0126 s | 2.20x |
+
+**Per-call analyzer latency on an idle M4 Pro** (`scripts/bench_analyzer_overhead.py`,
+`v3.1.1`, `stage11`, default threads, 3 rounds, median ms per call):
+
+| Call | Median ms/call (3 rounds) |
+|---|---:|
+| `cube_action` 1-ply | 0.0107–0.0110 |
+| `cube_action` 2-ply | 0.206–0.218 |
+| `cube_action` 3-ply | 2.358–2.376 |
+| `checker_play` 1-ply | 0.081–0.084 |
+| `checker_play` 1-ply, 1 thread | 0.082–0.085 |
+| `checker_play` 2-ply | 0.794–0.842 |
 
 
 ## Money Contact Cube Life Tuning
