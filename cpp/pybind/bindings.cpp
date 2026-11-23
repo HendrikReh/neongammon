@@ -34,6 +34,14 @@
 namespace py = pybind11;
 using namespace bgbot;
 
+static std::shared_ptr<Strategy> with_bearoff_db(std::shared_ptr<Strategy> strategy,
+                                                 const BearoffDB* db) {
+    if (!db || !db->is_loaded()) return strategy;
+    const auto* wrapped = dynamic_cast<const BearoffStrategy*>(strategy.get());
+    if (wrapped && &wrapped->db() == db) return strategy;
+    return std::make_shared<BearoffStrategy>(std::move(strategy), db);
+}
+
 static BenchmarkResult run_score_benchmarks(const Strategy& strategy,
                                              const std::vector<BenchmarkScenario>& scenarios,
                                              int n_threads) {
@@ -377,10 +385,7 @@ static std::vector<ScoredMove> score_checker_position(
 
     // Probs, cubeless and cubeful equity of a post-move board from the
     // cube-aware N-ply tree.
-    auto cube_tree = [&](ScoredMove& m) {
-        auto r = cubeful_probs_and_equity_nply(
-            flip(m.board), opp_ci, strategy_1ply, cfg.n_plies, cfg.filter,
-            /*n_threads=*/1, /*move_filter=*/nullptr, &pos.board);
+    auto apply_cube_tree = [](ScoredMove& m, const CubefulProbsAndEquity& r) {
         const auto& o = r.probs;
         m.probs = {1.0 - o[0], o[3], o[4], o[1], o[2]};
         m.cubeless_equity = 2.0 * m.probs[0] - 1.0
@@ -389,14 +394,25 @@ static std::vector<ScoredMove> score_checker_position(
         m.cubeful_equity = -r.equity;
         m.searched = true;
     };
-    // The cube tree for several moves, over the pool when allowed.
+    auto cube_tree = [&](ScoredMove& m) {
+        const int roll_threads = candidate_threads > 1 ? std::min(candidate_threads, 21) : 1;
+        auto r = cubeful_probs_and_equity_nply(
+            flip(m.board), opp_ci, strategy_1ply, cfg.n_plies, cfg.filter,
+            roll_threads, /*move_filter=*/nullptr, &pos.board);
+        apply_cube_tree(m, r);
+    };
+    // The cube tree for several moves, using dynamic work-stealing, cooperative
+    // roll splitting and shared 2-ply subtrees at 4-ply when threads permit.
     auto cube_trees = [&](std::vector<ScoredMove*>& moves) {
-        const int n = static_cast<int>(moves.size());
-        if (candidate_threads > 1 && n > 1) {
-            multipy_parallel_for(n, std::min(candidate_threads, n),
-                                 [&](int k) { cube_tree(*moves[k]); });
-        } else {
-            for (auto* m : moves) cube_tree(*m);
+        if (moves.empty()) return;
+        std::vector<Board> endpoints;
+        endpoints.reserve(moves.size());
+        for (const auto* m : moves) endpoints.push_back(m->board);
+        auto res = cubeful_checker_endpoints_nply(
+            pos.board, endpoints, opp_ci, strategy_1ply, cfg.n_plies,
+            candidate_threads);
+        for (size_t i = 0; i < moves.size(); ++i) {
+            apply_cube_tree(*moves[i], res[i]);
         }
     };
 
@@ -528,6 +544,8 @@ static CheckerPosition checker_position_from_dict(const py::dict& inp) {
     p.board = list_to_board(inp["board"].cast<std::vector<int>>());
     p.die1 = inp["die1"].cast<int>();
     p.die2 = inp["die2"].cast<int>();
+    validate_die(p.die1);
+    validate_die(p.die2);
     p.cube_value = inp["cube_value"].cast<int>();
     p.owner = inp["cube_owner"].cast<CubeOwner>();
     if (inp.contains("away1")) {
@@ -4385,6 +4403,8 @@ PYBIND11_MODULE(bgbot_cpp, m) {
             parsed[i].board = list_to_board(checkers);
             parsed[i].die1 = inp["die1"].cast<int>();
             parsed[i].die2 = inp["die2"].cast<int>();
+            validate_die(parsed[i].die1);
+            validate_die(parsed[i].die2);
             parsed[i].cube_value = inp["cube_value"].cast<int>();
             parsed[i].owner = inp["cube_owner"].cast<CubeOwner>();
             if (inp.contains("away1")) {
@@ -4565,6 +4585,8 @@ PYBIND11_MODULE(bgbot_cpp, m) {
             parsed[i].board = list_to_board(checkers);
             parsed[i].die1 = inp["die1"].cast<int>();
             parsed[i].die2 = inp["die2"].cast<int>();
+            validate_die(parsed[i].die1);
+            validate_die(parsed[i].die2);
             parsed[i].cube_value = inp["cube_value"].cast<int>();
             parsed[i].owner = inp["cube_owner"].cast<CubeOwner>();
             if (inp.contains("away1")) {
@@ -4727,6 +4749,8 @@ PYBIND11_MODULE(bgbot_cpp, m) {
         pos.board = list_to_board(board);
         pos.die1 = die1;
         pos.die2 = die2;
+        validate_die(pos.die1);
+        validate_die(pos.die2);
         pos.cube_value = cube_value;
         pos.owner = cube_owner;
         pos.match = MatchInfo{away1, away2, is_crawford};
@@ -4901,6 +4925,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
     py::class_<BearoffStrategy, Strategy, std::shared_ptr<BearoffStrategy>>(m, "BearoffStrategy")
         .def(py::init<std::shared_ptr<Strategy>, const BearoffDB*>(),
              py::arg("base"), py::arg("db"),
+             py::keep_alive<1, 2>(),  // nested wrappers retain their DB through Python
              py::keep_alive<1, 3>())  // BearoffStrategy keeps db alive
         // Root-routing controls, forwarded to the wrapped pair strategy (the
         // analyzer hands out its 1-ply strategy wrapped in this class).
@@ -5463,11 +5488,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
         Board board = list_to_board(board_vec);
         MoveFilter filter{filter_max_moves, filter_threshold};
 
-        // Wrap in BearoffStrategy if DB available
-        std::shared_ptr<Strategy> eval_strat = strategy;
-        if (bearoff_db && bearoff_db->is_loaded()) {
-            eval_strat = std::make_shared<BearoffStrategy>(strategy, bearoff_db);
-        }
+        auto eval_strat = with_bearoff_db(std::move(strategy), bearoff_db);
 
         py::gil_scoped_release release;
         if (away1 > 0 && away2 > 0) {
@@ -5505,10 +5526,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
         Board board = list_to_board(board_vec);
         MoveFilter filter{filter_max_moves, filter_threshold};
 
-        std::shared_ptr<Strategy> eval_strat = strategy;
-        if (bearoff_db && bearoff_db->is_loaded()) {
-            eval_strat = std::make_shared<BearoffStrategy>(strategy, bearoff_db);
-        }
+        auto eval_strat = with_bearoff_db(std::move(strategy), bearoff_db);
 
         std::array<float, NUM_OUTPUTS> probs;
         {
@@ -5560,10 +5578,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
             root_ptr = &root;
         }
 
-        std::shared_ptr<Strategy> eval_strat = strategy;
-        if (bearoff_db && bearoff_db->is_loaded()) {
-            eval_strat = std::make_shared<BearoffStrategy>(strategy, bearoff_db);
-        }
+        auto eval_strat = with_bearoff_db(std::move(strategy), bearoff_db);
 
         CubefulProbsAndEquity result;
         {
@@ -5608,10 +5623,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
         Board board = list_to_board(checkers);
         auto base = strategy ? std::move(strategy) :
             make_strategy_from_type(strategy_type, weight_paths, hidden_sizes);
-        std::shared_ptr<Strategy> strat = base;
-        if (bearoff_db && bearoff_db->is_loaded()) {
-            strat = std::make_shared<BearoffStrategy>(base, bearoff_db);
-        }
+        auto strat = with_bearoff_db(std::move(base), bearoff_db);
         Board flipped = flip(board);
         bool race = is_race(board);
         auto post_move_probs = strat->evaluate_probs(flipped, race);
@@ -5672,9 +5684,16 @@ PYBIND11_MODULE(bgbot_cpp, m) {
         Board board = list_to_board(checkers);
         auto base = strategy ? std::move(strategy) :
             make_strategy_from_type(strategy_type, weight_paths, hidden_sizes);
-        std::shared_ptr<Strategy> base_strat = base;
-        if (bearoff_db && bearoff_db->is_loaded()) {
-            base_strat = std::make_shared<BearoffStrategy>(base, bearoff_db);
+        auto base_strat = with_bearoff_db(std::move(base), bearoff_db);
+        // A caller may supply the ready-to-use wrapper without a separate DB.
+        // The cubeless evaluator also needs that DB for its root shortcut.
+        const Strategy* layer = base_strat.get();
+        while (const auto* wrapped = dynamic_cast<const BearoffStrategy*>(layer)) {
+            if (wrapped->db().is_loaded()) {
+                bearoff_db = &wrapped->db();
+                break;
+            }
+            layer = &wrapped->base();
         }
         CubeInfo ci{cube_value, owner, {away1, away2, is_crawford}, cube_x_override, jacoby, beaver, max_cube_value, contact_x, contact_x_pip_slope};
         MoveFilter filter{filter_max_moves, filter_threshold};
@@ -5689,11 +5708,23 @@ PYBIND11_MODULE(bgbot_cpp, m) {
             py::gil_scoped_release release;
             if (incl_2ply_details) {
                 cd = cube_decision_nply_with_details(board, ci, *base_strat, n_plies, filter, n_threads, details, &pubeval_filter);
-            } else {
+                if (!decision_only) {
+                    Board flipped = flip(board);
+                    MultiPlyStrategy multipy(base_strat, n_plies, filter,
+                                             /*full_depth_opponent=*/false,
+                                             /*parallel_evaluate=*/n_threads > 1,
+                                             /*parallel_threads=*/n_threads);
+                    if (bearoff_db && bearoff_db->is_loaded()) {
+                        multipy.set_bearoff_db(bearoff_db);
+                    }
+                    auto post_probs = multipy.evaluate_probs(flipped, flipped);
+                    multipy.clear_cache();
+                    pre_roll_probs = invert_probs(post_probs);
+                    cl_eq = cubeless_equity(pre_roll_probs);
+                }
+            } else if (decision_only) {
                 cd = cube_decision_nply(board, ci, *base_strat, n_plies, filter, n_threads, &pubeval_filter);
-            }
-            if (!decision_only) {
-                Board flipped = flip(board);
+            } else {
                 MultiPlyStrategy multipy(base_strat, n_plies, filter,
                                          /*full_depth_opponent=*/false,
                                          /*parallel_evaluate=*/n_threads > 1,
@@ -5701,9 +5732,8 @@ PYBIND11_MODULE(bgbot_cpp, m) {
                 if (bearoff_db && bearoff_db->is_loaded()) {
                     multipy.set_bearoff_db(bearoff_db);
                 }
-                auto post_probs = multipy.evaluate_probs(flipped, flipped);
+                cd = multipy.cube_decision_with_cubeless_probs(board, ci, &pubeval_filter, pre_roll_probs);
                 multipy.clear_cache();
-                pre_roll_probs = invert_probs(post_probs);
                 cl_eq = cubeless_equity(pre_roll_probs);
             }
         }

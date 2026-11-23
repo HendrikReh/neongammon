@@ -17,6 +17,7 @@ the same database shares it, and the legacy key folds it in too.
 
 import os
 import sys
+import weakref
 
 import pytest
 
@@ -125,3 +126,66 @@ def test_legacy_multiply_cache_tells_the_database_apart():
         if first == "db":
             got.reverse()
         assert got == [ref_plain, ref_db], first
+
+
+def test_loaded_model_distinguishes_automatic_and_explicit_cube_efficiency():
+    w = default_weights()
+    raw = _base()
+    contact = [
+        0, 0, 0, 2, 3, 0, 4, -2, 2, 0, 0, 0, -4,
+        2, -3, 0, -1, 0, 0, -3, 2, 0, -2, 0, 0, 0,
+    ]
+
+    def evaluate(x, threads, strategy=None):
+        return bgbot_cpp.cube_decision_nply_unified(
+            contact, 1, bgbot_cpp.CubeOwner.CENTERED, 3,
+            w.strategy_type, w.weight_paths_list, w.hidden_sizes_list,
+            cube_x_override=x, n_threads=threads, strategy=strategy,
+        )["equity_nd"]
+
+    # The old integer cache fingerprint rounded both values to zero, even
+    # though a negative value requests a board-dependent cube efficiency.
+    settings = (-0.00001, 0.00001)
+    expected = [evaluate(x, 1) for x in settings]
+    assert abs(expected[0] - expected[1]) > 0.005
+    for _ in range(4):
+        assert [evaluate(x, 4, raw) for x in settings] == expected
+
+
+def test_nested_native_wrapper_keeps_inner_database_alive():
+    raw = _base()
+    inner_db = bgbot_cpp.BearoffDB()
+    reference = weakref.ref(inner_db)
+    outer = bgbot_cpp.BearoffStrategy(
+        bgbot_cpp.BearoffStrategy(raw, inner_db), bgbot_cpp.BearoffDB()
+    )
+    del inner_db
+    assert reference() is not None
+    del outer
+    assert reference() is None
+
+
+def test_cube_unified_honors_prewrapped_bearoff_strategy():
+    w = default_weights()
+    raw = _base()
+    db = _db()
+    wrapped = bgbot_cpp.BearoffStrategy(raw, db)
+    bearoff_race = [
+        0, 0, 2, 0, 3, 0, 2, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, -3, 0, 0, -4, 0, -1, 0,
+    ]
+
+    def evaluate(**kwargs):
+        return bgbot_cpp.cube_decision_nply_unified(
+            bearoff_race, 1, bgbot_cpp.CubeOwner.CENTERED, 3,
+            w.strategy_type, w.weight_paths_list, w.hidden_sizes_list,
+            **kwargs,
+        )
+
+    expected = evaluate(bearoff_db=db)
+    assert expected["equity_dt"] != evaluate()["equity_dt"]
+    assert evaluate(strategy=raw, bearoff_db=db) == expected
+    assert evaluate(strategy=wrapped, bearoff_db=db) == expected
+    assert evaluate(strategy=wrapped) == expected
+    outer = bgbot_cpp.BearoffStrategy(wrapped, bgbot_cpp.BearoffDB())
+    assert evaluate(strategy=outer) == expected

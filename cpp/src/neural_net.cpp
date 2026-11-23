@@ -130,10 +130,11 @@ static inline __m256 sigmoid256_ps(__m256 x) {
 #endif
 
 // ======================== NEON Vectorized Sigmoid ========================
-// The same Cephes exp() as exp256_ps above, 4 lanes wide. Used by the
-// Accelerate group path, where the scalar LUT sigmoid over the hidden layer
-// cost several times more than the matrix multiply itself.
-#if defined(BGBOT_USE_ACCELERATE)
+// The same Cephes exp() as exp256_ps above, 4 lanes wide. Used for the hidden
+// layer across all arm64 forward paths so single-board forward() matches
+// Accelerate forward_group() (and x86-64 AVX2 sigmoid256_ps) without LUT clamp
+// drift between VR mean and single-board evaluations.
+#if defined(BGBOT_USE_NEON)
 static inline float32x4_t exp_neon_ps(float32x4_t x) {
     x = vminq_f32(x, vdupq_n_f32(88.3762626647949f));
     x = vmaxq_f32(x, vdupq_n_f32(-88.3762626647949f));
@@ -390,6 +391,9 @@ std::array<float, NN_OUTPUTS> NeuralNetwork::forward(const float* inputs) const 
             __m256 v = _mm256_loadu_ps(&hiddens[h]);
             _mm256_storeu_ps(&hiddens[h], sigmoid256_ps(v));
         }
+#elif defined(BGBOT_USE_NEON)
+        sigmoid_inplace_neon(hiddens, static_cast<size_t>(nh));
+        h = nh;
 #endif
         for (; h < nh; ++h) {
             hiddens[h] = fast_sigmoid(hiddens[h]);
@@ -586,6 +590,9 @@ void NeuralNetwork::forward_batch(
                 __m256 v = _mm256_loadu_ps(&hiddens[h]);
                 _mm256_storeu_ps(&hiddens[h], sigmoid256_ps(v));
             }
+#elif defined(BGBOT_USE_NEON)
+            sigmoid_inplace_neon(hiddens, static_cast<size_t>(nh));
+            h = nh;
 #endif
             for (; h < nh; ++h) {
                 hiddens[h] = fast_sigmoid(hiddens[h]);
@@ -663,92 +670,51 @@ void NeuralNetwork::forward_batch(
 
 // ======================== Incremental (delta) evaluation ========================
 
+void NeuralNetwork::save_hidden_base(const float* inputs, float* saved_base, float* saved_inputs) const {
+    ensure_transposed_weights();
+    std::memcpy(saved_inputs, inputs, n_inputs_ * sizeof(float));
+    std::memcpy(saved_base, hidden_biases_.data(), n_hidden_ * sizeof(float));
+    // Accumulate in input order. The saved pre-sigmoid sums also serve as
+    // the unmodified input to the output pass when a prediction is needed.
+    for (int i = 0; i < n_inputs_; ++i) {
+        const float value = inputs[i];
+        if (value == 0.0f) continue;
+        const float* weights = hidden_weights_T_.data() + i * n_hidden_;
+        int h = 0;
+#if defined(BGBOT_USE_AVX2)
+        const __m256 v = _mm256_set1_ps(value);
+        for (; h + 7 < n_hidden_; h += 8) {
+            const __m256 product = _mm256_mul_ps(v, _mm256_loadu_ps(weights + h));
+            const __m256 sum = _mm256_add_ps(_mm256_loadu_ps(saved_base + h), product);
+            _mm256_storeu_ps(saved_base + h, sum);
+        }
+#elif defined(BGBOT_USE_NEON)
+        const float32x4_t v = vdupq_n_f32(value);
+        for (; h + 7 < n_hidden_; h += 8) {
+            vst1q_f32(saved_base + h, vfmaq_f32(vld1q_f32(saved_base + h), v, vld1q_f32(weights + h)));
+            vst1q_f32(saved_base + h + 4, vfmaq_f32(vld1q_f32(saved_base + h + 4), v, vld1q_f32(weights + h + 4)));
+        }
+        for (; h + 3 < n_hidden_; h += 4) {
+            vst1q_f32(saved_base + h, vfmaq_f32(vld1q_f32(saved_base + h), v, vld1q_f32(weights + h)));
+        }
+#endif
+        for (; h < n_hidden_; ++h) saved_base[h] += value * weights[h];
+    }
+}
+
 std::array<float, NN_OUTPUTS> NeuralNetwork::forward_save_base(
     const float* inputs, float* saved_base, float* saved_inputs) const
 {
+    save_hidden_base(inputs, saved_base, saved_inputs);
     const int nh = n_hidden_;
-    const int ni = n_inputs_;
-    const int inp_stride = ni + 1;
     const int hid_stride = nh + 1;
 
-    ensure_transposed_weights();
-
-    // Save input vector for later delta computation
-    std::memcpy(saved_inputs, inputs, ni * sizeof(float));
-
-    // Compute hidden layer pre-sigmoid sums and save them
     float hiddens_stack[512];
     std::vector<float> hiddens_heap;
-    float* hiddens;
-    if (nh <= 512) {
-        hiddens = hiddens_stack;
-    } else {
+    float* hiddens = hiddens_stack;
+    if (nh > 512) {
         hiddens_heap.resize(nh);
         hiddens = hiddens_heap.data();
-    }
-
-    // Initialize with cached biases (contiguous memcpy)
-    std::memcpy(hiddens, hidden_biases_.data(), nh * sizeof(float));
-    std::memcpy(saved_base, hidden_biases_.data(), nh * sizeof(float));
-    for (int i = 0; i < ni; ++i) {
-        const float vi = inputs[i];
-        if (vi == 0.0f) continue;
-        const float* col = &hidden_weights_T_[i * nh];
-        int h = 0;
-#if defined(BGBOT_USE_AVX2)
-        __m256 vvi = _mm256_set1_ps(vi);
-        for (; h + 15 < nh; h += 16) {
-            __m256 base0 = _mm256_loadu_ps(&hiddens[h]);
-            __m256 wb0 = _mm256_loadu_ps(&col[h]);
-            __m256 base1 = _mm256_loadu_ps(&hiddens[h + 8]);
-            __m256 wb1 = _mm256_loadu_ps(&col[h + 8]);
-            __m256 save0 = _mm256_loadu_ps(&saved_base[h]);
-            __m256 save1 = _mm256_loadu_ps(&saved_base[h + 8]);
-            __m256 prod0 = _mm256_mul_ps(vvi, wb0);
-            __m256 prod1 = _mm256_mul_ps(vvi, wb1);
-            base0 = _mm256_add_ps(base0, prod0);
-            base1 = _mm256_add_ps(base1, prod1);
-            save0 = _mm256_add_ps(save0, prod0);
-            save1 = _mm256_add_ps(save1, prod1);
-            _mm256_storeu_ps(&hiddens[h], base0);
-            _mm256_storeu_ps(&hiddens[h + 8], base1);
-            _mm256_storeu_ps(&saved_base[h], save0);
-            _mm256_storeu_ps(&saved_base[h + 8], save1);
-        }
-        for (; h + 7 < nh; h += 8) {
-            __m256 base = _mm256_loadu_ps(&hiddens[h]);
-            __m256 wb   = _mm256_loadu_ps(&col[h]);
-            __m256 save = _mm256_loadu_ps(&saved_base[h]);
-            __m256 prod = _mm256_mul_ps(vvi, wb);
-            base = _mm256_add_ps(base, prod);
-            save = _mm256_add_ps(save, prod);
-            _mm256_storeu_ps(&hiddens[h], base);
-            _mm256_storeu_ps(&saved_base[h], save);
-        }
-#elif defined(BGBOT_USE_NEON)
-        float32x4_t vvi = vdupq_n_f32(vi);
-        for (; h + 7 < nh; h += 8) {
-            float32x4_t base0 = vld1q_f32(&hiddens[h]);
-            float32x4_t wb0  = vld1q_f32(&col[h]);
-            float32x4_t wb1  = vld1q_f32(&col[h + 4]);
-            float32x4_t base1 = vld1q_f32(&hiddens[h + 4]);
-            float32x4_t save0 = vld1q_f32(&saved_base[h]);
-            float32x4_t save1 = vld1q_f32(&saved_base[h + 4]);
-            base0 = vfmaq_f32(base0, vvi, wb0);
-            base1 = vfmaq_f32(base1, vvi, wb1);
-            save0 = vfmaq_f32(save0, vvi, wb0);
-            save1 = vfmaq_f32(save1, vvi, wb1);
-            vst1q_f32(&hiddens[h], base0);
-            vst1q_f32(&hiddens[h + 4], base1);
-            vst1q_f32(&saved_base[h], save0);
-            vst1q_f32(&saved_base[h + 4], save1);
-        }
-#endif
-        for (; h < nh; ++h) {
-            const float v = vi * col[h];
-            hiddens[h] += v;
-            saved_base[h] += v;
-        }
     }
 
     // Apply sigmoid to hidden layer
@@ -756,12 +722,16 @@ std::array<float, NN_OUTPUTS> NeuralNetwork::forward_save_base(
         int h = 0;
 #if defined(BGBOT_USE_AVX2)
         for (; h + 7 < nh; h += 8) {
-            __m256 v = _mm256_loadu_ps(&hiddens[h]);
+            __m256 v = _mm256_loadu_ps(&saved_base[h]);
             _mm256_storeu_ps(&hiddens[h], sigmoid256_ps(v));
         }
+#elif defined(BGBOT_USE_NEON)
+        std::memcpy(hiddens, saved_base, static_cast<size_t>(nh) * sizeof(float));
+        sigmoid_inplace_neon(hiddens, static_cast<size_t>(nh));
+        h = nh;
 #endif
         for (; h < nh; ++h) {
-            hiddens[h] = fast_sigmoid(hiddens[h]);
+            hiddens[h] = fast_sigmoid(saved_base[h]);
         }
     }
 
@@ -837,10 +807,65 @@ std::array<float, NN_OUTPUTS> NeuralNetwork::forward_save_base(
 std::array<float, NN_OUTPUTS> NeuralNetwork::forward_from_base(
     const float* inputs, const float* saved_base, const float* saved_inputs) const
 {
+    const int ni = n_inputs_;
+
+    // Collect changed inputs into a compact list.
+    // In backgammon, a move typically changes 4-12 of 196/244 inputs.
+    int delta_indices[INPUT_DELTA_LIMIT];
+    float delta_vals[INPUT_DELTA_LIMIT];
+    int n_deltas = 0;
+
+    int i = 0;
+#if defined(BGBOT_USE_AVX2)
+    for (; i + 7 < ni && n_deltas < INPUT_DELTA_LIMIT; i += 8) {
+        const __m256 current = _mm256_loadu_ps(inputs + i);
+        const __m256 previous = _mm256_loadu_ps(saved_inputs + i);
+        const __m256 delta = _mm256_sub_ps(current, previous);
+        unsigned mask = _mm256_movemask_ps(_mm256_cmp_ps(delta, _mm256_setzero_ps(), _CMP_NEQ_UQ));
+        while (mask && n_deltas < INPUT_DELTA_LIMIT) {
+            const int lane = __builtin_ctz(mask);
+            delta_indices[n_deltas] = i + lane;
+            delta_vals[n_deltas++] = inputs[i + lane] - saved_inputs[i + lane];
+            mask &= mask - 1;
+        }
+    }
+#endif
+    for (; i < ni && n_deltas < INPUT_DELTA_LIMIT; ++i) {
+        const float d = inputs[i] - saved_inputs[i];
+        if (d != 0.0f) {
+            delta_indices[n_deltas] = i;
+            delta_vals[n_deltas++] = d;
+        }
+    }
+
+    // The sparse list may have filled before the last changed input. Use
+    // the complete input vector for such widely separated candidates.
+    if (n_deltas == INPUT_DELTA_LIMIT) return forward(inputs);
+
+    return forward_with_deltas(saved_base, delta_indices, delta_vals, n_deltas);
+}
+
+std::array<float, NN_OUTPUTS> NeuralNetwork::forward_board_from_base(
+    const Board& board, const Board& base, const float* saved_hidden, const float* saved_inputs) const {
+    const bool tesauro = n_inputs_ == TESAURO_INPUTS;
+    if (!tesauro && n_inputs_ != EXTENDED_CONTACT_INPUTS)
+        throw std::invalid_argument("Board inference requires Tesauro or extended contact inputs");
+    int indices[INPUT_DELTA_LIMIT];
+    float values[INPUT_DELTA_LIMIT];
+    const int count = board_input_deltas(board, base, saved_inputs, tesauro, indices, values);
+    if (count == INPUT_DELTA_LIMIT) {
+        if (tesauro) return forward(compute_tesauro_inputs(board));
+        return forward(compute_extended_contact_inputs(board).data());
+    }
+    return forward_with_deltas(saved_hidden, indices, values, count);
+}
+
+std::array<float, NN_OUTPUTS> NeuralNetwork::forward_with_deltas(
+    const float* saved_base, const int* delta_indices, const float* delta_vals, int n_deltas) const
+{
     ensure_transposed_weights();
 
     const int nh = n_hidden_;
-    const int ni = n_inputs_;
     const int hid_stride = nh + 1;
 
     // Copy saved pre-sigmoid hidden sums, then apply input deltas
@@ -856,28 +881,81 @@ std::array<float, NN_OUTPUTS> NeuralNetwork::forward_from_base(
 
     std::memcpy(hiddens, saved_base, nh * sizeof(float));
 
-    // Collect changed inputs into a compact list.
-    // In backgammon, a move typically changes 4-12 of 196/244 inputs.
-    int delta_indices[64];
-    float delta_vals[64];
-    int n_deltas = 0;
-
-    for (int i = 0; i < ni; ++i) {
-        float d = inputs[i] - saved_inputs[i];
-        if (d != 0.0f && n_deltas < 64) {
-            delta_indices[n_deltas] = i;
-            delta_vals[n_deltas] = d;
-            n_deltas++;
+    const float* weights = hidden_weights_T_.data();
+    int d = 0;
+#if defined(BGBOT_USE_AVX2)
+    // Modal only (Linux x86-64): retain one hidden tile in registers across four deltas.
+    for (; d + 3 < n_deltas; d += 4) {
+        const float* w0 = weights + delta_indices[d] * nh;
+        const float* w1 = weights + delta_indices[d + 1] * nh;
+        const float* w2 = weights + delta_indices[d + 2] * nh;
+        const float* w3 = weights + delta_indices[d + 3] * nh;
+        const __m256 v0 = _mm256_set1_ps(delta_vals[d]);
+        const __m256 v1 = _mm256_set1_ps(delta_vals[d + 1]);
+        const __m256 v2 = _mm256_set1_ps(delta_vals[d + 2]);
+        const __m256 v3 = _mm256_set1_ps(delta_vals[d + 3]);
+        int h = 0;
+        for (; h + 7 < nh; h += 8) {
+            __m256 z = _mm256_loadu_ps(hiddens + h);
+            z = _mm256_fmadd_ps(v0, _mm256_loadu_ps(w0 + h), z);
+            z = _mm256_fmadd_ps(v1, _mm256_loadu_ps(w1 + h), z);
+            z = _mm256_fmadd_ps(v2, _mm256_loadu_ps(w2 + h), z);
+            z = _mm256_fmadd_ps(v3, _mm256_loadu_ps(w3 + h), z);
+            _mm256_storeu_ps(hiddens + h, z);
+        }
+        for (; h < nh; ++h) {
+            hiddens[h] += delta_vals[d] * w0[h];
+            hiddens[h] += delta_vals[d + 1] * w1[h];
+            hiddens[h] += delta_vals[d + 2] * w2[h];
+            hiddens[h] += delta_vals[d + 3] * w3[h];
         }
     }
-
-    // Apply deltas using transposed weight matrix for contiguous column access.
-    // hidden_weights_T_[col * nh + h] gives the weight for hidden node h, input col.
-    // This avoids the strided column extraction step entirely.
-    for (int d = 0; d < n_deltas; ++d) {
+#elif defined(BGBOT_USE_NEON)
+    // Apple Silicon: keep hidden tile in NEON registers across four successive deltas.
+    for (; d + 3 < n_deltas; d += 4) {
+        const float* w0 = weights + delta_indices[d] * nh;
+        const float* w1 = weights + delta_indices[d + 1] * nh;
+        const float* w2 = weights + delta_indices[d + 2] * nh;
+        const float* w3 = weights + delta_indices[d + 3] * nh;
+        const float32x4_t v0 = vdupq_n_f32(delta_vals[d]);
+        const float32x4_t v1 = vdupq_n_f32(delta_vals[d + 1]);
+        const float32x4_t v2 = vdupq_n_f32(delta_vals[d + 2]);
+        const float32x4_t v3 = vdupq_n_f32(delta_vals[d + 3]);
+        int h = 0;
+        for (; h + 7 < nh; h += 8) {
+            float32x4_t z0 = vld1q_f32(hiddens + h);
+            float32x4_t z1 = vld1q_f32(hiddens + h + 4);
+            z0 = vfmaq_f32(z0, v0, vld1q_f32(w0 + h));
+            z1 = vfmaq_f32(z1, v0, vld1q_f32(w0 + h + 4));
+            z0 = vfmaq_f32(z0, v1, vld1q_f32(w1 + h));
+            z1 = vfmaq_f32(z1, v1, vld1q_f32(w1 + h + 4));
+            z0 = vfmaq_f32(z0, v2, vld1q_f32(w2 + h));
+            z1 = vfmaq_f32(z1, v2, vld1q_f32(w2 + h + 4));
+            z0 = vfmaq_f32(z0, v3, vld1q_f32(w3 + h));
+            z1 = vfmaq_f32(z1, v3, vld1q_f32(w3 + h + 4));
+            vst1q_f32(hiddens + h, z0);
+            vst1q_f32(hiddens + h + 4, z1);
+        }
+        for (; h + 3 < nh; h += 4) {
+            float32x4_t z = vld1q_f32(hiddens + h);
+            z = vfmaq_f32(z, v0, vld1q_f32(w0 + h));
+            z = vfmaq_f32(z, v1, vld1q_f32(w1 + h));
+            z = vfmaq_f32(z, v2, vld1q_f32(w2 + h));
+            z = vfmaq_f32(z, v3, vld1q_f32(w3 + h));
+            vst1q_f32(hiddens + h, z);
+        }
+        for (; h < nh; ++h) {
+            hiddens[h] += delta_vals[d] * w0[h];
+            hiddens[h] += delta_vals[d + 1] * w1[h];
+            hiddens[h] += delta_vals[d + 2] * w2[h];
+            hiddens[h] += delta_vals[d + 3] * w3[h];
+        }
+    }
+#endif
+    for (; d < n_deltas; ++d) {
         const int col = delta_indices[d];
         const float dv = delta_vals[d];
-        const float* col_weights = &hidden_weights_T_[col * nh];
+        const float* col_weights = weights + col * nh;
 
         // Apply: hiddens[h] += dv * col_weights[h] using SIMD FMA
         int h = 0;
@@ -931,6 +1009,9 @@ std::array<float, NN_OUTPUTS> NeuralNetwork::forward_from_base(
             __m256 v = _mm256_loadu_ps(&hiddens[h]);
             _mm256_storeu_ps(&hiddens[h], sigmoid256_ps(v));
         }
+#elif defined(BGBOT_USE_NEON)
+        sigmoid_inplace_neon(hiddens, static_cast<size_t>(nh));
+        h = nh;
 #endif
         for (; h < nh; ++h) {
             hiddens[h] = fast_sigmoid(hiddens[h]);
@@ -1086,16 +1167,32 @@ void evaluate_board_group(const NeuralNetwork& nn, bool purerace,
 {
     if (n <= 0) return;
     const int ni = nn.n_inputs();
+    const int slot_width = purerace ? TESAURO_INPUTS : EXTENDED_CONTACT_INPUTS;
     thread_local std::vector<float> encoded;
     encoded.resize(static_cast<size_t>(n) * ni);
-    for (int j = 0; j < n; ++j) {
-        float* row = &encoded[static_cast<size_t>(j) * ni];
-        if (purerace) {
-            auto inp = compute_tesauro_inputs(boards[idx[j]]);
-            std::copy(inp.begin(), inp.end(), row);
-        } else {
-            auto inp = compute_extended_contact_inputs(boards[idx[j]]);
-            std::copy(inp.begin(), inp.end(), row);
+    if (purerace) {
+        auto inp0 = compute_tesauro_inputs(boards[idx[0]]);
+        std::copy_n(inp0.data(), ni, encoded.data());
+    } else {
+        auto inp0 = compute_extended_contact_inputs(boards[idx[0]]);
+        std::copy_n(inp0.data(), ni, encoded.data());
+    }
+    if (ni == slot_width) {
+        const Board& base = boards[idx[0]];
+        for (int j = 1; j < n; ++j) {
+            encode_board_from_base(boards[idx[j]], base, encoded.data(), purerace,
+                                   &encoded[static_cast<size_t>(j) * ni]);
+        }
+    } else {
+        for (int j = 1; j < n; ++j) {
+            float* row = &encoded[static_cast<size_t>(j) * ni];
+            if (purerace) {
+                auto inp = compute_tesauro_inputs(boards[idx[j]]);
+                std::copy_n(inp.data(), ni, row);
+            } else {
+                auto inp = compute_extended_contact_inputs(boards[idx[j]]);
+                std::copy_n(inp.data(), ni, row);
+            }
         }
     }
     nn.forward_group(encoded.data(), n, outputs);
@@ -2025,20 +2122,20 @@ GamePlanPairStrategy::GamePlanPairStrategy(
 {
     // Prebuild transposed weights for thread-safe concurrent evaluation
     // (forward_from_base builds this lazily and is not synchronized).
-    for (auto& nn : nns_) {
-        if (nn) nn->ensure_transposed_weights();
+    for (int i = 0; i < NUM_PAIR_NNS; ++i) {
+        if (!nns_[i]) continue;
+        const int width = i == 0 ? TESAURO_INPUTS : EXTENDED_CONTACT_INPUTS;
+        if (nns_[i]->n_inputs() > width)
+            throw std::invalid_argument("Pair network input width exceeds its slot encoding");
+        nns_[i]->ensure_transposed_weights();
     }
 }
 
 int GamePlanPairStrategy::select_nn_idx(const Board& board) const {
-    GamePlan player_gp = classify_game_plan(board);
-    if (player_gp == GamePlan::PURERACE) return 0;
-    GamePlan opponent_gp = classify_game_plan(flip(board));
-    if (opponent_gp == GamePlan::PURERACE) {
-        // Rare edge: player has contact but opponent is purerace.
-        // Default to (player, racing).
-        opponent_gp = GamePlan::RACING;
-    }
+    if (is_race(board)) return 0;
+    const auto [player_pips, opp_pips] = pip_counts(board);
+    const GamePlan player_gp = classify_contact_game_plan(board, player_pips, opp_pips);
+    const GamePlan opponent_gp = classify_contact_game_plan(flip(board), opp_pips, player_pips);
     return 1 + game_plan_pair_index(player_gp, opponent_gp);
 }
 
@@ -2388,10 +2485,10 @@ inline BackgameCategory category_from_anchor_mask(int mask) {
 // `opponent_gp` are the precomputed plans, with the opponent's PURERACE
 // already coerced to RACING as select_nn_idx does.
 BackgameCategory backgame_category_given_plans(
-    const Board& board, GamePlan player_gp, GamePlan opponent_gp)
+    const Board& board, GamePlan player_gp, GamePlan opponent_gp,
+    int player_pips, int opp_pips)
 {
     if (player_gp == GamePlan::ANCHORING && opponent_gp == GamePlan::RACING) {
-        auto [player_pips, opp_pips] = pip_counts(board);
         if (player_pips > opp_pips) {
             int mask = 0;
             for (int pt = 19; pt <= 24; ++pt)
@@ -2400,7 +2497,6 @@ BackgameCategory backgame_category_given_plans(
         }
     }
     if (player_gp == GamePlan::RACING && opponent_gp == GamePlan::ANCHORING) {
-        auto [player_pips, opp_pips] = pip_counts(board);
         if (opp_pips > player_pips) {
             int mask = 0;
             for (int pt = 1; pt <= 6; ++pt)
@@ -2413,11 +2509,11 @@ BackgameCategory backgame_category_given_plans(
 }  // namespace
 
 BackgameCategory backgame_category(const Board& board) {
-    GamePlan player_gp = classify_game_plan(board);
-    if (player_gp == GamePlan::PURERACE) return BackgameCategory::NONE;
-    GamePlan opponent_gp = classify_game_plan(flip(board));
-    if (opponent_gp == GamePlan::PURERACE) opponent_gp = GamePlan::RACING;
-    return backgame_category_given_plans(board, player_gp, opponent_gp);
+    if (is_race(board)) return BackgameCategory::NONE;
+    const auto [p1, p2] = pip_counts(board);
+    const auto player_gp = classify_contact_game_plan(board, p1, p2);
+    const auto opponent_gp = classify_contact_game_plan(flip(board), p2, p1);
+    return backgame_category_given_plans(board, player_gp, opponent_gp, p1, p2);
 }
 
 namespace {
@@ -2465,16 +2561,13 @@ namespace {
 // _massive_p1_holder): behind in pips with >= MASSIVE_ALT_ANCHORS anchors in
 // the opponent's home board, or >= MASSIVE_MIN_ANCHORS anchors and
 // >= MASSIVE_BACK_MIN checkers back (opponent's home board + bar).
-bool p1_massive_holder(const Board& b) {
+bool p1_has_massive_structure(const Board& b) {
     int anchors = 0, back = b[25];
     for (int i = 19; i <= 24; ++i) {
         if (b[i] >= 2) ++anchors;
         if (b[i] > 0) back += b[i];
     }
-    if (anchors < MASSIVE_MIN_ANCHORS) return false;
-    if (anchors < MASSIVE_ALT_ANCHORS && back < MASSIVE_BACK_MIN) return false;
-    auto [p1_pips, p2_pips] = pip_counts(b);
-    return p1_pips > p2_pips;
+    return anchors >= MASSIVE_MIN_ANCHORS && (anchors >= MASSIVE_ALT_ANCHORS || back >= MASSIVE_BACK_MIN);
 }
 }  // namespace
 
@@ -2482,14 +2575,15 @@ bool massive_category(const Board& board) {
     // Disjoint from the two more specific regions: a late containment game
     // and a snake both read as "many checkers back" but are their own games.
     if (containment_category(board) || snake_category(board)) return false;
-    return p1_massive_holder(board) || p1_massive_holder(flip(board));
+    const auto [p1, p2] = pip_counts(board);
+    return (p1 > p2 && p1_has_massive_structure(board)) ||
+           (p2 > p1 && p1_has_massive_structure(flip(board)));
 }
 
-BackgamePhase backgame_phase(const Board& board) {
+static BackgamePhase backgame_phase(const Board& board, int p1_pips, int p2_pips) {
     int a1 = 0, a2 = 0;
     for (int pt = 19; pt <= 24; ++pt) if (board[pt] >= 2) ++a1;
     for (int pt = 1; pt <= 6; ++pt) if (board[pt] <= -2) ++a2;
-    auto [p1_pips, p2_pips] = pip_counts(board);
 
     // Which side is the holder B: two or more anchors and behind on pips.
     // A single-anchor fallback was tried and rejected (2026-09-02): it routed
@@ -2530,6 +2624,11 @@ BackgamePhase backgame_phase(const Board& board) {
                           : BackgamePhase::LATE_CONTAINMENT;
     if (r_home >= 10 || r_off >= 1) return BackgamePhase::BEAR_IN;
     return BackgamePhase::WAITING;
+}
+
+BackgamePhase backgame_phase(const Board& board) {
+    const auto [p1, p2] = pip_counts(board);
+    return backgame_phase(board, p1, p2);
 }
 
 BackgameAwarePairStrategy::BackgameAwarePairStrategy(
@@ -2602,49 +2701,35 @@ int BackgameAwarePairStrategy::root_pin_for(const Board& root) const {
 }
 
 int BackgameAwarePairStrategy::select_nn_idx(const Board& board) const {
-    GamePlan player_gp = classify_game_plan(board);
-    if (player_gp == GamePlan::PURERACE) return 0;
-    GamePlan opponent_gp = classify_game_plan(flip(board));
-    if (opponent_gp == GamePlan::PURERACE) {
-        opponent_gp = GamePlan::RACING;
-    }
+    if (is_race(board)) return 0;
+    const Board opponent = flip(board);
+    if (snake_ && (p1_holds_snake(board) || p1_holds_snake(opponent))) return 22;
+    if (phase_containment_ && (p2_is_escaper(board) || p2_is_escaper(opponent))) return 21;
+    const auto [player_pips, opp_pips] = pip_counts(board);
+    if (massive_ && ((player_pips > opp_pips && p1_has_massive_structure(board)) ||
+                     (opp_pips > player_pips && p1_has_massive_structure(opponent)))) return 23;
+    const GamePlan player_gp = classify_contact_game_plan(board, player_pips, opp_pips);
+    const GamePlan opponent_gp = classify_contact_game_plan(opponent, opp_pips, player_pips);
 
     // Stage 11 (20 NNs): the same detection as below, but the backgame NN is
     // picked by the backgame's CATEGORY — 17 deep, 18 middle, 19 double-anchor
     // — the same NN whichever side holds it.
     if (categorized_backgame_) {
-        // Phased layout with the snake NN: a far-side prime holding a
-        // straggler against a crunched board is its own game before anything
-        // else (the holder's points sit in the opponent's home board, so the
-        // plan-pair gate would otherwise read it as a back game).
-        if (snake_ && snake_category(board))
-            return 22;
-        // Phased layout, first: a containment game is its own game whatever
-        // the container's structure — anchors that would otherwise read as a
-        // back game included — so it takes precedence over the trio.
-        if (phase_containment_ && containment_category(board))
-            return 21;
-        // Phased layout with the massive NN: the benchmark's massive family
-        // (many checkers back, behind in the race) ahead of the category
-        // trio, which would otherwise split it by anchor depth.
-        if (massive_ && massive_category(board))
-            return 23;
         BackgameCategory cat =
-            backgame_category_given_plans(board, player_gp, opponent_gp);
+            backgame_category_given_plans(board, player_gp, opponent_gp, player_pips, opp_pips);
         if (cat != BackgameCategory::NONE)
             return 17 + static_cast<int>(cat);
         // Phased layout: a containment position the plan-pair gate rejected
         // (the racer's block reads as priming, or the holder's) goes to the
         // early-containment NN instead of the standard pair net.
         if (phase_containment_ &&
-            backgame_phase(board) == BackgamePhase::EARLY_CONTAINMENT)
+            backgame_phase(board, player_pips, opp_pips) == BackgamePhase::EARLY_CONTAINMENT)
             return 20;
         return 1 + game_plan_pair_index(player_gp, opponent_gp);
     }
 
     // Player back game: (anchoring, racing) + player behind + 2+ anchors in opp home
     if (player_gp == GamePlan::ANCHORING && opponent_gp == GamePlan::RACING) {
-        auto [player_pips, opp_pips] = pip_counts(board);
         if (player_pips > opp_pips) {
             int anchors = 0, back = board[25];
             for (int pt = 19; pt <= 24; ++pt) {
@@ -2662,7 +2747,6 @@ int BackgameAwarePairStrategy::select_nn_idx(const Board& board) const {
 
     // Opponent back game: (racing, anchoring) + opp behind + 2+ opp anchors in player home
     if (player_gp == GamePlan::RACING && opponent_gp == GamePlan::ANCHORING) {
-        auto [player_pips, opp_pips] = pip_counts(board);
         if (opp_pips > player_pips) {
             int opp_anchors = 0, opp_back = board[0];
             for (int pt = 1; pt <= 6; ++pt) {

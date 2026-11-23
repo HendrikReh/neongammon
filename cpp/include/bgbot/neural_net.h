@@ -55,6 +55,9 @@ public:
     std::array<float, NN_OUTPUTS> forward_save_base(
         const float* inputs, float* saved_base, float* saved_inputs) const;
 
+    // Prepare the same delta-evaluation state without evaluating its output.
+    void save_hidden_base(const float* inputs, float* saved_base, float* saved_inputs) const;
+
     // forward_from_base: incremental forward using saved base. Computes delta
     // between new inputs and saved_inputs, applies delta to saved_base (copied
     // internally), applies sigmoid, then output layer.
@@ -64,6 +67,11 @@ public:
     // Both saved_base and saved_inputs are NOT modified.
     std::array<float, NN_OUTPUTS> forward_from_base(
         const float* inputs, const float* saved_base, const float* saved_inputs) const;
+
+    // Evaluate a sibling using the dense base board's saved state. Both boards
+    // must route to this network, using either Tesauro or extended contact inputs.
+    std::array<float, NN_OUTPUTS> forward_board_from_base(
+        const Board& board, const Board& base, const float* saved_hidden, const float* saved_inputs) const;
 
     // Evaluate `count` input vectors stored contiguously (stride n_inputs_),
     // writing outputs[0..count). The batched candidate kernels call this.
@@ -148,6 +156,8 @@ public:
     std::vector<float>& output_weights() { return output_weights_; }
 
 private:
+    std::array<float, NN_OUTPUTS> forward_with_deltas(
+        const float* saved_base, const int* delta_indices, const float* delta_vals, int n_deltas) const;
     int n_hidden_;
     int n_inputs_;
 
