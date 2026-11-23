@@ -19,11 +19,52 @@ Timings below were measured on an M4 Pro Mac mini (10P+4E cores).
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-11-23
+
 ### Added
 
 - Documentation site on GitHub Pages ([hendrikreh.github.io/neongammon](https://hendrikreh.github.io/neongammon/)),
   built with MkDocs from `docs/` by `.github/workflows/docs.yml`. Links to
   repository files outside `docs/` point to GitHub.
+
+### Changed
+
+- **Engine speedups on Apple Silicon** ([#58](https://github.com/HendrikReh/neongammon/pull/58),
+  cherry-picked from upstream `60f93556..4f228a51` and adapted for Accelerate /
+  NEON):
+  - Bitmask move generator (`RollState`, hashless doubles, incremental mixed
+    move hashing): 1.98x unsorted / 3.39x sorted.
+  - Contact encoder lookup tables, unified single-pass `shot_features`,
+    incremental `encode_board_from_base`, and single-pass routing: 1.46x.
+  - Rollout variance-reduction 21-roll endpoint deduplication into a single
+    Accelerate `cblas_sgemm` (`rollout_vr.h`), cross-thread
+    `VarianceReductionCache`, simplified move-1 cache, batched cubeful multi
+    selection, and adaptive trial chunking: 3.03x (`1T`), 3.85x (`2T`), 1.99x
+    (`3T`), 4.76x full 1-ply cube rollout, and 4.47x `2T` checker rollout.
+  - Lazy `SharedPosCache` (with `alignas(64)` counters and `STATE_CLAIMED`
+    spin), O(1)-clear generation-stamped `CubefulEvalCache`, `DiceNode` pre-roll
+    base reuse, `CandidateBatchCache` sharing full-roll NN work between live
+    cube and cubeless trees (2/3/4-ply), dynamic root-roll work-stealing from
+    2-ply up, and 4-ply two-level `multipy_cooperative_for` + `CheckerSubtrees`:
+    5.54x 2-ply cube, 2.31x 2-ply checker, 1.90x 3-ply cube, 1.93x 3-ply
+    checker, and 2.01x 4-ply checker.
+- Aligned all arm64 hidden-layer forward paths (`forward`, `forward_batch`,
+  `forward_save_base`, `forward_with_deltas`, and `forward_group`) on exact NEON
+  Cephes sigmoid (`sigmoid_inplace_neon`), removing the `fast_sigmoid` LUT
+  clamp drift between single-board and batched evaluations.
+
+### Fixed
+
+- Parallel rollout prefill race (`move0_cache` / `move1_cache` slot reservation
+  before worker dispatch) and nested rollout `thread_local` candidate buffer
+  clobbering (`TrialMoveScratch`).
+- Null-pointer dereference in `Strategy::best_move_index_cubeful`.
+- `CubefulEvalCache` key collisions from float quantization (`float_bits`),
+  move-filter identity, deep-prefilter root vs child depth, and nested
+  `BearoffStrategy` unwrapping.
+- Die validation (`1..6`) across move generators and checker bindings,
+  `py::keep_alive<1, 2>()` on `BearoffStrategy`, and opt-in rollout progress
+  callbacks.
 
 ## [3.1.0] - 2026-11-21
 
@@ -827,7 +868,9 @@ The fork's first release.
   module before copying it, because `cp` over a loaded `.so` makes macOS kill
   the next import ([#12](https://github.com/HendrikReh/neongammon/pull/12)).
 
-[Unreleased]: https://github.com/HendrikReh/neongammon/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/HendrikReh/neongammon/compare/v3.1.1...HEAD
+[3.1.1]: https://github.com/HendrikReh/neongammon/compare/v3.1.0...v3.1.1
+[3.1.0]: https://github.com/HendrikReh/neongammon/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/HendrikReh/neongammon/compare/v2.0.20261119...v3.0.0
 [2.0.20261119]: https://github.com/HendrikReh/neongammon/compare/v2.0.20261118...v2.0.20261119
 [2.0.20261118]: https://github.com/HendrikReh/neongammon/releases/tag/v2.0.20261118
