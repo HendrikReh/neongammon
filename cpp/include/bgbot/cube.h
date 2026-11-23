@@ -57,7 +57,7 @@ inline CubeOwner flip_owner(CubeOwner o) {
 }
 
 // Flip a CubeInfo to the opponent's perspective.
-// PLAYER ↔ OPPONENT, CENTERED stays. Match away values swapped.
+// PLAYER â†” OPPONENT, CENTERED stays. Match away values swapped.
 inline CubeInfo flip_cube_perspective(const CubeInfo& cube) {
     CubeInfo opp;
     opp.cube_value = cube.cube_value;
@@ -74,7 +74,7 @@ inline CubeInfo flip_cube_perspective(const CubeInfo& cube) {
 
 // Can the player on roll legally double?
 inline bool can_double(const CubeInfo& ci) {
-    // Cube at or above max → cannot double (max_cube_value=1 means cubeless)
+    // Cube at or above max â†’ cannot double (max_cube_value=1 means cubeless)
     if (ci.max_cube_value > 0 && ci.cube_value >= ci.max_cube_value)
         return false;
     if (!ci.is_money()) {
@@ -365,7 +365,7 @@ float cubeful_equity_nply(
 
 // Returns post-roll probabilities from the N-ply CUBE-AWARE tree, in the
 // player-on-roll's perspective at `board`. Mirrors `cubeful_equity_nply` (CubeInfo
-// overload) but accumulates probs from the same tree — interior move picks use
+// overload) but accumulates probs from the same tree â€” interior move picks use
 // 1-ply cubeful equity against `cube` (shared-cube MVP), so the returned probs
 // reflect match-aware play throughout, unlike `evaluate_probs_nply` which uses
 // cubeless interior picks.
@@ -398,6 +398,17 @@ CubefulProbsAndEquity cubeful_probs_and_equity_nply(
     const Strategy* move_filter = nullptr,
     const Board* root_board = nullptr);   // root routing: the decision's pre-move board
 
+// Evaluate several post-move checker endpoints under the same cube and root
+// position, sharing 2-ply subtrees across concurrent 4-ply endpoints and
+// splitting 21 rolls cooperatively when enough threads are available.
+std::vector<CubefulProbsAndEquity> cubeful_checker_endpoints_nply(
+    const Board& before,
+    const std::vector<Board>& endpoints,
+    const CubeInfo& cube,
+    const Strategy& strategy,
+    int plies,
+    int threads);
+
 // Batched version: evaluate cubeful equity for the SAME board at N-ply depth
 // against MULTIPLE cube states simultaneously. Returns one equity per cube
 // state in `out`, in the same order as `cubes`.
@@ -418,7 +429,7 @@ CubefulProbsAndEquity cubeful_probs_and_equity_nply(
 // (match play), matching the single-cube overload's return semantics.
 // probs_out: when non-null, receives the tree's cubeless pre-roll probs in
 // the player-on-roll's perspective (same convention as cubeful_probs_nply),
-// accumulated through the same traversal � no extra tree walk.
+// accumulated through the same traversal — no extra tree walk.
 //
 // deep_prefilter: when true, nodes strictly below the entry ply prune
 // candidates to the PubEval-top-14 before NN evaluation. Used by
@@ -490,7 +501,7 @@ CubeDecision cube_decision_nply_with_details(
 
 // Compute cube decision from cubeless pre-roll probabilities (Janowski conversion).
 // This is the simplest form of cubeful evaluation from any source of cubeless probs
-// (rollout, N-ply, etc.) — just applies Janowski to the given probs.
+// (rollout, N-ply, etc.) â€” just applies Janowski to the given probs.
 // Same as cube_decision_1ply but with auto-detected cube efficiency.
 inline CubeDecision cube_decision_from_probs(
     const std::array<float, NUM_OUTPUTS>& cubeless_probs,

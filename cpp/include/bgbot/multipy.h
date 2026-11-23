@@ -11,11 +11,13 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <thread>
 
 namespace bgbot {
 
 class BearoffDB;  // forward declaration
+struct CubeDecision;
 
 // Lock-free shared position cache for cross-thread sharing during rollouts.
 // Multiple threads read/write concurrently using a per-entry state machine:
@@ -43,12 +45,17 @@ struct SharedPosCache {
         Entry* reservation = nullptr;
     };
 
-    std::vector<Entry> entries;
-    mutable std::atomic<std::size_t> hits{0};
-    mutable std::atomic<std::size_t> misses{0};
-    mutable std::atomic<std::size_t> inserts{0};
+    mutable std::vector<Entry> entries;
+    mutable std::once_flag allocate_entries;
+    alignas(64) mutable std::atomic<std::size_t> hits{0};
+    alignas(64) mutable std::atomic<std::size_t> misses{0};
+    alignas(64) mutable std::atomic<std::size_t> inserts{0};
 
-    SharedPosCache() : entries(CAPACITY) {}
+    // A parallel rollout can complete entirely with scalar or live-cube
+    // evaluations. Materialize the table only when a tree actually uses it.
+    void ensure_entries() const {
+        std::call_once(allocate_entries, [this] { entries = std::vector<Entry>(CAPACITY); });
+    }
 
     void clear() {
         for (auto& e : entries) {
@@ -63,6 +70,7 @@ struct SharedPosCache {
 
     const std::array<float, NUM_OUTPUTS>* lookup(std::size_t h, int plies,
                                                   const Board& board) const {
+        ensure_entries();
         std::size_t key = h | 1;
         std::size_t idx = key & MASK;
         for (int probe = 0; probe < MAX_PROBE; ++probe) {
@@ -80,6 +88,7 @@ struct SharedPosCache {
     }
 
     LookupResult lookup_or_reserve(std::size_t h, int plies, const Board& board) {
+        ensure_entries();
         std::size_t key = h | 1;
         std::size_t idx = key & MASK;
         for (int probe = 0; probe < MAX_PROBE; ++probe) {
@@ -98,6 +107,13 @@ struct SharedPosCache {
                     return {nullptr, &e};
                 }
                 s = expected;
+            }
+
+            if (s == STATE_CLAIMED) {
+                for (int spin = 0; spin < 64 && s == STATE_CLAIMED; ++spin) {
+                    std::this_thread::yield();
+                    s = e.state.load(std::memory_order_acquire);
+                }
             }
 
             if ((s == STATE_COMPUTING || s == STATE_READY) &&
@@ -143,6 +159,7 @@ struct SharedPosCache {
 
     void insert(std::size_t h, int plies, const Board& board,
                 const std::array<float, NUM_OUTPUTS>& probs) {
+        ensure_entries();
         std::size_t key = h | 1;
         std::size_t idx = key & MASK;
         for (int probe = 0; probe < MAX_PROBE; ++probe) {
@@ -257,6 +274,12 @@ public:
                      bool full_depth_opponent = false,
                      bool parallel_evaluate = false,
                      int parallel_threads = 0);
+
+    // Compute a pre-roll cube decision and the independent cubeless probabilities.
+    // At 2/3/4 ply, the two policies can share identical ordered candidate NN evaluations.
+    CubeDecision cube_decision_with_cubeless_probs(
+        const Board& board, const CubeInfo& cube, const Strategy* cube_move_filter,
+        std::array<float, NUM_OUTPUTS>& pre_roll_probs) const;
 
     // Evaluate a post-move board at N-ply depth. Returns equity.
     double evaluate(const Board& board, bool pre_move_is_race) const override;
@@ -505,5 +528,9 @@ void multipy_parallel_for(int n_items, int n_threads,
 // until all workers complete. Useful for work-stealing patterns where each
 // worker pulls items from a shared atomic counter.
 void multipy_parallel_run(int n_workers, const std::function<void()>& fn);
+
+// A caller inside the pool can complete every unclaimed item itself. On return,
+// every callback has finished, even if queued helpers have not started yet.
+void multipy_cooperative_for(int n_items, int n_workers, std::function<void(int)> fn);
 
 } // namespace bgbot
