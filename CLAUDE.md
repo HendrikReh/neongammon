@@ -61,7 +61,7 @@ Key regression tests to run when touching sensitive areas:
 - **C++ stream formatting:** `std::fixed` is sticky; reset with `std::defaultfloat` when default formatting is needed.
 - **Extended encoder init:** call `init_escape_tables()` once before using the 244-input contact encoder.
 - **Full rollouts & `ultra_late_threshold`:** the default `ultra_late_threshold=2` drops checker/cube eval to 1-ply at move 2+ (and thins VR to even moves). Pass `ultra_late_threshold=9999` for accurate full rollouts (`truncation_depth=0`).
-- **Apple Silicon numeric behavior:** keep `-ffast-math` off on Apple Silicon. Accelerate's `forward_group` (`cblas_sgemm`) uses exact Cephes sigmoid rather than the NEON LUT (up to `~0.003` equity shift vs `-DBGBOT_USE_ACCELERATE=OFF`).
+- **Apple Silicon numeric behavior:** keep `-ffast-math` off on Apple Silicon. All arm64 hidden-layer forward paths (`forward`, `forward_batch`, `forward_save_base`, `forward_with_deltas`, and Accelerate `forward_group`) use exact NEON Cephes sigmoid (`sigmoid_inplace_neon`), so single-board and batched evaluations agree to float32 rounding (matching x86-64 AVX2 `sigmoid256_ps`).
 - **Training prerequisites:** TD self-play pre-training is required before SL (SL from random init finds poor minima). Train contact NNs on **all** contact+crashed data weighted by `--gameplan-weight`, never narrow game-plan subsets.
 - **Python vs C++ rule defaults:** Python public API defaults `jacoby=True, beaver=True` for money play (auto-disabled in match play); C++ bindings default both to `false`.
 
