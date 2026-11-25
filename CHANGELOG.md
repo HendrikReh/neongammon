@@ -19,15 +19,19 @@ Timings below were measured on an M4 Pro Mac mini (10P+4E cores).
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-11-25
+
 - Simulation and the public cube eligibility helper now apply the engine’s
   score, ownership, Crawford and cube-cap rules before an offer.
-
 - Added recursive cube batches, shared checker/cube/rollout models, public
   top-two promotion, difficulty evaluator injection and policy reseeding.
 - Full Strength defaults to 3-ply checker decisions and 2-ply cube decisions.
   PureTD simulation is opt-in through `default_money_policy()` or `PureTDPolicy`.
 - Corrected stale legacy prefilter cache results, gammon price player ordering
   and the live money take point.
+- Checker prefiltering respects the rollout thread budget. Full-game rollouts
+  now use the variance-reduction cache.
+- Wheel CI runs the installed-package test suite on each supported Python version.
 
 ## [3.1.2] - 2026-11-25
 
@@ -942,7 +946,9 @@ The fork's first release.
   module before copying it, because `cp` over a loaded `.so` makes macOS kill
   the next import ([#12](https://github.com/HendrikReh/neongammon/pull/12)).
 
-[Unreleased]: https://github.com/HendrikReh/neongammon/compare/v3.1.1...HEAD
+[Unreleased]: https://github.com/HendrikReh/neongammon/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/HendrikReh/neongammon/compare/v3.1.2...v3.2.0
+[3.1.2]: https://github.com/HendrikReh/neongammon/compare/v3.1.1...v3.1.2
 [3.1.1]: https://github.com/HendrikReh/neongammon/compare/v3.1.0...v3.1.1
 [3.1.0]: https://github.com/HendrikReh/neongammon/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/HendrikReh/neongammon/compare/v2.0.20261119...v3.0.0
