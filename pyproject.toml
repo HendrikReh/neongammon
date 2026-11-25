@@ -85,8 +85,14 @@ skip = [
     "pp*",              # no PyPy
 ]
 build-verbosity = 1
-# Smoke-test the built wheel: import the package, run a trivial analysis.
-test-command = "python -c \"from neongammon import BgBotAnalyzer, STARTING_BOARD, GameConfig, simulate_game; a = BgBotAnalyzer(); r = a.checker_play(STARTING_BOARD, 3, 1); b = [0]*26; b[1]=1; b[24]=-1; g = simulate_game(players=(a,a), config=GameConfig(start_board=tuple(b))); assert g['winner'] == 1; print('ok', r.moves[0].equity)\""
+# cibuildwheel copies these tests outside the checkout and installs each wheel
+# in a fresh environment. Isolated Python ignores inherited PYTHONPATH entries.
+test-requires = ["pytest"]
+test-sources = ["tests"]
+test-command = """\
+python -I -m pytest -q tests/wheel_contents.py tests/test_simulation.py \
+tests/test_batch.py tests/test_batch_checker_play.py tests/test_batch_cube_action_nply.py \
+tests/test_move_dice.py::test_high_branching_1_1_moves_above_2048_exact_parity"""
 
 [tool.cibuildwheel.macos]
 # Apple Silicon only (NEON + Accelerate).
