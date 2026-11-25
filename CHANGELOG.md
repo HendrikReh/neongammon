@@ -19,6 +19,70 @@ Timings below were measured on an M4 Pro Mac mini (10P+4E cores).
 
 ## [Unreleased]
 
+## [3.1.2] - 2026-11-25
+
+### Changed
+
+- Unified 1-ply cubeful checker scoring (`BgBotAnalyzer.checker_play`,
+  `batch_checker_play`, and 2-ply's 1-ply filter) onto one BLAS-batched
+  `score_checker_1ply` path in `bgbot_cpp` while keeping
+  `SERIAL_CUBEFUL_1PLY = True` (zero pool threads spawned for serial 1-ply).
+- Implemented all four `batch_evaluate_candidates_*` overrides and mixed
+  bearoff/non-bearoff `best_move_index_cubeful*` on `BearoffStrategy`
+  ([#63](https://github.com/HendrikReh/neongammon/issues/63)), removing the
+  non-bearoff hybrid 2-ply scalar fallback (~1.52× → 1.001× parity) and
+  restoring unconditional batched candidate evaluation in
+  `Strategy::best_move_index_cubeful*` and
+  `RolloutStrategy::best_move_index_cubeful_multi`.
+- Replaced raw `std::vector<std::thread>` loops in `bindings.cpp` and
+  `game.cpp` with the exception- and nesting-safe `multipy_cooperative_for`
+  pool.
+
+### Fixed
+
+- **Dead-cube, 1-ply probability clamping, and `post_move_analytics` parity**
+  ([#59](https://github.com/HendrikReh/neongammon/issues/59)):
+  - Forwarded validated `max_cube_value`, `force_boards`, and `beaver` in
+    `batch_checker_play`, eliminating the +0.226 dead-cube equity drift at both
+    1-ply and 2-ply.
+  - Enforced `clamp_probs_to_board` across all 1-ply C++ evaluation paths
+    (`evaluate_board`, `batch_evaluate_positions`, `batch_evaluate_post_move`,
+    `evaluate_cube_decision*`, and `score_checker_1ply`), eliminating
+    impossible non-zero `P(gl)`/`P(bl)` when checkers are already borne off.
+  - Fixed `BgBotAnalyzer.post_move_analytics` to honor `cubeful=False`, accept
+    `beaver` and `max_cube_value`, align 1-ply/2-ply root-Janowski results with
+    `batch_post_move_evaluate` (preserving money `cube_value`), and translate
+    `bgbot_cpp.RolloutCancelled` into `neongammon.RolloutCancelled` (including
+    serial `n_threads=1` rollout cancellation checks).
+  - Clarified C++ `CubeInfo`/`RolloutConfig` vs pybind11/Python rule defaults
+    in `CLAUDE.md` and `docs/api.md`.
+- **C++/Python concurrency and memory safety**
+  ([#60](https://github.com/HendrikReh/neongammon/issues/60)):
+  - Made `MultiPlyThreadPool::parallel_for`, `parallel_run`, and `worker_loop`
+    exception-safe and nesting-safe (full worker drain + `std::exception_ptr`
+    rethrow; zero `std::terminate()` or stack UAF).
+  - Fixed `full_depth_opponent=True` 3-ply+ `thread_local opp_candidates`
+    recursion clobbering (SIGSEGV / corrupted equity).
+  - Null-guarded `equities`, `probs_out`, and `best_probs_out` across all three
+    `GamePlan*Strategy` batch evaluation implementations.
+  - Upgraded `NeuralNetwork::transposed_weights_valid_` to `std::atomic<bool>`
+    (`acquire`/`release`), upgraded `SharedPosCache::insert` state loads to
+    `acquire`, replaced `thread_local rest` in `eval_each_impl` with
+    frame-local buffers, and heap-allocated `Move1Cache` (~60 KB) off secondary
+    pthread stacks.
+  - Synchronized concurrent `RolloutStrategy` entry points with `rollout_mutex_`
+    (plus GIL release guards on setters to avoid lock-order inversion),
+    serialized/monotonized parallel rollout `progress` callbacks, lock-guarded
+    `_CubelessBase._cube_strategy`, and locked in `MoveDedup` regression tests
+    for 2,125- and 2,223-move legal boards.
+- **`GnuBgAnalyzer` perspective/score inversion and no-double `eval` handling**
+  ([#61](https://github.com/HendrikReh/neongammon/issues/61)):
+  - Flipped `cube_owner` and swapped `(away1, away2)` whenever flipping the
+    board in `post_move_analytics` and `checker_play`.
+  - Switched `GnuBgAnalyzer` from GNUbg `hint` to `eval` with explicit cube
+    ownership commands, fixing empty `moves=[]` and `ValueError` crashes when
+    the opponent owns the cube, during Crawford, at DMP, or with dead cubes.
+
 ## [3.1.1] - 2026-11-23
 
 ### Added
