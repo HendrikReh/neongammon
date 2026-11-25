@@ -3,6 +3,7 @@
 #include "bgbot/game.h"
 #include "bgbot/board.h"
 #include "bgbot/moves.h"
+#include "bgbot/multipy.h"
 #include <cassert>
 #include <thread>
 #include <algorithm>
@@ -147,24 +148,12 @@ GameStats play_games_parallel(const Strategy& strat1, const Strategy& strat2,
     const int remainder = n_games % n_threads;
 
     std::vector<GameStats> thread_stats(n_threads);
-    std::vector<std::thread> threads;
-    threads.reserve(n_threads);
-
-    int offset = 0;
-    for (int t = 0; t < n_threads; ++t) {
+    multipy_cooperative_for(n_threads, n_threads, [&](int t) {
         const int chunk = base_chunk + (t < remainder ? 1 : 0);
-        // Each thread gets a unique seed derived from the base seed
-        uint32_t thread_seed = seed + static_cast<uint32_t>(t) * 1000003u;
-
-        threads.emplace_back([&strat1, &strat2, chunk, thread_seed,
-                              &result = thread_stats[t]]() {
-            result = play_games(strat1, strat2, chunk, thread_seed);
-        });
-
-        offset += chunk;
-    }
-
-    for (auto& t : threads) t.join();
+        // Each chunk gets a unique seed derived from the base seed
+        const uint32_t thread_seed = seed + static_cast<uint32_t>(t) * 1000003u;
+        thread_stats[t] = play_games(strat1, strat2, chunk, thread_seed);
+    });
 
     GameStats stats;
     for (const auto& ts : thread_stats) stats.merge(ts);

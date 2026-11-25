@@ -48,8 +48,8 @@ from dataclasses import dataclass
 import bgbot_cpp
 
 from .analyzer import (
-    CUBEFUL_FILTERED_PLIES, _contact_cube_life, _contact_cube_slope, load_bearoff_db,
-    resolve_owner,
+    CUBEFUL_FILTERED_PLIES, _contact_cube_life, _contact_cube_slope,
+    _validate_cube_limit, load_bearoff_db, resolve_owner,
 )
 from .types import CheckerPlayResult, CubeActionResult, MoveAnalysis, PostMoveAnalysis, Probabilities
 from .weights import WeightConfig, WeightConfigPair, bearoff_db_path, default_weights
@@ -486,6 +486,7 @@ def batch_checker_play(
     filter_max_moves: int = 5,
     filter_threshold: float = 0.08,
     jacoby: bool = True,
+    beaver: bool = True,
     models: BatchModels | None = None,
     bearoff_db: bool | str | None = None,
 ) -> list[CheckerPlayResult]:
@@ -502,10 +503,12 @@ def batch_checker_play(
         cube_value: int     — current cube value (1, 2, 4, ...)
         cube_owner: str     — "centered", "player", or "opponent"
 
-    Optional match play fields:
-        away1: int          — points player needs (0 = money game)
-        away2: int          — points opponent needs (0 = money game)
-        is_crawford: bool   — True if Crawford game
+    Optional per-position fields:
+        away1: int               — points player needs (0 = money game)
+        away2: int               — points opponent needs (0 = money game)
+        is_crawford: bool        — True if Crawford game
+        max_cube_value: int      — maximum cube (0 = unlimited, or power of two >= 2)
+        force_boards: list[list[int]] — post-move boards to always score at N-ply
 
     Args:
         positions: List of position dicts.
@@ -517,6 +520,8 @@ def batch_checker_play(
         filter_threshold: Equity threshold for N-ply move filter.
         jacoby: If True, gammons/backgammons don't count when cube is
             centered (money games only). Ignored for match play positions.
+        beaver: If True, opponent can beaver after being doubled
+            (money games only). Ignored for match play positions.
         models: Loaded strategies to use and keep (see :class:`BatchModels`);
             give this or ``weights``. The N-ply search is built around the
             same base as the 1-ply scoring, so one set of weights is loaded.
@@ -540,11 +545,14 @@ def batch_checker_play(
     # Build input dicts with CubeOwner enum for C++
     cpp_inputs = []
     for p in positions:
+        cube_value = p.get("cube_value", 1)
+        max_cube_value = p.get("max_cube_value", 0)
+        _validate_cube_limit(cube_value, max_cube_value)
         d = {
             "board": list(p["board"]),
             "die1": p["die1"],
             "die2": p["die2"],
-            "cube_value": p.get("cube_value", 1),
+            "cube_value": cube_value,
             "cube_owner": resolve_owner(p.get("cube_owner", "centered")),
         }
         away1 = p.get("away1", 0)
@@ -554,19 +562,25 @@ def batch_checker_play(
             d["away1"] = away1
             d["away2"] = away2
             d["is_crawford"] = is_crawford
+        if max_cube_value:
+            d["max_cube_value"] = max_cube_value
+        force_boards = p.get("force_boards")
+        if force_boards:
+            d["force_boards"] = [list(b) for b in force_boards]
         cpp_inputs.append(d)
 
     strategy_1ply = models.base()
 
-    # Jacoby applies to the money positions only; the native side checks
-    # each position's match state, so a match row never switches it off for
-    # the money rows of the same batch.
+    # Jacoby and beaver apply to the money positions only; the native side
+    # checks each position's match state, so a match row never switches them
+    # off for the money rows of the same batch.
 
     if n_plies == 1:
         raw_results = bgbot_cpp.batch_checker_play(
             cpp_inputs, strategy_1ply,
             filter_max_moves, filter_threshold, n_threads,
             jacoby=jacoby,
+            beaver=beaver,
             contact_x_1ply=_contact_cube_life(1),
             contact_x_pip_slope_1ply=_contact_cube_slope(1),
         )
@@ -576,6 +590,7 @@ def batch_checker_play(
             models.multipy(n_plies, filter_max_moves, filter_threshold),
             filter_max_moves, filter_threshold, n_threads,
             jacoby=jacoby,
+            beaver=beaver,
             contact_x_1ply=_contact_cube_life(1),
             contact_x_pip_slope_1ply=_contact_cube_slope(1),
             contact_x_nply=_contact_cube_life(n_plies),
