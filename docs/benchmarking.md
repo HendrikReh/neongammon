@@ -211,6 +211,27 @@ adds the PubEval opponent prefilter BgBotAnalyzer uses; the older 5-NN-only
 an 8k-decision set; 1-ply identical).
 
 
+## 3-ply cube analysis on the published 3.2.0 wheel
+
+Measured on 2026-11-25 on an Apple M4 Pro, macOS 27.0.1 arm64, CPython 3.12.13 and NumPy 2.5.4. The benchmark used the official CPython 3.12 wheel (SHA256 `9362a0084be2fc5e609dcb9455962b0807d19f6de7dd8f3c89f483aec3a8e7d8`), the default Stage 11 models and NeonDojo's 3-ply analysis setting with four engine threads. [Release](https://github.com/HendrikReh/neongammon/releases/tag/v3.2.0) · [Benchmark scope in #63](https://github.com/HendrikReh/neongammon/issues/63)
+
+Median wall time per public Python call, in milliseconds. “First” is the first evaluation in a newly spawned process after analyzer construction. “Warm” repeats the same board and cube context in that process. Calls ran sequentially. Each method had 16 fresh processes per position, with the two methods alternating first in each pair. After each first call the benchmark discarded three warmups and timed five repeats, giving 80 warm samples per cell. Timing excludes process startup, model loading, HTTP, sidecar transport and persistence.
+
+| Position | First `cube_action` | First `cube_decision` | Warm `cube_action` | Warm `cube_decision` | Decision |
+|---|---:|---:|---:|---:|---|
+| 5-away/4-away, centered cube | 3.63 | 2.70 | 1.65 | 1.05 | No double |
+| Money, player owns 2-cube | 9.05 | 4.66 | 5.97 | 2.83 | Double/take |
+| SNAKE, centered money cube | 3.51 | 2.05 | 1.56 | 0.60 | No double |
+
+All shared result fields, including ND/DT/DP equities, matched exactly for every pair. A second complete run returned median times within 0.06 ms of the first. The owned money cube had the largest absolute warm gap (3.14 ms). Profile the additional cubeless probability search on that fixture first. Any change to candidate reuse also needs comparison against the independent cubeless traversal, since the cube and cubeless policies can choose different continuations. [Parity cases](../tests/test_cube_candidate_batch_reuse.py)
+
+To reproduce from the repository root, set `ENGINE_PYTHON` to the interpreter of the verified 3.2.0 installation and run the benchmark without concurrent builds or test suites.
+
+```sh
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 \
+  "$ENGINE_PYTHON" -I scripts/benchmark_cube_action_decision.py
+```
+
 ## Rollout and N-Ply Regression Benchmarks
 
 Saved-baseline regression scripts (each supports `--save`/`--compare` with a material band of `max(SE, 0.01)` for equities and `0.005` for probabilities; the cubeless rollout bench widens the prob band to each prob's own SE):
