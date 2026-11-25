@@ -220,13 +220,15 @@ Note: `batch_evaluate` and `batch_cube_action` apply Janowski once at the root o
 cubeless probabilities (using the 1-ply money contact cube life at every depth) rather
 than running the recursive N-ply cubeful cube tree.
 
-**C++** — `evaluate_cube_decision()` (1-ply), `cube_decision_nply()` (N-ply),
+**C++ / pybind11 (`bgbot_cpp`)** — `evaluate_cube_decision()` (1-ply), `cube_decision_nply()` (N-ply),
 `cube_decision_rollout()`:
-```cpp
-// 1-ply: evaluate_cube_decision(checkers, cube_value, owner, weight_args..., jacoby=false, beaver=false)
-// N-ply: cube_decision_nply(checkers, cube_value, owner, n_plies, weight_args..., jacoby=false, beaver=false)
-// Rollout: cube_decision_rollout(checkers, cube_value, owner, weight_args..., config..., jacoby=false, beaver=false)
-// All accept optional jacoby/beaver to enable Jacoby/Beaver rules for money games
+```python
+# pybind11 defaults: jacoby=True, beaver=True for money play (auto-disabled in match play)
+# C++ struct defaults: CubeInfo has jacoby=false, beaver=false; RolloutConfig has ultra_late_threshold=2
+# Python simulation / cube_points default beaver=False; Python full/2T/3T rollouts default ultra_late_threshold=9999
+bgbot_cpp.evaluate_cube_decision(checkers, cube_value, owner, ..., jacoby=True, beaver=True)
+bgbot_cpp.cube_decision_nply(checkers, cube_value, owner, n_plies, ..., jacoby=True, beaver=True)
+bgbot_cpp.cube_decision_rollout(checkers, cube_value, owner, ..., jacoby=True, beaver=True)
 ```
 
 C++ batch pre-roll: `bgbot_cpp.batch_evaluate_positions(positions, strategy, n_threads)`

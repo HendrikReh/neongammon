@@ -2284,8 +2284,11 @@ RolloutResult RolloutStrategy::run_trials_parallel(
 
     // Move-0 and Move-1 shared caches: all trials share the same starting
     // position, so first two moves can be precomputed and shared.
+    // Heap-allocate Move1Cache (~60 KB) to avoid blowing macOS's 512 KB
+    // secondary pthread stack.
     Move0Cache move0_cache;
-    Move1Cache move1_cache(config_);
+    auto move1_cache_owner = std::make_unique<Move1Cache>(config_);
+    Move1Cache& move1_cache = *move1_cache_owner;
     const bool uses_move1_cache =
         (config_.truncation_depth == 0) || (config_.truncation_depth > 1);
 
@@ -2298,6 +2301,7 @@ RolloutResult RolloutStrategy::run_trials_parallel(
 
     // Fast path: n_threads == 1 can accumulate directly without trial buffers.
     if (n_threads == 1) {
+        if (is_cancelled()) throw RolloutCancelled();
         RolloutResult result;
         std::array<double, NUM_OUTPUTS> sum_probs = {0, 0, 0, 0, 0};
         std::array<double, NUM_OUTPUTS> sum_probs_sq = {0, 0, 0, 0, 0};
@@ -2307,6 +2311,7 @@ RolloutResult RolloutStrategy::run_trials_parallel(
         const int report_interval = progress
             ? trial_report_interval(config_.truncation_depth, n_trials, n_threads) : 0;
         for (int t = 0; t < n_trials; ++t) {
+            if (is_cancelled()) throw RolloutCancelled();
             auto r = run_trial_unified(board, true, nullptr, 0, all_dice[t].data(), max_moves,
                                        &move0_cache, &move1_cache);
             double eq = r.equity;
@@ -2496,7 +2501,8 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision(
     const int chunk_size = trial_chunk_size(config_.truncation_depth, n_trials, n_threads);
 
     Move0Cache move0_cache;
-    Move1Cache move1_cache(config_);
+    auto move1_cache_owner = std::make_unique<Move1Cache>(config_);
+    Move1Cache& move1_cache = *move1_cache_owner;
     const bool uses_move1_cache =
         (config_.truncation_depth == 0) || (config_.truncation_depth > 1);
 
@@ -2517,17 +2523,20 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision(
         ? trial_report_interval(config_.truncation_depth, n_trials, n_threads) : 0;
 
     if (n_threads == 1) {
+        if (is_cancelled()) throw RolloutCancelled();
         // Serial: prefill + trials on a single thread (PosCache stays warm)
         prefill_move0_cache(pre_roll_board, move0_cache, 1, nullptr,
                             select_cubes_ptr, n_select_cubes);
         if (uses_move1_cache) {
             for (int i = 0; i < Move0Cache::N_ROLLS; ++i) {
+                if (is_cancelled()) throw RolloutCancelled();
                 populate_move1_cache_entry(move0_cache, i, move1_cache.entries[i],
                                            select_cubes_ptr, n_select_cubes);
                 move1_cache.state[i].store(2, std::memory_order_release);
             }
         }
         for (int t = 0; t < n_trials; ++t) {
+            if (is_cancelled()) throw RolloutCancelled();
             CubefulBranch branches[2] = {nd_template, dt_template};
             trial_results[t].cubeless = run_trial_unified(
                 pre_roll_board, false, branches, 2,
@@ -2771,7 +2780,8 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision_bat
     // Move0/Move1 caches are prefilled ONCE and reused across every batch: they
     // are determined by the board + strategy, independent of the trial dice/seed.
     Move0Cache move0_cache;
-    Move1Cache move1_cache(config_);
+    auto move1_cache_owner = std::make_unique<Move1Cache>(config_);
+    Move1Cache& move1_cache = *move1_cache_owner;
 
     if (n_threads > 1 && !shared_pos_cache_) {
         shared_pos_cache_ = std::make_unique<SharedPosCache>();
@@ -2874,6 +2884,7 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision_bat
 
         if (n_threads == 1) {
             for (int t = 0; t < n_trials; ++t) {
+                if (is_cancelled()) throw RolloutCancelled();
                 CubefulBranch branches[2] = {nd_template, dt_template};
                 trial_results[t].cubeless = run_trial_unified(
                     pre_roll_board, false, branches, 2,

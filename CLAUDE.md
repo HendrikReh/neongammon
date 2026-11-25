@@ -63,7 +63,7 @@ Key regression tests to run when touching sensitive areas:
 - **Full rollouts & `ultra_late_threshold`:** the default `ultra_late_threshold=2` drops checker/cube eval to 1-ply at move 2+ (and thins VR to even moves). Pass `ultra_late_threshold=9999` for accurate full rollouts (`truncation_depth=0`).
 - **Apple Silicon numeric behavior:** keep `-ffast-math` off on Apple Silicon. All arm64 hidden-layer forward paths (`forward`, `forward_batch`, `forward_save_base`, `forward_with_deltas`, and Accelerate `forward_group`) use exact NEON Cephes sigmoid (`sigmoid_inplace_neon`), so single-board and batched evaluations agree to float32 rounding (matching x86-64 AVX2 `sigmoid256_ps`).
 - **Training prerequisites:** TD self-play pre-training is required before SL (SL from random init finds poor minima). Train contact NNs on **all** contact+crashed data weighted by `--gameplan-weight`, never narrow game-plan subsets.
-- **Python vs C++ rule defaults:** Python public API defaults `jacoby=True, beaver=True` for money play (auto-disabled in match play); C++ bindings default both to `false`.
+- **Python vs C++ rule defaults:** C++ `CubeInfo` (`cpp/include/bgbot/cube.h`) defaults `jacoby=false, beaver=false` and `RolloutConfig` defaults `ultra_late_threshold=2`. Both `bgbot_cpp` pybind11 cube/checker/batch bindings and the Python public analysis API (`BgBotAnalyzer`, `batch_*`) default `jacoby=True, beaver=True` for money play (auto-disabled in match play; low-level `cl2cf_money` defaults `jacoby_active=False`). Python full/`truncated2`/`truncated3` rollouts default `ultra_late_threshold=9999` (`2` for `truncated1`), while `simulate_game()`/`simulate_match()` and `cube_points` default `beaver=False`.
 
 ## Documentation Index (Read Before Touching a Subsystem)
 

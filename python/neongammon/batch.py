@@ -320,11 +320,12 @@ def batch_post_move_evaluate(
         board: list[int]   — 26-element post-move board (mover's perspective)
         cube_owner: str    — "centered", "player", or "opponent"
 
-    Optional match play fields:
-        cube_value: int    — current cube value (default 1)
-        away1: int         — points player needs (0 = money game)
-        away2: int         — points opponent needs (0 = money game)
-        is_crawford: bool  — True if Crawford game
+    Optional fields:
+        cube_value: int      — current cube value (default 1)
+        away1: int           — points player needs (0 = money game)
+        away2: int           — points opponent needs (0 = money game)
+        is_crawford: bool    — True if Crawford game
+        max_cube_value: int  — maximum cube (0 = unlimited, or power of two >= 2)
 
     Args:
         positions: List of position dicts.
@@ -349,7 +350,7 @@ def batch_post_move_evaluate(
     if not positions:
         return []
 
-    # Build (board, CubeOwner[, cube_value, away1, away2, is_crawford]) tuples for C++
+    # Build (board, CubeOwner, cube_value[, away1, away2, is_crawford[, max_cube_value]]) tuples
     cpp_positions = []
     for p in positions:
         board = list(p["board"])
@@ -358,11 +359,16 @@ def batch_post_move_evaluate(
         away2 = p.get("away2", 0)
         is_crawford = p.get("is_crawford", False)
         cube_value = p.get("cube_value", 1)
-        if away1 > 0 or away2 > 0:
+        max_cube_value = p.get("max_cube_value", 0)
+        _validate_cube_limit(cube_value, max_cube_value)
+        if max_cube_value:
+            cpp_positions.append((board, cube_owner, cube_value,
+                                  away1, away2, is_crawford, max_cube_value))
+        elif away1 > 0 or away2 > 0:
             cpp_positions.append((board, cube_owner, cube_value,
                                   away1, away2, is_crawford))
         else:
-            cpp_positions.append((board, cube_owner))
+            cpp_positions.append((board, cube_owner, cube_value))
 
     # Jacoby applies to the money positions only; the native side checks
     # each position's match state, so a match row never switches it off for

@@ -1377,6 +1377,7 @@ class BgBotAnalyzer:
             weights = default_weights()
         self._weights = weights
         self._eval_level = eval_level
+        self._cubeful = bool(cubeful)
         # Two-stage checker_play filter: 1-ply loose cull (prefilter_threshold)
         # then 2-ply TINY. Defaults to 0.15 for truncated2, truncated3, and
         # any non-truncated rollout (eval_level="rollout" with
@@ -1666,12 +1667,16 @@ class BgBotAnalyzer:
         away2: int = 0,
         is_crawford: bool = False,
         jacoby: bool = True,
+        beaver: bool = True,
+        max_cube_value: int = 0,
         progress_callback: Any | None = None,
     ) -> PostMoveAnalysis:
         """Evaluate a post-move position (right before the opponent's turn).
 
         Returns cubeless probabilities, cubeless equity, and cubeful equity
-        from the perspective of the player who just moved.
+        from the perspective of the player who just moved. When this analyzer
+        was created with ``cubeful=False``, ``cubeful_equity`` equals
+        ``cubeless_equity``.
 
         Args:
             board: 26-element post-move board array (player who moved's perspective).
@@ -1682,81 +1687,58 @@ class BgBotAnalyzer:
             is_crawford: True if this is the Crawford game.
             jacoby: If True, gammons/backgammons don't count when cube is
                 centered (money games only). Auto-disabled for match play.
+            beaver: If True, opponent can beaver after being doubled (money
+                games only). Auto-disabled for match play.
+            max_cube_value: Maximum cube (0 = unlimited), or a power of two >= 2.
             progress_callback: Optional ``callback(completed, total)`` called
                 from inside the rollout's worker threads.  Only meaningful for
                 rollout eval levels — N-ply and 1-ply paths return synchronously
                 and don't emit progress.
         """
+        _validate_cube_limit(cube_value, max_cube_value)
         if away1 > 0 or away2 > 0:
             jacoby = False
+            beaver = False
 
         inner = self._analyzer
         if isinstance(inner, _CubefulAnalyzer):
             inner = inner._inner
 
         # Evaluate the post-move board (NN outputs from mover's perspective).
-        # When the inner analyzer is a rollout AND cube-aware trial moves is
-        # enabled, route through cubeful_evaluate_board so the trial loop
-        # receives the cube state and selects moves by cubeful equity. The
-        # cubeless probs and cubeful equity both come from the same trials.
-        # Otherwise keep the cubeless-rollout + post-hoc Janowski path so
-        # existing behavior is byte-identical when the flag is off.
+        # When cubeful=True and the inner analyzer is a rollout with cube-aware
+        # trial moves enabled, route through cubeful_evaluate_board so the trial
+        # loop receives the cube state and selects moves by cubeful equity.
         owner = resolve_owner(cube_owner)
         use_cubeful_rollout = (
             isinstance(inner, _RolloutAnalyzer)
+            and self._cubeful
             and self._cubeful_trial_moves
         )
 
         if isinstance(inner, _MultiPlyAnalyzer):
             n_plies = inner._n_plies
             inner._strategy_nply.clear_cache()
-            # Route through cubeful_probs_nply (N-ply CUBE-AWARE tree) when
-            # cube info is meaningful so the returned probs reflect match-aware
-            # interior picks. Falls back to cubeless evaluate_board when no
-            # cube info is present (no-op for 1-ply where there's nothing to
-            # change).
-            if owner is not None and n_plies > 1:
-                # Mirror the flip/perspective dance in _cubeful_equity: flip
-                # the board to opp's POV, flip the cube owner, swap away
-                # scores; cubeful_probs_nply returns probs in opp's POV at the
-                # flipped pre-roll position; invert to get back to ours.
-                opp_pre_roll = bgbot_cpp.flip_board(board)
-                opp_owner = _FLIP_OWNER[owner]
-                opp_probs = bgbot_cpp.cubeful_probs_nply(
-                    opp_pre_roll, opp_owner,
-                    inner._strategy_1ply, n_plies,
-                    n_threads=getattr(inner, '_parallel_threads', 1),
-                    cube_value=cube_value,
-                    away1=away2, away2=away1, is_crawford=is_crawford,
-                    jacoby=jacoby,
-                    bearoff_db=getattr(inner, '_bearoff_db', None),
-                )
-                # invert_probs from neongammon.board: [W, gW, bW, gL, bL] in opp's
-                # POV → [1-W, gL, bL, gW, bW] in our POV
-                probs = [1.0 - opp_probs[0],
-                         opp_probs[3], opp_probs[4],
-                         opp_probs[1], opp_probs[2]]
-                cl_eq = (2.0 * probs[0] - 1.0
-                         + probs[1] - probs[3]
-                         + probs[2] - probs[4])
-                r = {"probs": probs, "equity": cl_eq}
-            else:
-                r = inner._strategy_nply.evaluate_board(board, board)
+            r = inner._strategy_nply.evaluate_board(board, board)
             eval_level = f"{n_plies}-ply"
         elif isinstance(inner, _RolloutAnalyzer):
-            if use_cubeful_rollout:
-                r = inner._rollout_strategy.cubeful_evaluate_board(
-                    board, board,
-                    cube_value=cube_value, owner=owner,
-                    away1=away1, away2=away2, is_crawford=is_crawford,
-                    jacoby=jacoby,
-                    progress=progress_callback,
-                )
-            else:
-                r = inner._rollout_strategy.evaluate_board(
-                    board, board,
-                    progress=progress_callback,
-                )
+            inner._check_cancel()
+            try:
+                if use_cubeful_rollout:
+                    r = inner._rollout_strategy.cubeful_evaluate_board(
+                        board, board,
+                        cube_value=cube_value, owner=owner,
+                        away1=away1, away2=away2, is_crawford=is_crawford,
+                        jacoby=jacoby, beaver=beaver,
+                        **_cube_limit_kwargs(max_cube_value),
+                        progress=progress_callback,
+                    )
+                else:
+                    r = inner._rollout_strategy.evaluate_board(
+                        board, board,
+                        progress=progress_callback,
+                    )
+            except bgbot_cpp.RolloutCancelled:
+                raise RolloutCancelled()
             eval_level = "Rollout"
         else:
             r = inner._strategy_1ply.evaluate_board(board, board)
@@ -1765,18 +1747,21 @@ class BgBotAnalyzer:
         probs_list = list(r["probs"])
         cl_eq = r["equity"]
 
-        if use_cubeful_rollout:
+        if not self._cubeful:
+            cf_eq = cl_eq
+        elif use_cubeful_rollout:
             # cubeful_evaluate_board returns cubeful_equity in basis-cube
             # units already (computed from the rollout's own trial paths,
             # including the opponent's optimal cube action at the start of
             # their turn). No post-hoc Janowski needed.
             cf_eq = float(r["cubeful_equity"])
+        elif max_cube_value and cube_value >= max_cube_value:
+            cf_eq = _dead_cube_equity(probs_list, cube_value, away1, away2, is_crawford)
         else:
-            # Cubeful equity via post-hoc Janowski on cubeless probs.
-            # Only the plain 1-ply level is a depth-1 cube tree; N-ply and
-            # rollout probs converted here keep the engine default.
-            one_ply = eval_level == "1-ply"
-            x = _janowski_x(probs_list, board, 1 if one_ply else None, away1, away2)
+            # Cubeful equity via post-hoc root Janowski on cubeless probs.
+            # Root-Janowski conversion uses the 1-ply money contact cube life
+            # across all depths (matching batch_post_move_evaluate).
+            x = _janowski_x(probs_list, board, 1, away1, away2)
             is_match = away1 > 0 or away2 > 0
             if is_match:
                 cf_eq = bgbot_cpp.cl2cf(probs_list, cube_value, owner, x,

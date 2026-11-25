@@ -818,6 +818,7 @@ static py::list batch_evaluate_post_move_impl(
         CubeOwner owner;
         int cube_value;
         MatchInfo match;
+        int max_cube_value = 0;
     };
     const int n = static_cast<int>(py::len(positions));
     if (n == 0) return py::list();
@@ -828,12 +829,17 @@ static py::list batch_evaluate_post_move_impl(
         inputs[i].board = list_to_board(checkers);
         inputs[i].owner = pos[1].cast<CubeOwner>();
         inputs[i].cube_value = 1;
-        if (py::len(pos) >= 5) {
+        const size_t plen = py::len(pos);
+        if (plen >= 3) {
             inputs[i].cube_value = pos[2].cast<int>();
+        }
+        if (plen >= 5) {
             inputs[i].match.away1 = pos[3].cast<int>();
             inputs[i].match.away2 = pos[4].cast<int>();
-            if (py::len(pos) >= 6)
+            if (plen >= 6)
                 inputs[i].match.is_crawford = pos[5].cast<bool>();
+            if (plen >= 7)
+                inputs[i].max_cube_value = pos[6].cast<int>();
         }
     }
 
@@ -852,16 +858,16 @@ static py::list batch_evaluate_post_move_impl(
 
             // Post-move: evaluate directly and clamp impossible gammons/backgammons
             bool race = is_race(inp.board);
-            out.probs = strategy.evaluate_probs(inp.board, race);
+            out.probs = strategy.evaluate_probs(inp.board, inp.board);
             clamp_probs_to_board(out.probs, inp.board);
             out.cubeless_equity = NeuralNetwork::compute_equity(out.probs);
 
-            // Cubeful equity via Janowski (unified money/match)
+            // Cubeful equity via Janowski (unified money/match; cl2cf handles dead cubes)
             const bool money = inp.match.is_money();
             auto [_pp, _op] = pip_counts(inp.board);
             CubeInfo ci{inp.cube_value, inp.owner, inp.match, -1.0f,
                         money && jacoby, false,
-                        0, money ? contact_x : -1.0f,
+                        inp.max_cube_value, money ? contact_x : -1.0f,
                         money ? contact_x_pip_slope : 0.0f};
             float x = resolve_cube_x(out.probs, ci, race, _pp, _op);
             out.cubeful_equity = cl2cf(out.probs, ci, x);

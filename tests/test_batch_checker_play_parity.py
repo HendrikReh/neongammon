@@ -443,3 +443,61 @@ batch_checker_play(
 assert threads() == t0, f"1-ply n_threads=1 batch spawned threads: {{t0}} -> {{threads()}}"
 """
     subprocess.run([sys.executable, "-c", probe], check=True)
+
+
+@pytest.mark.parametrize("level", ["1ply", "2ply"])
+def test_post_move_analytics_cubeful_false_and_batch_parity(level):
+    """Issue #59: post_move_analytics honors cubeful=False, matches
+    batch_post_move_evaluate at 1-ply and 2-ply across money, match, and
+    dead-cube rules, and preserves money cube_value."""
+    board = list(possible_moves(list(STARTING_BOARD), 3, 1)[0])
+
+    # cubeful=False must return cubeful_equity == cubeless_equity
+    cl_analyzer = BgBotAnalyzer(eval_level=level, cubeful=False, parallel_threads=1)
+    cl_res = cl_analyzer.post_move_analytics(board, cube_owner="centered", cube_value=1)
+    assert cl_res.cubeful_equity == cl_res.cubeless_equity
+
+    # cubeful=True must match batch_post_move_evaluate on money, match, and dead-cube
+    cf_analyzer = BgBotAnalyzer(eval_level=level, cubeful=True, parallel_threads=1)
+    cases = [
+        dict(cube_owner="centered", cube_value=1),
+        dict(cube_owner="player", cube_value=2),
+        dict(cube_owner="player", cube_value=2, max_cube_value=2),
+        dict(cube_owner="player", cube_value=2, away1=5, away2=3),
+        dict(cube_owner="player", cube_value=2, away1=5, away2=3, max_cube_value=2),
+    ]
+    batch_rows = [dict(board=board, **kw) for kw in cases]
+    batch_res = batch_post_move_evaluate(batch_rows, eval_level=level, n_threads=1)
+    for kw, br in zip(cases, batch_res):
+        sr = cf_analyzer.post_move_analytics(board, **kw)
+        assert sr.cubeless_equity == pytest.approx(br.cubeless_equity, abs=1e-6)
+        assert sr.cubeful_equity == pytest.approx(br.cubeful_equity, abs=1e-6)
+        assert sr.probs.to_list() == pytest.approx(br.probs.to_list(), abs=1e-6)
+
+
+def test_post_move_analytics_translates_rollout_cancelled():
+    """Issue #59: post_move_analytics must translate bgbot_cpp.RolloutCancelled
+    into neongammon.RolloutCancelled for pre-cancelled and mid-rollout cancels."""
+    from neongammon import RolloutCancelled
+
+    board = list(possible_moves(list(STARTING_BOARD), 3, 1)[0])
+    for cubeful in (True, False):
+        for n_threads in (1, 2):
+            an = BgBotAnalyzer(
+                eval_level="rollout", cubeful=cubeful,
+                n_trials=36, truncation_depth=3, decision_ply=1,
+                parallel_threads=n_threads,
+            )
+            an.cancel()
+            with pytest.raises(RolloutCancelled):
+                an.post_move_analytics(board, cube_owner="centered")
+
+            # Also verify C++ mid-rollout cancellation translates cleanly
+            an.reset_cancel()
+            def cancel_midway(done, total, _an=an):
+                _an.cancel()
+            with pytest.raises(RolloutCancelled):
+                an.post_move_analytics(
+                    board, cube_owner="centered", progress_callback=cancel_midway,
+                )
+
