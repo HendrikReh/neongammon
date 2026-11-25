@@ -367,13 +367,79 @@ static void run_parallel_for(int n, int n_threads, Fn&& fn) {
     multipy_cooperative_for(n, n_threads, std::forward<Fn>(fn));
 }
 
+struct CubeEvaluation {
+    CubeDecision decision{};
+    std::array<float, NUM_OUTPUTS> probs{};
+    float cube_x = -1.0f;
+};
+
+static CubeEvaluation evaluate_cube_leaf(const Board& board, const CubeInfo& ci,
+                                         const Strategy& base) {
+    CubeEvaluation out;
+    const bool race = is_race(board);
+    out.probs = invert_probs(base.evaluate_probs(flip(board), race));
+    clamp_probs_to_board(out.probs, board);
+    auto [pp, op] = pip_counts(board);
+    out.cube_x = resolve_cube_x(out.probs, ci, race, pp, op);
+    out.decision = cube_decision_1ply(out.probs, ci, out.cube_x);
+    return out;
+}
+
+// Both the public single-position and batch APIs call this same search.
+static CubeEvaluation evaluate_cube_tree(const Board& board, const CubeInfo& ci,
+        const std::shared_ptr<Strategy>& base, const BearoffDB* db,
+        int plies, MoveFilter filter, int threads, bool decision_only,
+        TwoPlyDetails* details = nullptr) {
+    static PubEval pubeval;
+    CubeEvaluation out;
+    if (details) {
+        out.decision = cube_decision_nply_with_details(
+            board, ci, *base, plies, filter, threads, *details, &pubeval);
+    } else if (decision_only) {
+        out.decision = cube_decision_nply(board, ci, *base, plies, filter, threads, &pubeval);
+    }
+    if (!decision_only) {
+        MultiPlyStrategy multipy(base, plies, filter, false, threads > 1, threads);
+        if (db && db->is_loaded()) multipy.set_bearoff_db(db);
+        if (details) {
+            const Board flipped = flip(board);
+            out.probs = invert_probs(multipy.evaluate_probs(flipped, flipped));
+        } else {
+            out.decision = multipy.cube_decision_with_cubeless_probs(board, ci, &pubeval, out.probs);
+        }
+        multipy.clear_cache();
+    }
+    return out;
+}
+
+static py::dict cube_evaluation_dict(const CubeEvaluation& evaluation, bool decision_only) {
+    py::dict result;
+    if (!decision_only) {
+        result["probs"] = evaluation.probs;
+        result["cubeless_equity"] = cubeless_equity(evaluation.probs);
+    }
+    const auto& cd = evaluation.decision;
+    result["equity_nd"] = cd.equity_nd;
+    result["equity_dt"] = cd.equity_dt;
+    result["equity_dp"] = cd.equity_dp;
+    result["should_double"] = cd.should_double;
+    result["should_take"] = cd.should_take;
+    result["optimal_equity"] = cd.optimal_equity;
+    result["is_beaver"] = cd.is_beaver;
+    return result;
+}
+
 static py::dict evaluate_board_dict(const Strategy& strat,
                                     const std::vector<int>& board,
                                     const std::vector<int>& pre_move_board) {
     auto b = list_to_board(board);
     auto pmb = list_to_board(pre_move_board);
-    auto probs = strat.evaluate_probs(b, pmb);
-    clamp_probs_to_board(probs, b);
+    std::array<float, NUM_OUTPUTS> probs;
+    {
+        py::gil_scoped_release release;
+        probs = strat.evaluate_probs(b, pmb);
+        clamp_probs_to_board(probs, b);
+    }
     double eq = NeuralNetwork::compute_equity(probs);
     py::dict result;
     result["probs"] = probs;
@@ -447,6 +513,32 @@ static std::vector<ScoredMove> score_checker_1ply(
     return out;
 }
 
+// Probs, cubeless and cubeful equity of a post-move board from the
+// cube-aware N-ply tree.
+static void apply_cube_tree(ScoredMove& m, const CubefulProbsAndEquity& r) {
+    const auto& o = r.probs;
+    m.probs = {1.0 - o[0], o[3], o[4], o[1], o[2]};
+    m.cubeless_equity = 2.0 * m.probs[0] - 1.0
+                        + m.probs[1] - m.probs[3]
+                        + m.probs[2] - m.probs[4];
+    m.cubeful_equity = -r.equity;
+    m.searched = true;
+}
+
+static std::vector<ScoredMove> score_checker_endpoints(
+        const Board& before, const std::vector<Board>& endpoints, const CubeInfo& opp_ci,
+        const Strategy& strategy, int plies, int threads) {
+    const auto scores = cubeful_checker_endpoints_nply(before, endpoints, opp_ci, strategy,
+                                                      plies, threads);
+    std::vector<ScoredMove> out(endpoints.size());
+    for (size_t i = 0; i < endpoints.size(); ++i) {
+        out[i].board = endpoints[i];
+        apply_cube_tree(out[i], scores[i]);
+    }
+    std::sort(out.begin(), out.end(), compare_scored_moves_by_cubeful);
+    return out;
+}
+
 // The ranked move list of one position. `candidate_threads` > 1 spreads the
 // cube-tree calls of the searched moves over the shared pool (single-position
 // analysis); batches pass 1 and parallelise across positions instead.
@@ -467,17 +559,6 @@ static std::vector<ScoredMove> score_checker_position(
                           money ? cfg.contact_x_nply : -1.0f,
                           money ? cfg.contact_x_pip_slope_nply : 0.0f};
 
-    // Probs, cubeless and cubeful equity of a post-move board from the
-    // cube-aware N-ply tree.
-    auto apply_cube_tree = [](ScoredMove& m, const CubefulProbsAndEquity& r) {
-        const auto& o = r.probs;
-        m.probs = {1.0 - o[0], o[3], o[4], o[1], o[2]};
-        m.cubeless_equity = 2.0 * m.probs[0] - 1.0
-                            + m.probs[1] - m.probs[3]
-                            + m.probs[2] - m.probs[4];
-        m.cubeful_equity = -r.equity;
-        m.searched = true;
-    };
     auto cube_tree = [&](ScoredMove& m) {
         const int roll_threads = candidate_threads > 1 ? std::min(candidate_threads, 21) : 1;
         auto r = cubeful_probs_and_equity_nply(
@@ -501,16 +582,8 @@ static std::vector<ScoredMove> score_checker_position(
     };
 
     if (!cfg.filtered) {
-        auto candidates = possible_boards(pos.board, pos.die1, pos.die2);
-        std::vector<ScoredMove> out;
-        if (candidates.empty()) return out;
-        out.reserve(candidates.size());
-        for (const auto& c : candidates) out.push_back({c, {}, 0.0, 0.0, false});
-        std::vector<ScoredMove*> all;
-        for (auto& m : out) all.push_back(&m);
-        cube_trees(all);
-        std::sort(out.begin(), out.end(), compare_scored_moves_by_cubeful);
-        return out;
+        return score_checker_endpoints(pos.board, possible_boards(pos.board, pos.die1, pos.die2),
+                                       opp_ci, strategy_1ply, cfg.n_plies, candidate_threads);
     }
 
     // 1-ply cubeful scoring (shared with 1-ply batch_checker_play).
@@ -3003,9 +3076,14 @@ PYBIND11_MODULE(bgbot_cpp, m) {
 
     py::class_<CubeInfo>(m, "CubeInfo")
         .def(py::init<>())
-        .def(py::init([](int value, CubeOwner owner) {
-            return CubeInfo{value, owner};
-        }), py::arg("cube_value") = 1, py::arg("owner") = CubeOwner::CENTERED)
+        .def(py::init([](int value, CubeOwner owner, int away1, int away2, bool crawford,
+                         bool jacoby, bool beaver, int max_cube, float contact_x, float slope) {
+            return CubeInfo{value, owner, {away1, away2, crawford}, -1.0f, jacoby, beaver,
+                            max_cube, contact_x, slope};
+        }), py::arg("cube_value") = 1, py::arg("owner") = CubeOwner::CENTERED,
+            py::arg("away1") = 0, py::arg("away2") = 0, py::arg("is_crawford") = false,
+            py::arg("jacoby") = false, py::arg("beaver") = false, py::arg("max_cube_value") = 0,
+            py::arg("contact_x") = -1.0f, py::arg("contact_x_pip_slope") = 0.0f)
         .def_readwrite("cube_value", &CubeInfo::cube_value)
         .def_readwrite("owner", &CubeInfo::owner);
 
@@ -4591,6 +4669,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
     m.def("create_strategy", [](const std::string& strategy_type,
                                                const std::vector<std::string>& weight_paths,
                                                const std::vector<int>& hidden_sizes) {
+        py::gil_scoped_release release;
         return make_strategy_from_type(strategy_type, weight_paths, hidden_sizes);
     }, "Create a base Strategy by type (5nn, pair, backgame_pair)",
        py::arg("strategy_type"),
@@ -4604,6 +4683,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
                                               int filter_max_moves, float filter_threshold,
                                               bool full_depth_opponent,
                                               bool parallel_evaluate, int parallel_threads) {
+        py::gil_scoped_release release;
         return make_multipy(
             make_strategy_from_type(strategy_type, weight_paths, hidden_sizes),
             n_plies, filter_max_moves, filter_threshold, full_depth_opponent,
@@ -4639,9 +4719,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
        py::arg("parallel_evaluate") = false,
        py::arg("parallel_threads") = 0);
 
-    m.def("create_rollout", [](const std::string& strategy_type,
-                                              const std::vector<std::string>& weight_paths,
-                                              const std::vector<int>& hidden_sizes,
+    m.def("create_rollout_from_base", [](std::shared_ptr<Strategy> base,
                                               int n_trials, int truncation_depth, int decision_ply,
                                               int filter_max_moves, float filter_threshold,
                                               int n_threads, uint32_t seed,
@@ -4656,7 +4734,8 @@ PYBIND11_MODULE(bgbot_cpp, m) {
                                               int cubeful_late_threshold,
                                               double target_se,
                                               int max_batches, int truncation_ply) {
-        auto base = make_strategy_from_type(strategy_type, weight_paths, hidden_sizes);
+        if (!base) throw std::invalid_argument("base strategy is None");
+        py::gil_scoped_release release;
         RolloutConfig rc;
         rc.n_trials = n_trials;
         rc.truncation_depth = truncation_depth;
@@ -4679,10 +4758,8 @@ PYBIND11_MODULE(bgbot_cpp, m) {
         rc.max_batches = max_batches;
         rc.truncation_ply = truncation_ply;
         return std::make_shared<RolloutStrategy>(base, rc);
-    }, "Create RolloutStrategy from any base strategy type",
-       py::arg("strategy_type"),
-       py::arg("weight_paths"),
-       py::arg("hidden_sizes"),
+    }, "Create RolloutStrategy around loaded weights",
+       py::arg("base"),
        py::arg("n_trials") = 1296,
        py::arg("truncation_depth") = 0,
        py::arg("decision_ply") = 1,
@@ -4704,6 +4781,17 @@ PYBIND11_MODULE(bgbot_cpp, m) {
        py::arg("target_se") = 0.0,
        py::arg("max_batches") = 50,
        py::arg("truncation_ply") = -1);
+
+    m.def("create_rollout", [factory = py::object(m.attr("create_rollout_from_base"))]
+          (const std::string& strategy_type, const std::vector<std::string>& weight_paths,
+           const std::vector<int>& hidden_sizes, py::args args, py::kwargs kwargs) {
+        std::shared_ptr<Strategy> base;
+        {
+            py::gil_scoped_release release;
+            base = make_strategy_from_type(strategy_type, weight_paths, hidden_sizes);
+        }
+        return factory(base, *args, **kwargs);
+    }, py::arg("strategy_type"), py::arg("weight_paths"), py::arg("hidden_sizes"));
 
     // --- Unified cubeful_equity_nply (accepts any Strategy via shared_ptr) ---
     m.def("cubeful_equity_nply", [](const std::vector<int>& board_vec,
@@ -4855,31 +4943,19 @@ PYBIND11_MODULE(bgbot_cpp, m) {
                                                 const BearoffDB* bearoff_db,
                                                 std::shared_ptr<Strategy> strategy) {
         Board board = list_to_board(checkers);
-        auto base = strategy ? std::move(strategy) :
-            make_strategy_from_type(strategy_type, weight_paths, hidden_sizes);
-        auto strat = with_bearoff_db(std::move(base), bearoff_db);
-        Board flipped = flip(board);
-        bool race = is_race(board);
-        auto post_move_probs = strat->evaluate_probs(flipped, race);
-        auto pre_roll_probs = invert_probs(post_move_probs);
-        clamp_probs_to_board(pre_roll_probs, board);
-        CubeInfo ci{cube_value, owner, {away1, away2, is_crawford}, cube_x_override, jacoby, beaver, max_cube_value, contact_x, contact_x_pip_slope};
-        auto [pp, op] = pip_counts(board);
-        float x = resolve_cube_x(pre_roll_probs, ci, race, pp, op);
-        auto cd = cube_decision_1ply(pre_roll_probs, ci, x);
-        float cl_eq = cubeless_equity(pre_roll_probs);
-        py::dict result;
-        result["probs"] = pre_roll_probs;
-        result["cubeless_equity"] = cl_eq;
-        result["cube_x"] = x;
-        result["equity_nd"] = cd.equity_nd;
-        result["equity_dt"] = cd.equity_dt;
-        result["equity_dp"] = cd.equity_dp;
-        result["should_double"] = cd.should_double;
-        result["should_take"] = cd.should_take;
-        result["optimal_equity"] = cd.optimal_equity;
-        result["is_beaver"] = cd.is_beaver;
-        result["is_race"] = race;
+        const CubeInfo ci{cube_value, owner, {away1, away2, is_crawford}, cube_x_override,
+                          jacoby, beaver, max_cube_value, contact_x, contact_x_pip_slope};
+        CubeEvaluation evaluation;
+        {
+            py::gil_scoped_release release;
+            auto base = strategy ? std::move(strategy) :
+                make_strategy_from_type(strategy_type, weight_paths, hidden_sizes);
+            auto strat = with_bearoff_db(std::move(base), bearoff_db);
+            evaluation = evaluate_cube_leaf(board, ci, *strat);
+        }
+        auto result = cube_evaluation_dict(evaluation, false);
+        result["cube_x"] = evaluation.cube_x;
+        result["is_race"] = is_race(board);
         return result;
     }, "Unified 1-ply cube decision for any strategy type.",
        py::arg("checkers"),
@@ -4894,6 +4970,39 @@ PYBIND11_MODULE(bgbot_cpp, m) {
        py::arg("contact_x") = -1.0f,
        py::arg("contact_x_pip_slope") = 0.0f,
        py::arg("bearoff_db") = nullptr, py::arg("strategy") = nullptr);
+
+    m.def("score_checker_endpoints", [](const Board& board, const std::vector<Board>& endpoints,
+             const CubeInfo& opponent_cube, const Strategy& strategy, int plies, int threads) {
+        std::vector<ScoredMove> moves;
+        {
+            py::gil_scoped_release release;
+            moves = score_checker_endpoints(board, endpoints, opponent_cube, strategy, plies, threads);
+        }
+        return scored_moves_to_list(moves, plies);
+    }, py::arg("board"), py::arg("endpoints"), py::arg("opponent_cube"), py::arg("strategy"),
+       py::arg("n_plies"), py::arg("n_threads") = 1);
+
+    m.def("batch_cube_action_nply", [](const std::vector<std::pair<Board, CubeInfo>>& positions,
+            const std::shared_ptr<Strategy>& base, const BearoffDB* db, int plies,
+            int threads, bool decision_only, int max_moves, float threshold) {
+        if (!base) throw std::invalid_argument("base strategy is None");
+        auto strategy = with_bearoff_db(base, db);
+        std::vector<CubeEvaluation> results(positions.size());
+        {
+            py::gil_scoped_release release;
+            run_parallel_for(static_cast<int>(positions.size()), threads, [&](int i) {
+                const auto& [board, ci] = positions[i];
+                results[i] = plies == 1 ? evaluate_cube_leaf(board, ci, *strategy)
+                    : evaluate_cube_tree(board, ci, strategy, db, plies,
+                                         {max_moves, threshold}, 1, decision_only);
+            });
+        }
+        py::list out;
+        for (const auto& r : results) out.append(cube_evaluation_dict(r, decision_only));
+        return out;
+    }, py::arg("positions"), py::arg("base"), py::arg("bearoff_db"), py::arg("n_plies"),
+       py::arg("n_threads") = 0, py::arg("decision_only") = false,
+       py::arg("filter_max_moves") = 5, py::arg("filter_threshold") = 0.08f);
 
     // --- Unified N-ply cube decision ---
     m.def("cube_decision_nply_unified", [](const std::vector<int>& checkers,
@@ -4917,9 +5026,13 @@ PYBIND11_MODULE(bgbot_cpp, m) {
                 "incl_2ply_details requires n_plies >= 2");
         }
         Board board = list_to_board(checkers);
-        auto base = strategy ? std::move(strategy) :
-            make_strategy_from_type(strategy_type, weight_paths, hidden_sizes);
-        auto base_strat = with_bearoff_db(std::move(base), bearoff_db);
+        std::shared_ptr<Strategy> base_strat;
+        {
+            py::gil_scoped_release release;
+            auto base = strategy ? std::move(strategy) :
+                make_strategy_from_type(strategy_type, weight_paths, hidden_sizes);
+            base_strat = with_bearoff_db(std::move(base), bearoff_db);
+        }
         // A caller may supply the ready-to-use wrapper without a separate DB.
         // The cubeless evaluator also needs that DB for its root shortcut.
         const Strategy* layer = base_strat.get();
@@ -4932,61 +5045,15 @@ PYBIND11_MODULE(bgbot_cpp, m) {
         }
         CubeInfo ci{cube_value, owner, {away1, away2, is_crawford}, cube_x_override, jacoby, beaver, max_cube_value, contact_x, contact_x_pip_slope};
         MoveFilter filter{filter_max_moves, filter_threshold};
-        CubeDecision cd;
         TwoPlyDetails details;
-        std::array<float, NUM_OUTPUTS> pre_roll_probs;
-        float cl_eq;
-        // PubEval prefilter for move selection in the cubeful recursion:
-        // narrows candidate moves before full 1-ply scoring at each node.
-        static PubEval pubeval_filter;
+        CubeEvaluation evaluation;
         {
             py::gil_scoped_release release;
-            if (incl_2ply_details) {
-                cd = cube_decision_nply_with_details(board, ci, *base_strat, n_plies, filter, n_threads, details, &pubeval_filter);
-                if (!decision_only) {
-                    Board flipped = flip(board);
-                    MultiPlyStrategy multipy(base_strat, n_plies, filter,
-                                             /*full_depth_opponent=*/false,
-                                             /*parallel_evaluate=*/n_threads > 1,
-                                             /*parallel_threads=*/n_threads);
-                    if (bearoff_db && bearoff_db->is_loaded()) {
-                        multipy.set_bearoff_db(bearoff_db);
-                    }
-                    auto post_probs = multipy.evaluate_probs(flipped, flipped);
-                    multipy.clear_cache();
-                    pre_roll_probs = invert_probs(post_probs);
-                    cl_eq = cubeless_equity(pre_roll_probs);
-                }
-            } else if (decision_only) {
-                cd = cube_decision_nply(board, ci, *base_strat, n_plies, filter, n_threads, &pubeval_filter);
-            } else {
-                MultiPlyStrategy multipy(base_strat, n_plies, filter,
-                                         /*full_depth_opponent=*/false,
-                                         /*parallel_evaluate=*/n_threads > 1,
-                                         /*parallel_threads=*/n_threads);
-                if (bearoff_db && bearoff_db->is_loaded()) {
-                    multipy.set_bearoff_db(bearoff_db);
-                }
-                cd = multipy.cube_decision_with_cubeless_probs(board, ci, &pubeval_filter, pre_roll_probs);
-                multipy.clear_cache();
-                cl_eq = cubeless_equity(pre_roll_probs);
-            }
+            evaluation = evaluate_cube_tree(board, ci, base_strat, bearoff_db, n_plies,
+                                            filter, n_threads, decision_only,
+                                            incl_2ply_details ? &details : nullptr);
         }
-        py::dict result;
-        // decision_only skips the separate cubeless N-ply search behind these
-        // two fields (about half the call at 2-ply, two thirds at 3-ply): the
-        // decision and its equities come from the cube tree alone.
-        if (!decision_only) {
-            result["probs"] = pre_roll_probs;
-            result["cubeless_equity"] = cl_eq;
-        }
-        result["equity_nd"] = cd.equity_nd;
-        result["equity_dt"] = cd.equity_dt;
-        result["equity_dp"] = cd.equity_dp;
-        result["should_double"] = cd.should_double;
-        result["should_take"] = cd.should_take;
-        result["optimal_equity"] = cd.optimal_equity;
-        result["is_beaver"] = cd.is_beaver;
+        auto result = cube_evaluation_dict(evaluation, decision_only);
         result["n_plies"] = n_plies;
         if (incl_2ply_details) {
             result["details"] = two_ply_details_to_dict(details);

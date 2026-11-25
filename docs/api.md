@@ -277,6 +277,32 @@ for chunk in chunks:
     batch_evaluate(chunk, eval_level="1ply", models=models)
 ```
 
+**Shared analysis and recursive cube batches**
+
+```python
+from neongammon import BatchModels, BgBotAnalyzer, batch_cube_action_nply
+
+checker = BgBotAnalyzer(eval_level="2ply")
+models = BatchModels.from_analyzer(checker)
+rollout = BgBotAnalyzer(eval_level="truncated1", models=models)
+cube_decisions = batch_cube_action_nply(
+    positions, eval_level="2ply", models=models, n_threads=4, decision_only=True,
+)
+```
+
+The recursive batch returns `CubeActionResult` at 1–4 ply, or
+`CubeDecisionResult` with `decision_only=True`. Positions accept the same
+cube owner, match score, Crawford, Jacoby, beaver and maximum cube value
+as a scalar analysis. Each worker searches one position serially.
+`batch_cube_action` continues to apply a Janowski conversion at the root.
+
+`checker.top_two_promote(board, moves, max_gap=0.010, **cube_context)`
+returns the ranking and its depth label. For a close 2-ply contact decision
+it searches both leaders at 3-ply and returns those two moves. Races, forced
+moves and wider gaps retain the original list. The public `flip_owner`,
+`contact_cube_life` and `contact_cube_slope` functions expose the engine's
+perspective and money cube-life conventions.
+
 ### 4. Game Plan Classification
 
 Given a board position, return the game plan for the player on roll and the

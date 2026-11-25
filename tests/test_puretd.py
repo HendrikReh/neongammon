@@ -62,7 +62,7 @@ def test_puretd_uses_native_root_filter_and_delegates_cube(puretd):
                 == puretd.analysis.cube_decision(board, **context).should_take)
 
 
-def test_implicit_jacoby_game_uses_filtered_puretd(puretd, monkeypatch):
+def test_opt_in_money_policy_uses_filtered_puretd(puretd, monkeypatch):
     library = os.environ["NEONGAMMON_TEST_PURETD_LIBRARY"]
     model = os.environ["NEONGAMMON_TEST_PURETD_MODEL"]
     monkeypatch.setenv("NEONGAMMON_PURETD_LIBRARY", library)
@@ -73,11 +73,12 @@ def test_implicit_jacoby_game_uses_filtered_puretd(puretd, monkeypatch):
         expected = ng.simulate_game(seed=seed, config=config, players=(filtered, filtered))
     stage = ng.BgBotAnalyzer(parallel_threads=1)
     assert ng.simulate_game(seed=seed, config=config, players=(stage, stage)) != expected
-    assert ng.simulate_game(seed=seed, config=config) == expected
+    with ng.default_money_policy() as policy:
+        assert ng.simulate_game(seed=seed, config=config, players=(policy, policy)) == expected
 
 
 @pytest.mark.parametrize("library_exists", [False, True])
-def test_unavailable_puretd_falls_back_to_stage11(tmp_path, monkeypatch, library_exists):
+def test_unavailable_puretd_factory_returns_none(tmp_path, monkeypatch, library_exists):
     library = tmp_path / "unloadable.so"
     if library_exists:
         library.write_text("not a shared library")
@@ -86,18 +87,19 @@ def test_unavailable_puretd_falls_back_to_stage11(tmp_path, monkeypatch, library
     monkeypatch.setenv("NEONGAMMON_PURETD_LIBRARY", str(library))
     monkeypatch.setenv("NEONGAMMON_PURETD_MODEL", str(model))
     stage = ng.BgBotAnalyzer(parallel_threads=1)
+    assert ng.default_money_policy() is None
     expected = ng.simulate_game(seed=42, players=(stage, stage))
     assert ng.simulate_game(seed=42) == expected
 
 
-@pytest.mark.parametrize("config", [ng.GameConfig(jacoby=False), ng.GameConfig(match_length=5)])
-def test_puretd_is_only_probed_for_jacoby_money_games(monkeypatch, config):
+@pytest.mark.parametrize("config", [ng.GameConfig(), ng.GameConfig(jacoby=False), ng.GameConfig(match_length=5)])
+def test_default_players_never_probe_puretd(monkeypatch, config):
     from neongammon import puretd as adapter
 
-    def unexpected_probe():
+    def unexpected_probe(*args):
         pytest.fail("PureTD was probed outside Jacoby money play")
 
-    monkeypatch.setattr(adapter, "_default_money_policy", unexpected_probe)
+    monkeypatch.setattr(adapter.ctypes, "CDLL", unexpected_probe)
     stage = ng.BgBotAnalyzer(parallel_threads=1)
     assert ng.simulate_game(config=config) == ng.simulate_game(config=config, players=(stage, stage))
 
