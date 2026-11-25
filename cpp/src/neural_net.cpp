@@ -1830,12 +1830,14 @@ int GamePlanStrategy::evaluate_candidates_equity(
     const int n = static_cast<int>(candidates.size());
     if (n == 0) return -1;
     if (n == 1) {
-        GameResult result = check_game_over(candidates[0]);
-        if (result != GameResult::NOT_OVER) {
-            equities[0] = terminal_equity(result);
-        } else {
-            GamePlan gp = classify_game_plan(pre_move_board);
-            equities[0] = evaluate_with_nn(candidates[0], gp);
+        if (equities) {
+            GameResult result = check_game_over(candidates[0]);
+            if (result != GameResult::NOT_OVER) {
+                equities[0] = terminal_equity(result);
+            } else {
+                GamePlan gp = classify_game_plan(pre_move_board);
+                equities[0] = evaluate_with_nn(candidates[0], gp);
+            }
         }
         return 0;
     }
@@ -1854,7 +1856,7 @@ int GamePlanStrategy::evaluate_candidates_equity(
         } else {
             val = evaluate_with_nn(candidates[i], gp);
         }
-        equities[i] = val;
+        if (equities) equities[i] = val;
         if (val > best_val) {
             best_val = val;
             best_idx = i;
@@ -1872,13 +1874,15 @@ int GamePlanStrategy::batch_evaluate_candidates_equity(
     const int n = static_cast<int>(candidates.size());
     if (n == 0) return -1;
     if (n == 1) {
-        // Single candidate — just use the non-batch path
-        GameResult result = check_game_over(candidates[0]);
-        if (result != GameResult::NOT_OVER) {
-            equities[0] = terminal_equity(result);
-        } else {
-            GamePlan gp = classify_game_plan(pre_move_board);
-            equities[0] = evaluate_with_nn(candidates[0], gp);
+        if (equities) {
+            // Single candidate — just use the non-batch path
+            GameResult result = check_game_over(candidates[0]);
+            if (result != GameResult::NOT_OVER) {
+                equities[0] = terminal_equity(result);
+            } else {
+                GamePlan gp = classify_game_plan(pre_move_board);
+                equities[0] = evaluate_with_nn(candidates[0], gp);
+            }
         }
         return 0;
     }
@@ -1900,9 +1904,10 @@ int GamePlanStrategy::batch_evaluate_candidates_equity(
     for (int i = 0; i < n; ++i) {
         GameResult result = check_game_over(candidates[i]);
         if (result != GameResult::NOT_OVER) {
-            equities[i] = terminal_equity(result);
-            if (equities[i] > best_val) {
-                best_val = equities[i];
+            double val = terminal_equity(result);
+            if (equities) equities[i] = val;
+            if (val > best_val) {
+                best_val = val;
                 best_idx = i;
             }
         } else {
@@ -1924,7 +1929,7 @@ int GamePlanStrategy::batch_evaluate_candidates_equity(
     for (int j = 0; j < nn_count; ++j) {
         const auto& out = group_out[j];
         double val = NeuralNetwork::compute_equity(out);
-        equities[nn_indices[j]] = val;
+        if (equities) equities[nn_indices[j]] = val;
         if (val > best_val) {
             best_val = val;
             best_idx = nn_indices[j];
@@ -1943,14 +1948,17 @@ int GamePlanStrategy::batch_evaluate_candidates_equity_probs(
     const int n = static_cast<int>(candidates.size());
     if (n == 0) return -1;
     if (n == 1) {
-        GameResult result = check_game_over(candidates[0]);
-        if (result != GameResult::NOT_OVER) {
-            equities[0] = terminal_equity(result);
-            probs_out[0] = terminal_probs(result);
-        } else {
-            GamePlan gp = classify_game_plan(pre_move_board);
-            probs_out[0] = probs_with_nn(candidates[0], gp);
-            equities[0] = NeuralNetwork::compute_equity(probs_out[0]);
+        if (equities || probs_out) {
+            GameResult result = check_game_over(candidates[0]);
+            if (result != GameResult::NOT_OVER) {
+                if (equities) equities[0] = terminal_equity(result);
+                if (probs_out) probs_out[0] = terminal_probs(result);
+            } else {
+                GamePlan gp = classify_game_plan(pre_move_board);
+                auto probs = probs_with_nn(candidates[0], gp);
+                if (probs_out) probs_out[0] = probs;
+                if (equities) equities[0] = NeuralNetwork::compute_equity(probs);
+            }
         }
         return 0;
     }
@@ -1970,10 +1978,11 @@ int GamePlanStrategy::batch_evaluate_candidates_equity_probs(
     for (int i = 0; i < n; ++i) {
         GameResult result = check_game_over(candidates[i]);
         if (result != GameResult::NOT_OVER) {
-            probs_out[i] = terminal_probs(result);
-            equities[i] = terminal_equity(result);
-            if (equities[i] > best_val) {
-                best_val = equities[i];
+            double val = terminal_equity(result);
+            if (probs_out) probs_out[i] = terminal_probs(result);
+            if (equities) equities[i] = val;
+            if (val > best_val) {
+                best_val = val;
                 best_idx = i;
             }
         } else {
@@ -1992,9 +2001,9 @@ int GamePlanStrategy::batch_evaluate_candidates_equity_probs(
 
     for (int j = 0; j < nn_count; ++j) {
         const auto& out = group_out[j];
-        probs_out[nn_indices[j]] = out;
+        if (probs_out) probs_out[nn_indices[j]] = out;
         double val = NeuralNetwork::compute_equity(out);
-        equities[nn_indices[j]] = val;
+        if (equities) equities[nn_indices[j]] = val;
         if (val > best_val) {
             best_val = val;
             best_idx = nn_indices[j];
@@ -2013,19 +2022,21 @@ int GamePlanStrategy::batch_evaluate_candidates_best_prob(
     const int n = static_cast<int>(candidates.size());
     if (n == 0) return -1;
     if (n == 1) {
-        GameResult result = check_game_over(candidates[0]);
-        if (result != GameResult::NOT_OVER) {
-            if (equities) equities[0] = terminal_equity(result);
-            if (best_probs_out) {
-                *best_probs_out = terminal_probs(result);
+        if (equities || best_probs_out) {
+            GameResult result = check_game_over(candidates[0]);
+            if (result != GameResult::NOT_OVER) {
+                if (equities) equities[0] = terminal_equity(result);
+                if (best_probs_out) {
+                    *best_probs_out = terminal_probs(result);
+                }
+            } else {
+                GamePlan gp = classify_game_plan(pre_move_board);
+                std::array<float, NUM_OUTPUTS> probs = probs_with_nn(candidates[0], gp);
+                if (best_probs_out) {
+                    *best_probs_out = probs;
+                }
+                if (equities) equities[0] = NeuralNetwork::compute_equity(probs);
             }
-        } else {
-            GamePlan gp = classify_game_plan(pre_move_board);
-            std::array<float, NUM_OUTPUTS> probs = probs_with_nn(candidates[0], gp);
-            if (best_probs_out) {
-                *best_probs_out = probs;
-            }
-            if (equities) equities[0] = NeuralNetwork::compute_equity(probs);
         }
         return 0;
     }
@@ -2228,6 +2239,7 @@ int GamePlanPairStrategy::evaluate_candidates_equity(
 {
     const int n = static_cast<int>(candidates.size());
     if (n == 0) return -1;
+    if (n == 1 && !equities) return 0;
     int nn_idx = select_nn_idx(pre_move_board);
 
     double best_val = -1e30;
@@ -2236,7 +2248,7 @@ int GamePlanPairStrategy::evaluate_candidates_equity(
         GameResult result = check_game_over(candidates[i]);
         double val = (result != GameResult::NOT_OVER)
             ? terminal_equity(result) : evaluate_with_nn(candidates[i], nn_idx);
-        equities[i] = val;
+        if (equities) equities[i] = val;
         if (val > best_val) { best_val = val; best_idx = i; }
     }
     return best_idx;
@@ -2250,10 +2262,12 @@ int GamePlanPairStrategy::batch_evaluate_candidates_equity(
     const int n = static_cast<int>(candidates.size());
     if (n == 0) return -1;
     if (n == 1) {
-        GameResult result = check_game_over(candidates[0]);
-        equities[0] = (result != GameResult::NOT_OVER)
-            ? terminal_equity(result)
-            : evaluate_with_nn(candidates[0], select_nn_idx(pre_move_board));
+        if (equities) {
+            GameResult result = check_game_over(candidates[0]);
+            equities[0] = (result != GameResult::NOT_OVER)
+                ? terminal_equity(result)
+                : evaluate_with_nn(candidates[0], select_nn_idx(pre_move_board));
+        }
         return 0;
     }
 
@@ -2271,8 +2285,9 @@ int GamePlanPairStrategy::batch_evaluate_candidates_equity(
     for (int i = 0; i < n; ++i) {
         GameResult result = check_game_over(candidates[i]);
         if (result != GameResult::NOT_OVER) {
-            equities[i] = terminal_equity(result);
-            if (equities[i] > best_val) { best_val = equities[i]; best_idx = i; }
+            double val = terminal_equity(result);
+            if (equities) equities[i] = val;
+            if (val > best_val) { best_val = val; best_idx = i; }
         } else {
             nn_indices.push_back(i);
         }
@@ -2288,7 +2303,7 @@ int GamePlanPairStrategy::batch_evaluate_candidates_equity(
     for (int j = 0; j < nn_count; ++j) {
         const auto& out = group_out[j];
         double val = NeuralNetwork::compute_equity(out);
-        equities[nn_indices[j]] = val;
+        if (equities) equities[nn_indices[j]] = val;
         if (val > best_val) { best_val = val; best_idx = nn_indices[j]; }
     }
     return best_idx;
@@ -2303,14 +2318,17 @@ int GamePlanPairStrategy::batch_evaluate_candidates_equity_probs(
     const int n = static_cast<int>(candidates.size());
     if (n == 0) return -1;
     if (n == 1) {
-        GameResult result = check_game_over(candidates[0]);
-        if (result != GameResult::NOT_OVER) {
-            probs_out[0] = terminal_probs(result);
-            equities[0] = terminal_equity(result);
-        } else {
-            int nn_idx = select_nn_idx(pre_move_board);
-            probs_out[0] = probs_with_nn(candidates[0], nn_idx);
-            equities[0] = NeuralNetwork::compute_equity(probs_out[0]);
+        if (equities || probs_out) {
+            GameResult result = check_game_over(candidates[0]);
+            if (result != GameResult::NOT_OVER) {
+                if (probs_out) probs_out[0] = terminal_probs(result);
+                if (equities) equities[0] = terminal_equity(result);
+            } else {
+                int nn_idx = select_nn_idx(pre_move_board);
+                auto probs = probs_with_nn(candidates[0], nn_idx);
+                if (probs_out) probs_out[0] = probs;
+                if (equities) equities[0] = NeuralNetwork::compute_equity(probs);
+            }
         }
         return 0;
     }
@@ -2329,9 +2347,10 @@ int GamePlanPairStrategy::batch_evaluate_candidates_equity_probs(
     for (int i = 0; i < n; ++i) {
         GameResult result = check_game_over(candidates[i]);
         if (result != GameResult::NOT_OVER) {
-            probs_out[i] = terminal_probs(result);
-            equities[i] = terminal_equity(result);
-            if (equities[i] > best_val) { best_val = equities[i]; best_idx = i; }
+            double val = terminal_equity(result);
+            if (probs_out) probs_out[i] = terminal_probs(result);
+            if (equities) equities[i] = val;
+            if (val > best_val) { best_val = val; best_idx = i; }
         } else {
             nn_indices.push_back(i);
         }
@@ -2346,10 +2365,11 @@ int GamePlanPairStrategy::batch_evaluate_candidates_equity_probs(
 
     for (int j = 0; j < nn_count; ++j) {
         const auto& out = group_out[j];
-        probs_out[nn_indices[j]] = out;
-        equities[nn_indices[j]] = NeuralNetwork::compute_equity(out);
-        if (equities[nn_indices[j]] > best_val) {
-            best_val = equities[nn_indices[j]]; best_idx = nn_indices[j];
+        if (probs_out) probs_out[nn_indices[j]] = out;
+        double val = NeuralNetwork::compute_equity(out);
+        if (equities) equities[nn_indices[j]] = val;
+        if (val > best_val) {
+            best_val = val; best_idx = nn_indices[j];
         }
     }
     return best_idx;
@@ -2364,15 +2384,17 @@ int GamePlanPairStrategy::batch_evaluate_candidates_best_prob(
     const int n = static_cast<int>(candidates.size());
     if (n == 0) return -1;
     if (n == 1) {
-        GameResult result = check_game_over(candidates[0]);
-        if (result != GameResult::NOT_OVER) {
-            if (equities) equities[0] = terminal_equity(result);
-            if (best_probs_out) *best_probs_out = terminal_probs(result);
-        } else {
-            int nn_idx = select_nn_idx(pre_move_board);
-            auto probs = probs_with_nn(candidates[0], nn_idx);
-            if (best_probs_out) *best_probs_out = probs;
-            if (equities) equities[0] = NeuralNetwork::compute_equity(probs);
+        if (equities || best_probs_out) {
+            GameResult result = check_game_over(candidates[0]);
+            if (result != GameResult::NOT_OVER) {
+                if (equities) equities[0] = terminal_equity(result);
+                if (best_probs_out) *best_probs_out = terminal_probs(result);
+            } else {
+                int nn_idx = select_nn_idx(pre_move_board);
+                auto probs = probs_with_nn(candidates[0], nn_idx);
+                if (best_probs_out) *best_probs_out = probs;
+                if (equities) equities[0] = NeuralNetwork::compute_equity(probs);
+            }
         }
         return 0;
     }
@@ -2882,6 +2904,7 @@ int BackgameAwarePairStrategy::evaluate_candidates_equity(
 {
     const int n = static_cast<int>(candidates.size());
     if (n == 0) return -1;
+    if (n == 1 && !equities) return 0;
     int nn_idx = select_nn_idx(pre_move_board);
 
     double best_val = -1e30;
@@ -2890,7 +2913,7 @@ int BackgameAwarePairStrategy::evaluate_candidates_equity(
         GameResult result = check_game_over(candidates[i]);
         double val = (result != GameResult::NOT_OVER)
             ? terminal_equity(result) : evaluate_with_nn(candidates[i], nn_idx);
-        equities[i] = val;
+        if (equities) equities[i] = val;
         if (val > best_val) { best_val = val; best_idx = i; }
     }
     return best_idx;
@@ -2904,10 +2927,12 @@ int BackgameAwarePairStrategy::batch_evaluate_candidates_equity(
     const int n = static_cast<int>(candidates.size());
     if (n == 0) return -1;
     if (n == 1) {
-        GameResult result = check_game_over(candidates[0]);
-        equities[0] = (result != GameResult::NOT_OVER)
-            ? terminal_equity(result)
-            : evaluate_with_nn(candidates[0], select_nn_idx(pre_move_board));
+        if (equities) {
+            GameResult result = check_game_over(candidates[0]);
+            equities[0] = (result != GameResult::NOT_OVER)
+                ? terminal_equity(result)
+                : evaluate_with_nn(candidates[0], select_nn_idx(pre_move_board));
+        }
         return 0;
     }
 
@@ -2930,8 +2955,9 @@ int BackgameAwarePairStrategy::batch_evaluate_candidates_equity(
     for (int i = 0; i < n; ++i) {
         GameResult result = check_game_over(candidates[i]);
         if (result != GameResult::NOT_OVER) {
-            equities[i] = terminal_equity(result);
-            if (equities[i] > best_val) { best_val = equities[i]; best_idx = i; }
+            double val = terminal_equity(result);
+            if (equities) equities[i] = val;
+            if (val > best_val) { best_val = val; best_idx = i; }
         } else {
             nn_indices.push_back(i);
         }
@@ -2947,7 +2973,7 @@ int BackgameAwarePairStrategy::batch_evaluate_candidates_equity(
     for (int j = 0; j < nn_count; ++j) {
         const auto& out = group_out[j];
         double val = NeuralNetwork::compute_equity(out);
-        equities[nn_indices[j]] = val;
+        if (equities) equities[nn_indices[j]] = val;
         if (val > best_val) { best_val = val; best_idx = nn_indices[j]; }
     }
     return best_idx;
@@ -2962,14 +2988,17 @@ int BackgameAwarePairStrategy::batch_evaluate_candidates_equity_probs(
     const int n = static_cast<int>(candidates.size());
     if (n == 0) return -1;
     if (n == 1) {
-        GameResult result = check_game_over(candidates[0]);
-        if (result != GameResult::NOT_OVER) {
-            probs_out[0] = terminal_probs(result);
-            equities[0] = terminal_equity(result);
-        } else {
-            int nn_idx = select_nn_idx(pre_move_board);
-            probs_out[0] = probs_with_nn(candidates[0], nn_idx);
-            equities[0] = NeuralNetwork::compute_equity(probs_out[0]);
+        if (equities || probs_out) {
+            GameResult result = check_game_over(candidates[0]);
+            if (result != GameResult::NOT_OVER) {
+                if (probs_out) probs_out[0] = terminal_probs(result);
+                if (equities) equities[0] = terminal_equity(result);
+            } else {
+                int nn_idx = select_nn_idx(pre_move_board);
+                auto probs = probs_with_nn(candidates[0], nn_idx);
+                if (probs_out) probs_out[0] = probs;
+                if (equities) equities[0] = NeuralNetwork::compute_equity(probs);
+            }
         }
         return 0;
     }
@@ -2981,14 +3010,18 @@ int BackgameAwarePairStrategy::batch_evaluate_candidates_equity_probs(
         int bi = 0;
         for (int i = 0; i < n; ++i) {
             GameResult result = check_game_over(candidates[i]);
+            std::array<float, NUM_OUTPUTS> p;
+            double val;
             if (result != GameResult::NOT_OVER) {
-                probs_out[i] = terminal_probs(result);
-                equities[i] = terminal_equity(result);
+                p = terminal_probs(result);
+                val = terminal_equity(result);
             } else {
-                probs_out[i] = probs_with_nn(candidates[i], nn_idx);
-                equities[i] = NeuralNetwork::compute_equity(probs_out[i]);
+                p = probs_with_nn(candidates[i], nn_idx);
+                val = NeuralNetwork::compute_equity(p);
             }
-            if (equities[i] > bv) { bv = equities[i]; bi = i; }
+            if (probs_out) probs_out[i] = p;
+            if (equities) equities[i] = val;
+            if (val > bv) { bv = val; bi = i; }
         }
         return bi;
     }
@@ -3005,9 +3038,10 @@ int BackgameAwarePairStrategy::batch_evaluate_candidates_equity_probs(
     for (int i = 0; i < n; ++i) {
         GameResult result = check_game_over(candidates[i]);
         if (result != GameResult::NOT_OVER) {
-            probs_out[i] = terminal_probs(result);
-            equities[i] = terminal_equity(result);
-            if (equities[i] > best_val) { best_val = equities[i]; best_idx = i; }
+            double val = terminal_equity(result);
+            if (probs_out) probs_out[i] = terminal_probs(result);
+            if (equities) equities[i] = val;
+            if (val > best_val) { best_val = val; best_idx = i; }
         } else {
             nn_indices.push_back(i);
         }
@@ -3022,10 +3056,11 @@ int BackgameAwarePairStrategy::batch_evaluate_candidates_equity_probs(
 
     for (int j = 0; j < nn_count; ++j) {
         const auto& out = group_out[j];
-        probs_out[nn_indices[j]] = out;
-        equities[nn_indices[j]] = NeuralNetwork::compute_equity(out);
-        if (equities[nn_indices[j]] > best_val) {
-            best_val = equities[nn_indices[j]]; best_idx = nn_indices[j];
+        if (probs_out) probs_out[nn_indices[j]] = out;
+        double val = NeuralNetwork::compute_equity(out);
+        if (equities) equities[nn_indices[j]] = val;
+        if (val > best_val) {
+            best_val = val; best_idx = nn_indices[j];
         }
     }
     return best_idx;
@@ -3040,15 +3075,17 @@ int BackgameAwarePairStrategy::batch_evaluate_candidates_best_prob(
     const int n = static_cast<int>(candidates.size());
     if (n == 0) return -1;
     if (n == 1) {
-        GameResult result = check_game_over(candidates[0]);
-        if (result != GameResult::NOT_OVER) {
-            if (equities) equities[0] = terminal_equity(result);
-            if (best_probs_out) *best_probs_out = terminal_probs(result);
-        } else {
-            int nn_idx = select_nn_idx(pre_move_board);
-            auto probs = probs_with_nn(candidates[0], nn_idx);
-            if (best_probs_out) *best_probs_out = probs;
-            if (equities) equities[0] = NeuralNetwork::compute_equity(probs);
+        if (equities || best_probs_out) {
+            GameResult result = check_game_over(candidates[0]);
+            if (result != GameResult::NOT_OVER) {
+                if (equities) equities[0] = terminal_equity(result);
+                if (best_probs_out) *best_probs_out = terminal_probs(result);
+            } else {
+                int nn_idx = select_nn_idx(pre_move_board);
+                auto probs = probs_with_nn(candidates[0], nn_idx);
+                if (best_probs_out) *best_probs_out = probs;
+                if (equities) equities[0] = NeuralNetwork::compute_equity(probs);
+            }
         }
         return 0;
     }

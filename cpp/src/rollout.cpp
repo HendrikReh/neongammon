@@ -599,6 +599,27 @@ std::array<float, NUM_OUTPUTS> RolloutStrategy::best_move_probs_for_candidates(
     // result without bound (it is what produced negative rolled-out
     // backgammon probabilities in decided races).
     if (sel_cubes && n_sel_cubes > 0 && candidates.size() > 1) {
+        const bool is_base = (&strat == base_.get());
+        const bool is_base_bearoff = (base_bearoff_ && &strat == base_bearoff_.get());
+        if (is_base || is_base_bearoff) {
+            // Single batched pass: matches Strategy/BearoffStrategy::best_move_index_cubeful_multi
+            // for cubes[0] and reuses the winning candidate's probs directly instead of calling
+            // evaluate_probs() a second time.
+            const int n = static_cast<int>(candidates.size());
+            thread_local std::vector<std::array<float, NUM_OUTPUTS>> probs_per;
+            thread_local std::vector<float> cf_vals;
+            probs_per.resize(n);
+            cf_vals.resize(n);
+            strat.batch_evaluate_candidates_equity_probs(
+                candidates, board, nullptr, probs_per.data());
+            for (int i = 0; i < n; ++i) {
+                clamp_probs_to_board(probs_per[i], candidates[i]);
+                cf_vals[i] = cl2cf(probs_per[i], sel_cubes[0], sel_cube_x);
+            }
+            int idx = pick_best_with_tiebreak(cf_vals.data(), probs_per.data(), n);
+            if (best_index) *best_index = idx;
+            return probs_per[idx];
+        }
         std::array<int, 4> picks{0, 0, 0, 0};
         strat.best_move_index_cubeful_multi(
             candidates, board, sel_cubes,
@@ -3215,13 +3236,9 @@ void RolloutStrategy::best_move_index_cubeful_multi(
     // cubeful-1-ply favorite reaches the per-survivor rollout step.
 
     std::vector<std::array<float, NUM_OUTPUTS>> probs_per(n);
+    base_->batch_evaluate_candidates_equity_probs(
+        candidates, pre_move_board, nullptr, probs_per.data());
     for (int i = 0; i < n; ++i) {
-        GameResult r = check_game_over(candidates[i]);
-        if (r != GameResult::NOT_OVER) {
-            probs_per[i] = terminal_probs(r);
-        } else {
-            probs_per[i] = base_->evaluate_probs(candidates[i], pre_move_board);
-        }
         clamp_probs_to_board(probs_per[i], candidates[i]);
     }
 

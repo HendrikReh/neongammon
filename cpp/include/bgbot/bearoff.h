@@ -187,9 +187,11 @@ public:
     int best_move_index(const std::vector<Board>& candidates,
                         const Board& pre_move_board) const override;
 
-    // Cube-aware overrides. When all candidates are bearoff positions, use
-    // exact DB probs and apply cl2cf per cube directly (no NN call). Otherwise
-    // delegate to the wrapped base strategy's cubeful selection.
+    // Cube-aware overrides. Non-bearoff candidate sets delegate directly to
+    // base_->best_move_index_cubeful*; all-bearoff and mixed bearoff/non-bearoff
+    // sets evaluate via batch_evaluate_candidates_equity_probs (exact DB probs
+    // for bearoff hits + batched base NN eval for non-bearoff candidates), clamp,
+    // and select with cl2cf + pick_best_with_tiebreak.
     int best_move_index_cubeful(
         const std::vector<Board>& candidates,
         const Board& pre_move_board,
@@ -203,6 +205,31 @@ public:
         int n_cubes,
         float cube_x,
         int* out_indices) const override;
+
+    // Batch evaluation overrides: forward directly to base_ with zero copy when
+    // no candidate hits the bearoff DB; otherwise evaluate terminals and DB hits
+    // directly and batch any remaining non-bearoff candidates in one base_ call.
+    int evaluate_candidates_equity(
+        const std::vector<Board>& candidates,
+        const Board& pre_move_board,
+        double* equities) const override;
+
+    int batch_evaluate_candidates_equity(
+        const std::vector<Board>& candidates,
+        const Board& pre_move_board,
+        double* equities) const override;
+
+    int batch_evaluate_candidates_equity_probs(
+        const std::vector<Board>& candidates,
+        const Board& pre_move_board,
+        double* equities,
+        std::array<float, NUM_OUTPUTS>* probs_out) const override;
+
+    int batch_evaluate_candidates_best_prob(
+        const std::vector<Board>& candidates,
+        const Board& pre_move_board,
+        double* equities,
+        std::array<float, NUM_OUTPUTS>* best_probs_out) const override;
 
     const Strategy& base() const { return *base_; }
     const BearoffDB& db() const { return *db_; }

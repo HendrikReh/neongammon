@@ -879,9 +879,21 @@ int BearoffStrategy::best_move_index_cubeful(
     const CubeInfo& ci,
     float cube_x) const
 {
-    int out = 0;
-    best_move_index_cubeful_multi(candidates, pre_move_board, &ci, 1, cube_x, &out);
-    return out;
+    if (candidates.empty()) return 0;
+    if (!db_ || !db_->is_loaded() || wraps_same_db_) {
+        return base_->best_move_index_cubeful(candidates, pre_move_board, ci, cube_x);
+    }
+    bool any_bearoff = false;
+    for (const auto& c : candidates) {
+        if (db_->is_bearoff(c)) {
+            any_bearoff = true;
+            break;
+        }
+    }
+    if (!any_bearoff) {
+        return base_->best_move_index_cubeful(candidates, pre_move_board, ci, cube_x);
+    }
+    return Strategy::best_move_index_cubeful(candidates, pre_move_board, ci, cube_x);
 }
 
 void BearoffStrategy::best_move_index_cubeful_multi(
@@ -892,39 +904,395 @@ void BearoffStrategy::best_move_index_cubeful_multi(
     float cube_x,
     int* out_indices) const
 {
-    if (candidates.empty()) return;
-
-    bool all_bearoff = true;
-    for (const auto& c : candidates) {
-        if (!db_->is_bearoff(c)) { all_bearoff = false; break; }
-    }
-
-    if (!all_bearoff) {
+    if (candidates.empty() || n_cubes <= 0) return;
+    if (!db_ || !db_->is_loaded() || wraps_same_db_) {
         base_->best_move_index_cubeful_multi(candidates, pre_move_board,
-                                              cubes, n_cubes, cube_x, out_indices);
+                                             cubes, n_cubes, cube_x, out_indices);
         return;
     }
+    bool any_bearoff = false;
+    for (const auto& c : candidates) {
+        if (db_->is_bearoff(c)) {
+            any_bearoff = true;
+            break;
+        }
+    }
+    if (!any_bearoff) {
+        base_->best_move_index_cubeful_multi(candidates, pre_move_board,
+                                             cubes, n_cubes, cube_x, out_indices);
+        return;
+    }
+    Strategy::best_move_index_cubeful_multi(candidates, pre_move_board,
+                                            cubes, n_cubes, cube_x, out_indices);
+}
 
-    // All bearoff: look up exact probs once per candidate, then loop cl2cf
-    // per cube state. No NN call needed.
-    const int n = static_cast<int>(candidates.size());
-    std::vector<std::array<float, NUM_OUTPUTS>> probs_per(n);
-    for (int i = 0; i < n; ++i) {
-        probs_per[i] = db_->lookup_probs(candidates[i], /*post_move=*/true);
+// ----- Batch evaluation overrides -----
+
+int BearoffStrategy::evaluate_candidates_equity(
+    const std::vector<Board>& candidates,
+    const Board& pre_move_board,
+    double* equities) const
+{
+    if (!db_ || !db_->is_loaded() || wraps_same_db_ || candidates.empty()) {
+        return base_->evaluate_candidates_equity(candidates, pre_move_board, equities);
     }
 
-    for (int c = 0; c < n_cubes; ++c) {
+    const int n = static_cast<int>(candidates.size());
+    bool any_bearoff = false;
+    bool all_handled = true;
+    for (int i = 0; i < n; ++i) {
+        if (db_->is_bearoff(candidates[i])) {
+            any_bearoff = true;
+        } else if (check_game_over(candidates[i]) == GameResult::NOT_OVER) {
+            all_handled = false;
+        }
+    }
+    if (!any_bearoff) {
+        return base_->evaluate_candidates_equity(candidates, pre_move_board, equities);
+    }
+
+    if (all_handled) {
         int best_idx = 0;
-        float best_cf = -std::numeric_limits<float>::infinity();
+        double best_eq = -1e30;
         for (int i = 0; i < n; ++i) {
-            float cf = cl2cf(probs_per[i], cubes[c], cube_x);
-            if (cf > best_cf) {
-                best_cf = cf;
+            GameResult r = check_game_over(candidates[i]);
+            auto probs = (r != GameResult::NOT_OVER)
+                ? terminal_probs(r)
+                : db_->lookup_probs(candidates[i], /*post_move=*/true);
+            double eq = compute_equity(probs);
+            if (equities) equities[i] = eq;
+            if (eq > best_eq) {
+                best_eq = eq;
                 best_idx = i;
             }
         }
-        out_indices[c] = best_idx;
+        return best_idx;
     }
+
+    // Mixed bearoff + non-bearoff: use local buffers for re-entrancy safety
+    // (e.g., nested BearoffStrategy over a different DB).
+    std::vector<double> local_eq;
+    double* eq_dst = equities;
+    if (!eq_dst) {
+        local_eq.resize(n);
+        eq_dst = local_eq.data();
+    }
+    std::vector<int> nn_indices;
+    std::vector<Board> nn_boards;
+    nn_indices.reserve(n);
+    nn_boards.reserve(n);
+
+    for (int i = 0; i < n; ++i) {
+        GameResult r = check_game_over(candidates[i]);
+        if (r != GameResult::NOT_OVER) {
+            eq_dst[i] = compute_equity(terminal_probs(r));
+        } else if (db_->is_bearoff(candidates[i])) {
+            eq_dst[i] = compute_equity(db_->lookup_probs(candidates[i], /*post_move=*/true));
+        } else {
+            nn_indices.push_back(i);
+            nn_boards.push_back(candidates[i]);
+        }
+    }
+
+    std::vector<double> nn_eq(nn_boards.size());
+    base_->evaluate_candidates_equity(nn_boards, pre_move_board, nn_eq.data());
+    for (size_t j = 0; j < nn_indices.size(); ++j) {
+        eq_dst[nn_indices[j]] = nn_eq[j];
+    }
+
+    int best_idx = 0;
+    double best_eq = -1e30;
+    for (int i = 0; i < n; ++i) {
+        if (eq_dst[i] > best_eq) {
+            best_eq = eq_dst[i];
+            best_idx = i;
+        }
+    }
+    return best_idx;
+}
+
+int BearoffStrategy::batch_evaluate_candidates_equity(
+    const std::vector<Board>& candidates,
+    const Board& pre_move_board,
+    double* equities) const
+{
+    if (!db_ || !db_->is_loaded() || wraps_same_db_ || candidates.empty()) {
+        return base_->batch_evaluate_candidates_equity(candidates, pre_move_board, equities);
+    }
+
+    const int n = static_cast<int>(candidates.size());
+    bool any_bearoff = false;
+    bool all_handled = true;
+    for (int i = 0; i < n; ++i) {
+        if (db_->is_bearoff(candidates[i])) {
+            any_bearoff = true;
+        } else if (check_game_over(candidates[i]) == GameResult::NOT_OVER) {
+            all_handled = false;
+        }
+    }
+    if (!any_bearoff) {
+        return base_->batch_evaluate_candidates_equity(candidates, pre_move_board, equities);
+    }
+
+    if (all_handled) {
+        int best_idx = 0;
+        double best_eq = -1e30;
+        for (int i = 0; i < n; ++i) {
+            GameResult r = check_game_over(candidates[i]);
+            auto probs = (r != GameResult::NOT_OVER)
+                ? terminal_probs(r)
+                : db_->lookup_probs(candidates[i], /*post_move=*/true);
+            double eq = compute_equity(probs);
+            if (equities) equities[i] = eq;
+            if (eq > best_eq) {
+                best_eq = eq;
+                best_idx = i;
+            }
+        }
+        return best_idx;
+    }
+
+    std::vector<double> local_eq;
+    double* eq_dst = equities;
+    if (!eq_dst) {
+        local_eq.resize(n);
+        eq_dst = local_eq.data();
+    }
+    std::vector<int> nn_indices;
+    std::vector<Board> nn_boards;
+    nn_indices.reserve(n);
+    nn_boards.reserve(n);
+
+    for (int i = 0; i < n; ++i) {
+        GameResult r = check_game_over(candidates[i]);
+        if (r != GameResult::NOT_OVER) {
+            eq_dst[i] = compute_equity(terminal_probs(r));
+        } else if (db_->is_bearoff(candidates[i])) {
+            eq_dst[i] = compute_equity(db_->lookup_probs(candidates[i], /*post_move=*/true));
+        } else {
+            nn_indices.push_back(i);
+            nn_boards.push_back(candidates[i]);
+        }
+    }
+
+    std::vector<double> nn_eq(nn_boards.size());
+    base_->batch_evaluate_candidates_equity(nn_boards, pre_move_board, nn_eq.data());
+    for (size_t j = 0; j < nn_indices.size(); ++j) {
+        eq_dst[nn_indices[j]] = nn_eq[j];
+    }
+
+    int best_idx = 0;
+    double best_eq = -1e30;
+    for (int i = 0; i < n; ++i) {
+        if (eq_dst[i] > best_eq) {
+            best_eq = eq_dst[i];
+            best_idx = i;
+        }
+    }
+    return best_idx;
+}
+
+int BearoffStrategy::batch_evaluate_candidates_equity_probs(
+    const std::vector<Board>& candidates,
+    const Board& pre_move_board,
+    double* equities,
+    std::array<float, NUM_OUTPUTS>* probs_out) const
+{
+    if (!db_ || !db_->is_loaded() || wraps_same_db_ || candidates.empty()) {
+        return base_->batch_evaluate_candidates_equity_probs(
+            candidates, pre_move_board, equities, probs_out);
+    }
+
+    const int n = static_cast<int>(candidates.size());
+    bool any_bearoff = false;
+    bool all_handled = true;
+    for (int i = 0; i < n; ++i) {
+        if (db_->is_bearoff(candidates[i])) {
+            any_bearoff = true;
+        } else if (check_game_over(candidates[i]) == GameResult::NOT_OVER) {
+            all_handled = false;
+        }
+    }
+    if (!any_bearoff) {
+        return base_->batch_evaluate_candidates_equity_probs(
+            candidates, pre_move_board, equities, probs_out);
+    }
+
+    if (all_handled) {
+        int best_idx = 0;
+        double best_eq = -1e30;
+        for (int i = 0; i < n; ++i) {
+            GameResult r = check_game_over(candidates[i]);
+            auto probs = (r != GameResult::NOT_OVER)
+                ? terminal_probs(r)
+                : db_->lookup_probs(candidates[i], /*post_move=*/true);
+            double eq = compute_equity(probs);
+            if (equities) equities[i] = eq;
+            if (probs_out) probs_out[i] = probs;
+            if (eq > best_eq) {
+                best_eq = eq;
+                best_idx = i;
+            }
+        }
+        return best_idx;
+    }
+
+    std::vector<double> local_eq;
+    double* eq_dst = equities;
+    if (!eq_dst) {
+        local_eq.resize(n);
+        eq_dst = local_eq.data();
+    }
+    std::vector<int> nn_indices;
+    std::vector<Board> nn_boards;
+    nn_indices.reserve(n);
+    nn_boards.reserve(n);
+
+    for (int i = 0; i < n; ++i) {
+        GameResult r = check_game_over(candidates[i]);
+        if (r != GameResult::NOT_OVER) {
+            auto probs = terminal_probs(r);
+            eq_dst[i] = compute_equity(probs);
+            if (probs_out) probs_out[i] = probs;
+        } else if (db_->is_bearoff(candidates[i])) {
+            auto probs = db_->lookup_probs(candidates[i], /*post_move=*/true);
+            eq_dst[i] = compute_equity(probs);
+            if (probs_out) probs_out[i] = probs;
+        } else {
+            nn_indices.push_back(i);
+            nn_boards.push_back(candidates[i]);
+        }
+    }
+
+    std::vector<double> nn_eq(nn_boards.size());
+    std::vector<std::array<float, NUM_OUTPUTS>> nn_probs;
+    if (probs_out) nn_probs.resize(nn_boards.size());
+    base_->batch_evaluate_candidates_equity_probs(
+        nn_boards, pre_move_board, nn_eq.data(),
+        probs_out ? nn_probs.data() : nullptr);
+    for (size_t j = 0; j < nn_indices.size(); ++j) {
+        eq_dst[nn_indices[j]] = nn_eq[j];
+        if (probs_out) probs_out[nn_indices[j]] = nn_probs[j];
+    }
+
+    int best_idx = 0;
+    double best_eq = -1e30;
+    for (int i = 0; i < n; ++i) {
+        if (eq_dst[i] > best_eq) {
+            best_eq = eq_dst[i];
+            best_idx = i;
+        }
+    }
+    return best_idx;
+}
+
+int BearoffStrategy::batch_evaluate_candidates_best_prob(
+    const std::vector<Board>& candidates,
+    const Board& pre_move_board,
+    double* equities,
+    std::array<float, NUM_OUTPUTS>* best_probs_out) const
+{
+    if (!db_ || !db_->is_loaded() || wraps_same_db_ || candidates.empty()) {
+        return base_->batch_evaluate_candidates_best_prob(
+            candidates, pre_move_board, equities, best_probs_out);
+    }
+
+    const int n = static_cast<int>(candidates.size());
+    bool any_bearoff = false;
+    bool all_handled = true;
+    for (int i = 0; i < n; ++i) {
+        if (db_->is_bearoff(candidates[i])) {
+            any_bearoff = true;
+        } else if (check_game_over(candidates[i]) == GameResult::NOT_OVER) {
+            all_handled = false;
+        }
+    }
+    if (!any_bearoff) {
+        return base_->batch_evaluate_candidates_best_prob(
+            candidates, pre_move_board, equities, best_probs_out);
+    }
+
+    if (all_handled) {
+        int best_idx = 0;
+        double best_eq = -1e30;
+        std::array<float, NUM_OUTPUTS> best_probs{};
+        for (int i = 0; i < n; ++i) {
+            GameResult r = check_game_over(candidates[i]);
+            auto probs = (r != GameResult::NOT_OVER)
+                ? terminal_probs(r)
+                : db_->lookup_probs(candidates[i], /*post_move=*/true);
+            double eq = compute_equity(probs);
+            if (equities) equities[i] = eq;
+            if (eq > best_eq) {
+                best_eq = eq;
+                best_idx = i;
+                best_probs = probs;
+            }
+        }
+        if (best_probs_out) *best_probs_out = best_probs;
+        return best_idx;
+    }
+
+    bool has_best = false;
+    int best_idx = 0;
+    double best_eq = -1e30;
+    std::array<float, NUM_OUTPUTS> best_probs{};
+    std::vector<int> nn_indices;
+    std::vector<Board> nn_boards;
+    nn_indices.reserve(n);
+    nn_boards.reserve(n);
+
+    for (int i = 0; i < n; ++i) {
+        GameResult r = check_game_over(candidates[i]);
+        if (r != GameResult::NOT_OVER) {
+            auto probs = terminal_probs(r);
+            double eq = compute_equity(probs);
+            if (equities) equities[i] = eq;
+            if (!has_best || eq > best_eq) {
+                has_best = true;
+                best_eq = eq;
+                best_idx = i;
+                best_probs = probs;
+            }
+        } else if (db_->is_bearoff(candidates[i])) {
+            auto probs = db_->lookup_probs(candidates[i], /*post_move=*/true);
+            double eq = compute_equity(probs);
+            if (equities) equities[i] = eq;
+            if (!has_best || eq > best_eq) {
+                has_best = true;
+                best_eq = eq;
+                best_idx = i;
+                best_probs = probs;
+            }
+        } else {
+            nn_indices.push_back(i);
+            nn_boards.push_back(candidates[i]);
+        }
+    }
+
+    std::vector<double> nn_eq(nn_boards.size());
+    std::array<float, NUM_OUTPUTS> nn_best_probs{};
+    int nn_best = base_->batch_evaluate_candidates_best_prob(
+        nn_boards, pre_move_board, nn_eq.data(),
+        best_probs_out ? &nn_best_probs : nullptr);
+    if (equities) {
+        for (size_t j = 0; j < nn_indices.size(); ++j) {
+            equities[nn_indices[j]] = nn_eq[j];
+        }
+    }
+    if (nn_best >= 0 && nn_best < static_cast<int>(nn_indices.size())) {
+        const int orig_idx = nn_indices[nn_best];
+        const double nn_best_eq = nn_eq[nn_best];
+        if (!has_best || nn_best_eq > best_eq ||
+            (nn_best_eq == best_eq && orig_idx < best_idx)) {
+            best_eq = nn_best_eq;
+            best_idx = orig_idx;
+            best_probs = nn_best_probs;
+        }
+    }
+
+    if (best_probs_out) *best_probs_out = best_probs;
+    return best_idx;
 }
 
 } // namespace bgbot

@@ -4,10 +4,8 @@
 #include "bgbot/board.h"
 #include "bgbot/cube.h"        // for CubeInfo + cl2cf (cube-aware defaults)
 #include "bgbot/encoding.h"
-#include "bgbot/neural_net.h"
 #include <limits>
 #include <algorithm>
-#include <typeinfo>
 #include <vector>
 
 namespace bgbot {
@@ -67,17 +65,20 @@ int Strategy::best_move_index_cubeful(
     float cube_x) const
 {
     const int n = static_cast<int>(candidates.size());
-    std::vector<std::array<float, NUM_OUTPUTS>> probs_per(n);
-    std::vector<double> equities(n);
+    if (n <= 1) return 0;
+
+    thread_local std::vector<std::array<float, NUM_OUTPUTS>> probs_per;
+    thread_local std::vector<float> cf_vals;
+    probs_per.resize(n);
+    cf_vals.resize(n);
     batch_evaluate_candidates_equity_probs(candidates, pre_move_board,
-                                           equities.data(), probs_per.data());
+                                           nullptr, probs_per.data());
 
     // Same ranking rule as best_move_index_cubeful_multi below -- cubeful
     // equity, ties broken on money cubeless equity. These two must never
     // diverge: they are the cube-aware selection entry points, and a rollout's
     // VR mean and its played move have to agree on the rule or luck stops
     // having zero mean.
-    std::vector<float> cf_vals(n);
     for (int i = 0; i < n; ++i) {
         clamp_probs_to_board(probs_per[i], candidates[i]);
         cf_vals[i] = cl2cf(probs_per[i], ci, cube_x);
@@ -96,20 +97,18 @@ void Strategy::best_move_index_cubeful_multi(
     // Evaluate cubeless probs once per candidate (expensive part — NN batch),
     // then loop cl2cf per cube state (cheap).
     const int n = static_cast<int>(candidates.size());
-    std::vector<std::array<float, NUM_OUTPUTS>> probs_per(n);
-    if (typeid(*this) == typeid(BackgameAwarePairStrategy)) {
-        // Siblings share their pre-move network and batched evaluation.
-        thread_local std::vector<double> equities;
-        equities.resize(n);
-        batch_evaluate_candidates_equity_probs(
-            candidates, pre_move_board, equities.data(), probs_per.data());
-    } else {
-        for (int i = 0; i < n; ++i) {
-            const GameResult result = check_game_over(candidates[i]);
-            probs_per[i] = result == GameResult::NOT_OVER
-                ? evaluate_probs(candidates[i], pre_move_board) : terminal_probs(result);
-        }
+    if (n == 0 || n_cubes <= 0) return;
+    if (n == 1) {
+        for (int c = 0; c < n_cubes; ++c) out_indices[c] = 0;
+        return;
     }
+
+    thread_local std::vector<std::array<float, NUM_OUTPUTS>> probs_per;
+    thread_local std::vector<float> cf_vals;
+    probs_per.resize(n);
+    cf_vals.resize(n);
+    batch_evaluate_candidates_equity_probs(
+        candidates, pre_move_board, nullptr, probs_per.data());
     for (int i = 0; i < n; ++i) {
         clamp_probs_to_board(probs_per[i], candidates[i]);
     }
@@ -117,7 +116,6 @@ void Strategy::best_move_index_cubeful_multi(
     // Rank by cubeful equity, breaking exact ties on money cubeless equity
     // (see pick_best_with_tiebreak in cube.h). probs_per is already in hand,
     // so the tie-break costs a handful of flops per candidate.
-    std::vector<float> cf_vals(n);
     for (int c = 0; c < n_cubes; ++c) {
         for (int i = 0; i < n; ++i) {
             cf_vals[i] = cl2cf(probs_per[i], cubes[c], cube_x);
