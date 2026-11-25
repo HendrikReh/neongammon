@@ -996,7 +996,8 @@ unnecessary — the VR correction dominates the accuracy gain.
 ### Cross-Thread Variance Reduction Cache (`VarianceReductionCache`)
 
 `Move1Cache` also owns an optional 2,048-slot lock-free `VarianceReductionCache`
-allocated once per rollout when `enable_vr && truncation_depth > 2 && n_trials >= 288`.
+allocated once per rollout when VR is enabled, the batch has at least 288 trials,
+and the trials run to completion (`truncation_depth = 0`) or past two half-moves.
 Different trials frequently reach the same post-opening board at moves 2+.
 Entries are keyed by `(board, active selection cubes [including contact_x and
 contact_x_pip_slope], cube_x)` and store all 21 `roll_best_probs` and
@@ -1004,6 +1005,20 @@ contact_x_pip_slope], cube_x)` and store all 21 `roll_best_probs` and
 then `store(2, release)`). On a hit, the trial skips both VR evaluation and
 move generation for the 20 unrolled dice combinations, generating only the
 actually rolled dice's candidates in canonical `ALL_ROLLS` die order.
+
+On an M4 Pro (arm64, Release with Accelerate), we compared `df95fbb` and the
+full-game cache change using Stage 11 and the contact position `_CONTACT_CUBE`
+in [test_rollout_prefill.py](../tests/test_rollout_prefill.py). We timed
+`BgBotAnalyzer.cube_action(board)` on the centered money cube with
+`eval_level="rollout", cubeful=True, n_trials=288, truncation_depth=0,
+decision_ply=1, parallel_threads=4, seed=42, ultra_late_threshold=9999,
+target_se=0, max_batches=1`. Across eight pairs in alternating order, each
+in fresh processes, median call time went from 0.798 s to 0.792 s. The
+difference falls within the observed timing variation (0.766–0.819 s before,
+0.759–0.806 s after). Median process peak RSS, measured with macOS
+`getrusage(RUSAGE_SELF).ru_maxrss` after the call, went from 173.1 to
+174.9 MiB. Every result field matched exactly. A separate Clang coverage run
+on the same position counted 58 post-opening VR cache hits, up from zero.
 
 ### Move-1 Cube-Decision Cache
 
@@ -1525,7 +1540,7 @@ default `parallel_threads=0`, both stages use the budget resolved from
 |----------|-------|-------------|
 | Trial chunk size | 1 or 8 (`trial_chunk_size`) | `1` for full rollouts (`truncation_depth <= 0`) or `n_trials / n_threads < 32`; `8` otherwise |
 | Trial progress interval | `max(min, trials / 100)` (`trial_report_interval`) | `min = 8` for parallel full rollouts, `1` otherwise; only active when a progress callback is provided |
-| VarianceReductionCache capacity | 2,048 | Lock-free per-rollout VR cache for moves 2+ (`enable_vr && truncation_depth > 2 && n_trials >= 288`) |
+| VarianceReductionCache capacity | 2,048 | Slots shared across trials in the [post-opening VR cache](#cross-thread-variance-reduction-cache-variancereductioncache) |
 | Internal filter (N-ply trials) | {2, 0.03} | MoveFilter inside trial MultiPly strategies |
 | Deep pre-filter (cubeful recursion) | 16 → 14 | Built-in PubEval prune at sub-entry-ply nodes of rollout-internal cubeful evaluations, including the dead-cube cubeless trees (see [docs/multi-ply.md](multi-ply.md#6-move-selection-within-the-cubeful-recursion)) |
 | VR pre-filter threshold | 0.12 | 1-ply threshold for N-ply VR candidate narrowing |

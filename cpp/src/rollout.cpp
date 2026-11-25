@@ -234,7 +234,8 @@ RolloutStrategy::Move1Cache::Move1Cache(const RolloutConfig& config) {
         cd_state[i].store(0, std::memory_order_relaxed);
     }
     // Allocate once per rollout. Short or low-trial runs have limited reuse.
-    if (config.enable_vr && config.truncation_depth > 2 && config.n_trials >= 288) {
+    if (config.enable_vr && config.n_trials >= 288 &&
+        (config.truncation_depth == 0 || config.truncation_depth > 2)) {
         vr_cache = std::make_unique<VarianceReductionCache>();
     }
 }

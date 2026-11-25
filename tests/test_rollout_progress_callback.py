@@ -53,6 +53,8 @@ _CHILD_TIMEOUT_S = 90
 # trials and therefore actually reports progress.
 _BOARD = [1, -2, 0, 0, 2, 2, 3, 0, 3, 0, 0, 2, -3, 2, -1, 0, 0, 0,
           -2, -2, -2, -2, 0, 1, 0, 0]
+_RACE = [0, 1, 0, 3, 3, 3, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0,
+         -1, -2, -4, -1, -3, -1, -2, 0]
 
 _PREAMBLE = """
 import os, sys
@@ -213,13 +215,30 @@ def test_full_game_cube_progress_cadence(threads, reports_per_batch, target_se, 
 
     # An odd batch size exercises the final partial notification; the tight
     # target exercises the same reporting policy in a second full-game batch.
-    board = [0, 1, 0, 3, 3, 3, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0,
-             -1, -2, -4, -1, -3, -1, -2, 0]
     analyzer = BgBotAnalyzer(eval_level="rollout", n_trials=37, truncation_depth=0,
                              parallel_threads=threads, target_se=target_se, max_batches=2, seed=42)
     reports = []
-    result = analyzer.cube_action(board, progress_callback=lambda done, total, partial: reports.append((done, total)))
+    result = analyzer.cube_action(_RACE, progress_callback=lambda done, total, partial: reports.append((done, total)))
     assert result.equity_nd_se > target_se
     assert len(reports) == reports_per_batch * batches
     assert reports.count((37, 37)) == batches
     assert all(1 <= done <= total == 37 for done, total in reports)
+
+
+def test_cancel_and_rerun_full_game_with_vr_cache():
+    from neongammon import BgBotAnalyzer, RolloutCancelled
+
+    # At 288 trials workers share the post-opening VR table for a full game.
+    options = dict(eval_level="rollout", n_trials=288, truncation_depth=0, seed=42)
+    parallel = BgBotAnalyzer(parallel_threads=4, **options)
+
+    def cancel_after_trials(done, total, partial):
+        if 0 < done < total:
+            parallel.cancel()
+
+    with pytest.raises(RolloutCancelled):
+        parallel.cube_action(_RACE, progress_callback=cancel_after_trials)
+
+    parallel.reset_cancel()
+    expected = BgBotAnalyzer(parallel_threads=1, **options).cube_action(_RACE)
+    assert parallel.cube_action(_RACE) == expected
