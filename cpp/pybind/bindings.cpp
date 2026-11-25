@@ -3107,11 +3107,13 @@ PYBIND11_MODULE(bgbot_cpp, m) {
        py::arg("away1"), py::arg("away2"), py::arg("is_crawford") = false);
 
     m.def("can_double_match", [](int away1, int away2, int cube_value,
-                                  CubeOwner owner, bool is_crawford) {
-        return can_double_match(away1, away2, cube_value, owner, is_crawford);
-    }, "Can the player on roll legally double in match play?",
+                                  CubeOwner owner, bool is_crawford, int max_cube_value) {
+        CubeInfo cube{cube_value, owner, {away1, away2, is_crawford}};
+        cube.max_cube_value = max_cube_value;
+        return can_double(cube);
+    }, "Can the player on roll double at this match score or in money play (0, 0)?",
        py::arg("away1"), py::arg("away2"), py::arg("cube_value"),
-       py::arg("owner"), py::arg("is_crawford"));
+       py::arg("owner"), py::arg("is_crawford"), py::arg("max_cube_value") = 0);
 
     m.def("cubeless_mwc", [](const std::array<float, 5>& probs,
                               int away1, int away2, int cube_value, bool is_crawford) {

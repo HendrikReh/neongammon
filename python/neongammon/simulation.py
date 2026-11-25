@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import random
 from typing import Callable
 
-from .board import STARTING_BOARD, check_game_over, flip_board, possible_moves
+from .board import STARTING_BOARD, can_double_match, check_game_over, flip_board, possible_moves
 
 
 class SimulationCancelled(Exception):
@@ -171,7 +171,8 @@ def _play_game(seed, cfg, players, cancel):
         turn = {'turn': number, 'player': active, 'board': list(board),
                 **context, 'cube_action': None, 'dice': None, 'post_board': None}
         turns.append(turn)
-        if not opening and not cfg.is_crawford and owner != 'opponent' and cube < cfg.max_cube_value:
+        if not opening and can_double_match(context['away1'], context['away2'], cube, owner,
+                                            cfg.is_crawford, max_cube_value=cfg.max_cube_value):
             offer = _decide(players[active - 1], board, context)
             turn['cube_action'] = 'no_double'
             if offer.should_double:

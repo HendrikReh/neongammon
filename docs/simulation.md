@@ -33,6 +33,10 @@ Unlimited games default to Jacoby and a maximum cube of 1024. Jacoby suppresses
 gammons/backgammons only while the cube remains centered. Pass awards the cube
 before doubling; taking doubles the cube and gives ownership to the taker.
 Only the owner or either player with a centered cube can offer a double.
+Before asking a policy, the simulator checks cube ownership, the cube cap,
+Crawford status and whether the roller can already win the match with a single
+at the current cube value. An ineligible roller proceeds to checker play.
+
 Matches start at 0-0, use score-aware evaluations, disable Jacoby, apply Crawford
 once (including the one-point match), and resume doubling after Crawford.
 Scores cap at the match target, while each game retains raw `points` separately
