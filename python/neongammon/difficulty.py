@@ -122,9 +122,7 @@ class DifficultyPolicy:
         cap = context.get("max_cube_value", 0)
         away1, away2 = context.get("away1", 0), context.get("away2", 0)
         crawford = context.get("is_crawford", False)
-        if crawford or cube_owner == "opponent" or (cap and cube_value >= cap):
-            return decision
-        if away1 and not can_double_match(away1, away2, cube_value, cube_owner, crawford):
+        if not can_double_match(away1, away2, cube_value, cube_owner, crawford, max_cube_value=cap):
             return decision
         double_gap, take_gap = _cube_gaps(decision)
         flip_double = self._rng.random() < _cube_error_probability(double_gap, profile)

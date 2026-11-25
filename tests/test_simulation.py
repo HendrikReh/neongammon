@@ -1,7 +1,7 @@
 """Rules tests plus real native-engine seeded transcript replay."""
 from types import SimpleNamespace as NS
 import pytest
-from neongammon import BgBotAnalyzer, GameConfig, STARTING_BOARD, simulate_game, simulate_match
+from neongammon import BgBotAnalyzer, GameConfig, STARTING_BOARD, can_double_match, simulate_game, simulate_match
 from neongammon import simulation as sim
 
 
@@ -46,6 +46,40 @@ def test_pass_uses_undoubled_cube_and_responder_policy():
     assert result['turns'][0]['dice'] is None
     assert not any(k == 'checker' for k, _ in proposer.calls)
     assert responder.calls[0][1]['cube_owner'] == 'player'
+
+
+@pytest.mark.parametrize("roller", [1, 2])
+@pytest.mark.parametrize("roller_points,opponent_points,eligible", [(3, 0, False), (0, 3, True)])
+def test_match_score_gates_cube_policy(roller, roller_points, opponent_points, eligible):
+    # One checker on each ace point guarantees the game ends on the first turn.
+    board = [0] * 26
+    board[1], board[24] = 1, -1
+    proposer, responder = Policy(double=True), Policy(take=False)
+    scores = (roller_points, opponent_points) if roller == 1 else (opponent_points, roller_points)
+    players = (proposer, responder) if roller == 1 else (responder, proposer)
+    result = simulate_game(players=players, config=GameConfig(
+        start_board=tuple(board), player_on_roll=roller, match_length=5,
+        score1=scores[0], score2=scores[1], cube_value=2, cube_owner="player"))
+
+    assert can_double_match(5 - roller_points, 5 - opponent_points, 2, "player") == eligible
+    assert result["winner"] == roller
+    assert result["points"] == 2
+    if eligible:
+        assert result["termination"] == "pass"
+        assert [action for action, _ in proposer.calls] == ["cube"]
+        assert [action for action, _ in responder.calls] == ["cube"]
+    else:
+        assert result["termination"] == "bearoff"
+        assert result["turns"][0]["cube_action"] is None
+        assert [action for action, _ in proposer.calls] == ["checker"]
+        assert responder.calls == []
+
+
+@pytest.mark.parametrize("owner,eligible", [("centered", True), ("player", True), ("opponent", False)])
+def test_money_cube_ownership_and_cap(owner, eligible):
+    assert can_double_match(0, 0, 2, owner) == eligible
+    assert can_double_match(0, 0, 2, owner, max_cube_value=4) == eligible
+    assert not can_double_match(0, 0, 2, owner, max_cube_value=2)
 
 
 def test_take_flips_ownership_and_never_redoubles_nonowner():

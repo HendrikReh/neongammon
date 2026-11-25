@@ -19,6 +19,9 @@ Timings below were measured on an M4 Pro Mac mini (10P+4E cores).
 
 ## [Unreleased]
 
+- Simulation and the public cube eligibility helper now apply the engine’s
+  score, ownership, Crawford and cube-cap rules before an offer.
+
 - Added recursive cube batches, shared checker/cube/rollout models, public
   top-two promotion, difficulty evaluator injection and policy reseeding.
 - Full Strength defaults to 3-ply checker decisions and 2-ply cube decisions.

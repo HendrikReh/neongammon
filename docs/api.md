@@ -347,7 +347,7 @@ Board manipulation, move generation, and game state queries.
 | `check_game_over(board)` | 0=not over, ±1/±2/±3 = single/gammon/backgammon |
 | `is_race(board)` | True if contact is broken |
 | `is_crashed(board)` | True if position is crashed |
-| `can_double_match(away1, away2, cube_value, owner, is_crawford=False)` | Whether doubling is legal at a match score |
+| `can_double_match(away1, away2, cube_value, owner, is_crawford=False, *, max_cube_value=0)` | Whether the player on roll can double at this score and cube cap. Use (0, 0) for money play and 0 for an unlimited cube. |
 | `invert_probs(probs)` | Swap player/opponent probabilities |
 | `STARTING_BOARD` | Standard 26-element starting position |
 
