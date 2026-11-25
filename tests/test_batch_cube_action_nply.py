@@ -60,3 +60,15 @@ def test_public_top_two_matches_full_three_ply_at_same_root():
         assert actual.probs == reference.probs
         assert actual.equity_diff == actual.equity - promoted[0].equity
     assert shallow.top_two_promote(BEAROFF, moves) == (moves, "2-ply")
+
+@pytest.mark.parametrize("decision_only", [False, True])
+def test_four_ply_batch_matches_scalar(decision_only):
+    # Checkers outside the home board keep the root outside the bearoff DB.
+    board = [0, 2, 3, 0, 2, 3, 1, 0, 1, 1] + [0] * 9 + [-3, -2, -2, -3, -2, -2] + [0]
+    positions = [dict(board=board, cube_value=2, cube_owner="player", max_cube_value=4),
+                 dict(board=board, away1=4, away2=2)]
+    analyzer = ng.BgBotAnalyzer(eval_level="4ply", parallel_threads=1)
+    scalar = analyzer.cube_decision if decision_only else analyzer.cube_action
+    batch = ng.batch_cube_action_nply(positions, eval_level="4ply", n_threads=2,
+                                      decision_only=decision_only)
+    assert batch == [scalar(**position) for position in positions]

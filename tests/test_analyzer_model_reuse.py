@@ -111,7 +111,8 @@ def test_results_equal_the_old_construction(model, bearoff_db, level):
 def test_all_public_consumers_share_one_model():
     from neongammon import Difficulty, DifficultyPolicy, batch_cube_action_nply
 
-    with patch.object(bgbot_cpp, "create_strategy", wraps=bgbot_cpp.create_strategy) as load:
+    with (patch.object(bgbot_cpp, "create_strategy", wraps=bgbot_cpp.create_strategy) as load,
+          patch.object(bgbot_cpp, "create_rollout", side_effect=AssertionError("duplicate weights"))):
         checker = BgBotAnalyzer(eval_level="3ply", parallel_threads=1)
         models = BatchModels.from_analyzer(checker)
         cube = BgBotAnalyzer(eval_level="2ply", models=models, parallel_threads=1)
