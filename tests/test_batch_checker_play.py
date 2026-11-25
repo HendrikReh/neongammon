@@ -1,69 +1,11 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Mark Higgins
-"""
-Tests for batch_checker_play.
-
-Verifies that batch_checker_play results match serial (single-position)
-BgBotAnalyzer.checker_play for both 0-ply and 1-ply, using random positions
-from contact.bm with random dice.
-
-Run with:
-    python -m pytest neongammon/tests/test_batch_checker_play.py -v
-    python -m unittest neongammon.tests.test_batch_checker_play -v
-"""
-
-import os
-import random
-import sys
+"""Parallel checker-play parity on legal positions without an external corpus."""
 import unittest
 
-# Setup paths
-script_dir = os.path.dirname(os.path.abspath(__file__))
-# Resolve INSIDE this repo. dirname(dirname(tests/)) is the HOST project when
-# neongammon is vendored as a submodule, so this used to load the host's stale
-# bgbot_cpp instead of the one built here -- tests then silently exercised a
-# different binary than the developer just compiled.
-project_dir = os.path.dirname(script_dir)
-build_dir = os.path.join(project_dir, "build")
-
-sys.path.insert(0, build_dir)
-sys.path.insert(0, os.path.join(project_dir, "python"))
-
-from neongammon import BgBotAnalyzer
-from neongammon.batch import batch_checker_play
-from neongammon.data import board_from_gnubg_position_string
+from neongammon import BgBotAnalyzer, batch_checker_play
 from neongammon.weights import default_weights
-
-DATA_DIR = os.path.join(project_dir, "data")
-CONTACT_BM = os.path.join(DATA_DIR, "contact.bm")
-
-SEED = 54321
-N_POSITIONS = 50
-
-
-def _load_positions_from_bm(
-    filepath: str, n: int, seed: int,
-) -> list[dict]:
-    """Load n random positions (board + dice) from a .bm file."""
-    with open(filepath, "r") as f:
-        move_lines = [line for line in f if line.startswith("m ")]
-
-    rng = random.Random(seed)
-    chosen = rng.sample(range(len(move_lines)), min(n, len(move_lines)))
-
-    positions = []
-    for idx in chosen:
-        bits = move_lines[idx].split()
-        board = board_from_gnubg_position_string(bits[1])
-        die1, die2 = int(bits[2]), int(bits[3])
-        positions.append({
-            "board": board,
-            "die1": die1,
-            "die2": die2,
-            "cube_value": 1,
-            "cube_owner": "centered",
-        })
-    return positions
+from .batch_positions import checker_positions
 
 
 class TestBatchCheckerPlay(unittest.TestCase):
@@ -71,23 +13,11 @@ class TestBatchCheckerPlay(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        if not os.path.isfile(CONTACT_BM):
-            raise unittest.SkipTest(f"contact.bm not found at {CONTACT_BM}")
-        cls.positions = _load_positions_from_bm(CONTACT_BM, N_POSITIONS, SEED)
+        cls.positions = checker_positions(50, seed=54321)
         cls.weights = default_weights()
         cls.weights.validate()
 
-    # ------------------------------------------------------------------
-    # 0-ply tests
-    # ------------------------------------------------------------------
-
     def test_invalid_eval_level_rejected(self):
-        """neongammon uses the XG convention: 1-ply IS the raw NN, there is no 0-ply.
-
-        These used to be test_0ply_* and failed permanently against a level the
-        API has never accepted; the real 0-ply-equivalent coverage is the
-        test_1ply_* pair below.
-        """
         with self.assertRaises(ValueError):
             batch_checker_play(self.positions[:1], eval_level="0ply",
                                weights=self.weights)
@@ -95,56 +25,16 @@ class TestBatchCheckerPlay(unittest.TestCase):
             batch_checker_play(self.positions[:1], eval_level="5ply",
                                weights=self.weights)
 
-    def test_1ply_batch_matches_serial(self):
-        """batch_checker_play at 1-ply matches BgBotAnalyzer.checker_play exactly."""
-        analyzer = BgBotAnalyzer(eval_level="1ply", cubeful=True)
-        # Use fewer positions for 1-ply (slower)
-        positions = self.positions[:10]
-        batch_results = batch_checker_play(
-            positions, eval_level="1ply",
-            weights=self.weights, n_threads=0,
-        )
-
-        self.assertEqual(len(batch_results), len(positions))
-        for i, (br, pos) in enumerate(zip(batch_results, positions)):
-            with self.subTest(position=i):
-                sr = analyzer.checker_play(
-                    pos["board"], pos["die1"], pos["die2"],
-                    cube_value=pos["cube_value"],
-                    cube_owner=pos["cube_owner"],
-                )
-                # Same number of moves
-                self.assertEqual(
-                    len(br.moves), len(sr.moves),
-                    msg=f"pos {i}: move count mismatch",
-                )
-                if not br.moves:
-                    continue
-                # Best move board matches
-                self.assertEqual(
-                    br.moves[0].board, sr.moves[0].board,
-                    msg=f"pos {i}: best move board mismatch",
-                )
-                # Best move equity matches
-                self.assertAlmostEqual(
-                    br.moves[0].equity, sr.moves[0].equity, places=4,
-                    msg=f"pos {i}: best equity mismatch",
-                )
-                # Best move cubeless equity matches
-                self.assertAlmostEqual(
-                    br.moves[0].cubeless_equity,
-                    sr.moves[0].cubeless_equity, places=4,
-                    msg=f"pos {i}: best cubeless equity mismatch",
-                )
-                # Probabilities match
-                for j, (bp, sp) in enumerate(zip(
-                    br.moves[0].probs.to_list(),
-                    sr.moves[0].probs.to_list(),
-                )):
-                    self.assertAlmostEqual(
-                        bp, sp, places=4,
-                        msg=f"pos {i}: prob[{j}] mismatch",
-                    )
+    def test_search_matches_the_entire_scalar_ranking(self):
+        for level in ("1ply", "2ply"):
+            analyzer = BgBotAnalyzer(eval_level=level, parallel_threads=1)
+            positions = self.positions[:10]
+            results = batch_checker_play(positions, eval_level=level, n_threads=2)
+            self.assertEqual(len(results), len(positions))
+            for position, result in zip(positions, results):
+                with self.subTest(level=level, position=position):
+                    expected = analyzer.checker_play(**position)
+                    self.assertEqual(result, expected)
 
     def test_1ply_parallel_matches_serial(self):
         """batch_checker_play at 1-ply: parallel vs n_threads=1."""
