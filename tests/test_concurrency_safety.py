@@ -332,3 +332,26 @@ def test_double_wrapped_bearoff_strategy_parity():
         _NEAR_BEAROFF_BOARD, owner, double_mp, 2, n_threads=1
     )
     assert eq_double_mp == eq_single_mp
+
+@pytest.mark.parametrize("threads", [1, 4])
+@pytest.mark.parametrize("settings", [((20, 15), (1, 1)), ((1, 1), (20, 15))])
+def test_legacy_evaluator_reconfigures_reply_prefilter(threads, settings):
+    weights = WeightConfig.from_model("stage11")
+
+    def evaluator():
+        return bgbot_cpp.create_multipy(
+            weights.strategy_type, weights.weight_paths_list, weights.hidden_sizes_list,
+            n_plies=2, full_depth_opponent=True, parallel_evaluate=threads > 1,
+            parallel_threads=threads,
+        )
+
+    reused, cold = evaluator(), evaluator()
+    boards = possible_moves(STARTING_BOARD, 3, 1)
+    first, second = settings
+    reused.set_prefilter_params(*first)
+    before = [reused.evaluate_board(b, STARTING_BOARD) for b in boards]
+    reused.set_prefilter_params(*second)
+    after = [reused.evaluate_board(b, STARTING_BOARD) for b in boards]
+    cold.set_prefilter_params(*second)
+    assert after == [cold.evaluate_board(b, STARTING_BOARD) for b in boards]
+    assert before != after

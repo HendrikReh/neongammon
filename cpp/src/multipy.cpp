@@ -409,6 +409,14 @@ std::size_t MultiPlyStrategy::cache_key_for(const Board& b, int plies) const {
     h ^= (static_cast<std::size_t>(cache_salt) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2));
     h ^= (static_cast<std::size_t>(plies) + 0x9e3779b9 + (h << 6) + (h >> 2));
     h ^= (full_depth_opponent_ ? 0x85ebca6bU : 0x27d4eb2fU);
+    // The legacy search prunes opponent replies before scoring them. Both
+    // the thread-local and shared worker caches use this key.
+    if (move_prefilter_) {
+        for (auto setting : {move_prefilter_->eval_identity(),
+                             static_cast<std::uint64_t>(prefilter_threshold_),
+                             static_cast<std::uint64_t>(prefilter_keep_)})
+            h ^= setting + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+    }
     // The bearoff database short-circuits the search, so it is part of what
     // an entry means (and set_bearoff_db can change it after construction).
     if (bearoff_db_)
