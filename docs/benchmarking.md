@@ -232,6 +232,35 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 \
   "$ENGINE_PYTHON" -I scripts/benchmark_cube_action_decision.py
 ```
 
+### Where the owned money cube spends its time
+
+On the same M4 Pro and four-thread fixture, a diagnostic build from `v3.2.0` timed the two native traversals inside `cube_action`. The first interval includes candidate-cache construction and the cubeful tree. The second includes the cubeless probability tree and conversion back to the player on roll. Both use elapsed wall time on the calling thread, including time waiting for the search workers. The installed 3.2.0 wheel supplied the Python code and models for both measurements.
+
+| Median wall time | Cubeful tree | Cubeless tree | Cubeless share of both trees | Full call on official wheel |
+|---|---:|---:|---:|---:|
+| First call, 16 processes | 4.67 ms | 4.30 ms | 47.7% | 9.06 ms |
+| Warm call, 80 samples | 2.47 ms | 3.07 ms | 55.9% | 5.87 ms |
+
+A second run measured **3.11 ms** for the warm cubeless traversal (55.6%). This accounts for most of the earlier 3.14 ms warm gap between the public methods on this board. The full call in the last column uses the uninstrumented wheel in a separate process. Its timing includes the Python boundary and cache cleanup. The share is the median of the per-call ratios.
+
+Both builds produced identical rich results on every repeat. The decision-only method agreed on all nine shared fields, and the independent traversal used for per-roll details agreed exactly on all five probabilities and cubeless equity. For this fixture, measure how many candidate batches the cubeless traversal can reuse before changing the Accelerate batch policy.
+
+To reproduce, use a fresh build directory, the CPython 3.12 interpreter containing the official wheel (`ENGINE_PYTHON`), and CMake, Ninja and pybind11's CMake package on the build path. The patch adds timing probes to a disposable copy of the release source. The driver runs a fresh interpreter per build per pair, alternating the order. [Timer locations](../scripts/experiments/cube_3ply/phase-timers.patch) · [Parity checks and sample aggregation](../scripts/experiments/cube_3ply/measure_phases.py)
+
+```sh
+profile_dir="$PWD/build/cube-phase-profile"
+mkdir -p "$profile_dir/src"
+git archive v3.2.0 cpp | tar -x -C "$profile_dir/src"
+patch -d "$profile_dir/src" -p1 < scripts/experiments/cube_3ply/phase-timers.patch
+cmake -S "$profile_dir/src/cpp" -B "$profile_dir/native" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+  -DBGBOT_BUILD_APPS=OFF -DPYBIND11_FINDPYTHON=ON \
+  -DPython_EXECUTABLE="$ENGINE_PYTHON" -Dpybind11_DIR="$(python -m pybind11 --cmakedir)"
+cmake --build "$profile_dir/native" --target bgbot_cpp
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 \
+  "$ENGINE_PYTHON" -I scripts/experiments/cube_3ply/measure_phases.py "$profile_dir/native"
+```
+
 ## Rollout and N-Ply Regression Benchmarks
 
 Saved-baseline regression scripts (each supports `--save`/`--compare` with a material band of `max(SE, 0.01)` for equities and `0.005` for probabilities; the cubeless rollout bench widens the prob band to each prob's own SE):
