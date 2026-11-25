@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Mark Higgins
 #pragma once
 
+#include <stdexcept>
+
 #include "strategy.h"
 #include "types.h"
 #include <memory>
@@ -345,8 +347,8 @@ public:
     // prefilter_keep before the batch NN evaluation. Lower values save encoding
     // cost at the risk of dropping the NN-best candidate.
     void set_prefilter_params(int threshold, int keep) {
-        prefilter_threshold_ = threshold;
-        prefilter_keep_ = keep;
+        if (keep < 1) throw std::invalid_argument("prefilter keep must be positive");
+        prefilter_params_.store({threshold, keep}, std::memory_order_relaxed);
     }
 
     // Enable/disable position cache (for profiling).
@@ -368,8 +370,8 @@ private:
     std::shared_ptr<Strategy> filter_strat_;
     const BearoffDB* bearoff_db_ = nullptr;
     std::shared_ptr<Strategy> move_prefilter_;  // Cheap filter (e.g. PubEval) for opponent candidate pruning
-    int prefilter_threshold_ = 20;  // PubEval activates when candidates > this
-    int prefilter_keep_ = 15;       // PubEval keeps this many after filtering
+    struct PrefilterParams { int threshold, keep; };
+    std::atomic<PrefilterParams> prefilter_params_{{20, 15}};
     int n_plies_;
     MoveFilter move_filter_;
     std::vector<MoveFilterStep> filter_chain_;
@@ -394,7 +396,13 @@ private:
         const Board& board, const Board& pre_move_board, int plies) const;
     std::array<float, NUM_OUTPUTS> evaluate_probs_nply_impl(
         const Board& board, const Board& pre_move_board, int plies,
-        bool allow_parallel) const;
+        bool allow_parallel) const {
+        return evaluate_probs_nply_impl(board, pre_move_board, plies, allow_parallel,
+                                        prefilter_params_.load(std::memory_order_relaxed));
+    }
+    std::array<float, NUM_OUTPUTS> evaluate_probs_nply_impl(
+        const Board& board, const Board& pre_move_board, int plies,
+        bool allow_parallel, PrefilterParams prefilter) const;
     std::array<float, NUM_OUTPUTS> cubeless_tree_probs(
         const Board& board, const Board& pre_move_board,
         int plies, int n_threads, bool deep_prefilter) const;
@@ -507,7 +515,7 @@ public:
 private:
 
     static std::size_t hash_board(const Board& b);
-    std::size_t cache_key_for(const Board& b, int plies) const;
+    std::size_t cache_key_for(const Board& b, int plies, PrefilterParams prefilter) const;
 
     // Helper: filter + re-score candidates. Used by both best_move_index overloads.
     int best_move_index_impl(const std::vector<Board>& candidates,

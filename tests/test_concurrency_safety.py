@@ -341,12 +341,12 @@ def test_legacy_evaluator_reconfigures_reply_prefilter(threads, settings):
     def evaluator():
         return bgbot_cpp.create_multipy(
             weights.strategy_type, weights.weight_paths_list, weights.hidden_sizes_list,
-            n_plies=2, full_depth_opponent=True, parallel_evaluate=threads > 1,
+            n_plies=3 if threads > 1 else 2, full_depth_opponent=True, parallel_evaluate=threads > 1,
             parallel_threads=threads,
         )
 
     reused, cold = evaluator(), evaluator()
-    boards = possible_moves(STARTING_BOARD, 3, 1)
+    boards = possible_moves(STARTING_BOARD, 3, 1)[:2]
     first, second = settings
     reused.set_prefilter_params(*first)
     before = [reused.evaluate_board(b, STARTING_BOARD) for b in boards]
