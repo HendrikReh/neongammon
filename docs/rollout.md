@@ -1478,9 +1478,11 @@ gate at that depth rarely drops the rollout winner. 1T isn't worth the
 extra 2-ply scoring because the rollout itself is only 1-ply at 72
 trials — the filter's accuracy ceiling is already the bottleneck.
 
-A 2-ply strategy instance is lazily created on `_RolloutAnalyzer` only
-when `prefilter_threshold > 0`, and the bearoff DB (if loaded) is wired
-into it.
+When `prefilter_threshold > 0`, the analyzer creates a 2-ply strategy
+with the same thread budget as the rollout and attaches the bearoff DB if
+loaded. Setting `parallel_threads=1` runs the prefilter inline. With the
+default `parallel_threads=0`, both stages use the budget resolved from
+`BGBOT_MULTIPLY_THREADS` or the host CPU count.
 
 ## 17. Configuration Reference
 
