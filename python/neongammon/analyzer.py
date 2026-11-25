@@ -22,7 +22,6 @@ import functools
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from functools import cached_property
 from typing import Any
 
 import bgbot_cpp
@@ -202,16 +201,28 @@ class _CubelessBase:
         self._strategy_1ply = bgbot_cpp.create_strategy(
             weights.strategy_type, weights.weight_paths_list, weights.hidden_sizes_list)
         self._bearoff_db = None  # Set by BgBotAnalyzer after construction
+        self._cube_strategy_lock = threading.Lock()
+        self._cube_strategy_cache = None
 
-    @cached_property
+    @property
     def _cube_strategy(self):
         # Cube evaluation historically creates a fresh base strategy, separate
         # from the checker strategy's bearoff wrapper and root-routing controls.
-        # Keep that configuration, but load its immutable weights only once.
-        weights = self._weights
-        return bgbot_cpp.create_strategy(
-            weights.strategy_type, weights.weight_paths_list, weights.hidden_sizes_list
-        )
+        # Keep that configuration, but load its immutable weights only once
+        # under a lock so concurrent callers never race to double-load weights.
+        strategy = self._cube_strategy_cache
+        if strategy is None:
+            with self._cube_strategy_lock:
+                strategy = self._cube_strategy_cache
+                if strategy is None:
+                    weights = self._weights
+                    strategy = bgbot_cpp.create_strategy(
+                        weights.strategy_type,
+                        weights.weight_paths_list,
+                        weights.hidden_sizes_list,
+                    )
+                    self._cube_strategy_cache = strategy
+        return strategy
 
     def _score_candidates(
         self,
@@ -1250,7 +1261,10 @@ def _optimal_action(should_double: bool, should_take: bool,
 class BgBotAnalyzer:
     """High-level interface to the Neongammon bot engine.
 
-    Thread-safe: multiple threads can call methods concurrently.
+    Thread-safe: multiple threads can call analysis methods concurrently.
+    For rollout evaluation levels, concurrent rollout calls on the same
+    instance serialize internally while ``cancel()``, ``reset_cancel()``, and
+    ``set_seed()`` affect the shared instance.
 
     Args:
         weights: Weight file configuration (defaults to production model).

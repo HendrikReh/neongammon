@@ -107,6 +107,57 @@ public:
     T& get() { return *storage_; }
 };
 
+// Restores the thread-local SharedPosCache pointer on scope exit (including
+// exception unwind), preventing dangling pointers on persistent pool threads.
+class ScopedSharedCache {
+    SharedPosCache* prev_ = nullptr;
+    bool active_ = false;
+public:
+    explicit ScopedSharedCache(SharedPosCache* cache, bool apply_null = true) {
+        if (cache || apply_null) {
+            prev_ = MultiPlyStrategy::get_shared_cache();
+            MultiPlyStrategy::set_shared_cache(cache);
+            active_ = true;
+        }
+    }
+    ~ScopedSharedCache() {
+        if (active_) MultiPlyStrategy::set_shared_cache(prev_);
+    }
+    ScopedSharedCache(const ScopedSharedCache&) = delete;
+    ScopedSharedCache& operator=(const ScopedSharedCache&) = delete;
+};
+
+// Serializes progress callbacks across rollout workers and guarantees strictly
+// monotonic completed counts while preserving exact report cadence.
+class MonotonicProgressReporter {
+    const RolloutProgressCallback& progress_;
+    int total_;
+    int report_interval_;
+    int chunk_size_;
+    std::mutex mutex_;
+    int completed_ = 0;
+    int last_reported_ = 0;
+public:
+    MonotonicProgressReporter(const RolloutProgressCallback& progress,
+                              int total, int report_interval, int chunk_size)
+        : progress_(progress)
+        , total_(total)
+        , report_interval_(report_interval)
+        , chunk_size_(chunk_size) {}
+
+    void report_chunk(int delta) {
+        if (!report_interval_ || delta <= 0) return;
+        std::lock_guard<std::mutex> lock(mutex_);
+        completed_ += delta;
+        const int clamped = std::min(completed_, total_);
+        if ((completed_ % report_interval_ < chunk_size_ || completed_ >= total_)
+            && clamped > last_reported_) {
+            last_reported_ = clamped;
+            progress_(clamped, total_);
+        }
+    }
+};
+
 } // namespace
 
 // ======================== Cache Management ========================
@@ -191,6 +242,7 @@ RolloutStrategy::Move1Cache::Move1Cache(const RolloutConfig& config) {
 RolloutStrategy::Move1Cache::~Move1Cache() = default;
 
 void RolloutStrategy::clear_internal_caches() const {
+    std::lock_guard<std::recursive_mutex> lock(rollout_mutex_);
     // Clear thread-local PosCache (shared by all MultiPlyStrategy instances
     // on this thread). This prevents state accumulation across independent
     // positions that could lead to memory corruption with deep decision plies.
@@ -221,6 +273,7 @@ static void propagate_bearoff_db(Strategy* strat, const BearoffDB* db) {
 }
 
 void RolloutStrategy::set_bearoff_db(const BearoffDB* db) {
+    std::lock_guard<std::recursive_mutex> lock(rollout_mutex_);
     bearoff_db_ = db;
     // Create bearoff-wrapped version of base_ for cubeful evaluations
     // (cubeful_equity_nply needs a 1-ply strategy with bearoff support).
@@ -239,6 +292,7 @@ void RolloutStrategy::set_bearoff_db(const BearoffDB* db) {
 }
 
 void RolloutStrategy::set_move_filter(std::shared_ptr<Strategy> filter) {
+    std::lock_guard<std::recursive_mutex> lock(rollout_mutex_);
     move_filter_ = filter;
     // Propagate to MultiPlyStrategy instances used for checker play
     auto propagate = [&](Strategy* strat) {
@@ -255,17 +309,16 @@ void RolloutStrategy::set_move_filter(std::shared_ptr<Strategy> filter) {
 
 void RolloutStrategy::cancel() {
     owned_cancel_flag_.store(true, std::memory_order_relaxed);
-    config_.cancel_flag = &owned_cancel_flag_;
 }
 
 void RolloutStrategy::reset_cancel() {
     owned_cancel_flag_.store(false, std::memory_order_relaxed);
-    config_.cancel_flag = &owned_cancel_flag_;
 }
 
 bool RolloutStrategy::is_cancelled() const {
-    return config_.cancel_flag &&
-           config_.cancel_flag->load(std::memory_order_relaxed);
+    return owned_cancel_flag_.load(std::memory_order_relaxed) ||
+           (config_.cancel_flag &&
+            config_.cancel_flag->load(std::memory_order_relaxed));
 }
 
 // ======================== Constructor ========================
@@ -396,6 +449,9 @@ RolloutStrategy::RolloutStrategy(std::shared_ptr<Strategy> base, RolloutConfig c
                        ? config.truncation_depth + 10
                        : 200)
 {
+    if (!config_.cancel_flag) {
+        config_.cancel_flag = &owned_cancel_flag_;
+    }
     build_rollout_strategies(base_, nullptr, config_,
                              checker_strat_, checker_late_strat_,
                              cube_eval_config_, cube_late_eval_config_,
@@ -427,6 +483,9 @@ RolloutStrategy::RolloutStrategy(std::shared_ptr<Strategy> base,
                        ? config.truncation_depth + 10
                        : 200)
 {
+    if (!config_.cancel_flag) {
+        config_.cancel_flag = &owned_cancel_flag_;
+    }
     build_rollout_strategies(base_, filter_base, config_,
                              checker_strat_, checker_late_strat_,
                              cube_eval_config_, cube_late_eval_config_,
@@ -816,7 +875,7 @@ void RolloutStrategy::prefill_move0_cache(
     }
 
     auto compute_roll = [&](int roll_idx) {
-        if (shared) MultiPlyStrategy::set_shared_cache(shared);
+        ScopedSharedCache shared_guard(shared, /*apply_null=*/false);
 
         TrialMoveScratch<std::vector<Board>> scratch;
         auto& candidates = scratch.get();
@@ -852,8 +911,6 @@ void RolloutStrategy::prefill_move0_cache(
 
         cache.chosen[roll_idx] = chosen;
         cache.state[roll_idx].store(2, std::memory_order_release);
-
-        if (shared) MultiPlyStrategy::set_shared_cache(nullptr);
     };
 
     const int workers = std::min<int>(Move0Cache::N_ROLLS, std::max(1, n_threads));
@@ -943,11 +1000,10 @@ void RolloutStrategy::prefill_move1_cache(
     SharedPosCache* shared, const CubeInfo* select_cubes, int n_select_cubes) const
 {
     auto populate_entry = [&](int roll_idx) {
-        if (shared) MultiPlyStrategy::set_shared_cache(shared);
+        ScopedSharedCache shared_guard(shared, /*apply_null=*/false);
         populate_move1_cache_entry(move0_cache, roll_idx, cache.entries[roll_idx],
                                    select_cubes, n_select_cubes);
         cache.state[roll_idx].store(2, std::memory_order_release);
-        if (shared) MultiPlyStrategy::set_shared_cache(nullptr);
     };
 
     const int workers = std::min<int>(Move0Cache::N_ROLLS, std::max(1, n_threads));
@@ -1101,14 +1157,24 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
                         }
                         sel = (n_sel > 0) ? sel_storage.data() : nullptr;
                     }
-                    populate_move1_cache_entry(*move0_cache, move0_roll_idx,
-                                               move1_cache->entries[move0_roll_idx],
-                                               sel, n_sel);
+                    try {
+                        populate_move1_cache_entry(*move0_cache, move0_roll_idx,
+                                                   move1_cache->entries[move0_roll_idx],
+                                                   sel, n_sel);
+                    } catch (...) {
+                        move1_cache->state[move0_roll_idx].store(-1, std::memory_order_release);
+                        throw;
+                    }
                     move1_cache->state[move0_roll_idx].store(2, std::memory_order_release);
                     move1_entry = &move1_cache->entries[move0_roll_idx];
                 } else {
-                    while (move1_cache->state[move0_roll_idx].load(std::memory_order_acquire) != 2) {
+                    int wait_s = move1_cache->state[move0_roll_idx].load(std::memory_order_acquire);
+                    while (wait_s == 1) {
                         std::this_thread::yield();
+                        wait_s = move1_cache->state[move0_roll_idx].load(std::memory_order_acquire);
+                    }
+                    if (wait_s != 2) {
+                        throw std::runtime_error("Move1Cache prefill failed");
                     }
                     move1_entry = &move1_cache->entries[move0_roll_idx];
                 }
@@ -1353,11 +1419,16 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
                                             expected, 1,
                                             std::memory_order_acq_rel)) {
                                         CubeDecision tmp[8];
-                                        cube_decision_nply_multi(
-                                            board, cubes_in, n_cd, cf_base,
-                                            cube_cfg->ply, tmp, cube_filter,
-                                            1 /*serial*/, move_filter_.get(),
-                                            /*deep_prefilter=*/true);
+                                        try {
+                                            cube_decision_nply_multi(
+                                                board, cubes_in, n_cd, cf_base,
+                                                cube_cfg->ply, tmp, cube_filter,
+                                                1 /*serial*/, move_filter_.get(),
+                                                /*deep_prefilter=*/true);
+                                        } catch (...) {
+                                            cdst.store(-1, std::memory_order_release);
+                                            throw;
+                                        }
                                         uint8_t mask = 0;
                                         for (int k = 0; k < n_cd; ++k) {
                                             int b = cd_branch[k];
@@ -1371,10 +1442,12 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
                                         for (int k = 0; k < n_cd; ++k) cds[k] = tmp[k];
                                         served = true;
                                     } else {
-                                        while (cdst.load(std::memory_order_acquire) != 2) {
+                                        int wait_st = cdst.load(std::memory_order_acquire);
+                                        while (wait_st == 1) {
                                             std::this_thread::yield();
+                                            wait_st = cdst.load(std::memory_order_acquire);
                                         }
-                                        st = 2;
+                                        st = wait_st;
                                     }
                                 }
                                 if (!served && st == 2) {
@@ -1733,23 +1806,33 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
                                 active_cubes[n_active++] = branches[b].cube;
                             }
                         }
-                        if (n_active == 0) {
-                            chosen = candidates[cubeless_best_move_index(
-                                current_strat, candidates, board)];
-                        } else {
-                            std::array<int, 4> picks{0, 0, 0, 0};
-                            current_strat.best_move_index_cubeful_multi(
-                                candidates, board,
-                                active_cubes.data(), n_active, cube_x,
-                                picks.data());
-                            chosen = candidates[picks[0]];
+                        try {
+                            if (n_active == 0) {
+                                chosen = candidates[cubeless_best_move_index(
+                                    current_strat, candidates, board)];
+                            } else {
+                                std::array<int, 4> picks{0, 0, 0, 0};
+                                current_strat.best_move_index_cubeful_multi(
+                                    candidates, board,
+                                    active_cubes.data(), n_active, cube_x,
+                                    picks.data());
+                                chosen = candidates[picks[0]];
+                            }
+                        } catch (...) {
+                            move0_cache->state[actual_idx].store(-1, std::memory_order_release);
+                            throw;
                         }
                         move0_cache->chosen[actual_idx] = chosen;
                         move0_cache->state[actual_idx].store(2, std::memory_order_release);
                         used_move0_cache = true;
                     } else {
-                        while (move0_cache->state[actual_idx].load(std::memory_order_acquire) != 2) {
+                        int wait_s = move0_cache->state[actual_idx].load(std::memory_order_acquire);
+                        while (wait_s == 1) {
                             std::this_thread::yield();
+                            wait_s = move0_cache->state[actual_idx].load(std::memory_order_acquire);
+                        }
+                        if (wait_s != 2) {
+                            throw std::runtime_error("Move0Cache prefill failed");
                         }
                         chosen = move0_cache->chosen[actual_idx];
                         used_move0_cache = true;
@@ -1790,20 +1873,30 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
                 int expected = 0;
                 if (move0_cache->state[actual_idx].compare_exchange_strong(
                         expected, 1, std::memory_order_acq_rel)) {
-                    if (candidates.empty()) {
-                        chosen = board;
-                    } else if (candidates.size() == 1) {
-                        chosen = candidates[0];
-                    } else {
-                        chosen = candidates[cubeless_best_move_index(
-                            current_strat, candidates, board)];
+                    try {
+                        if (candidates.empty()) {
+                            chosen = board;
+                        } else if (candidates.size() == 1) {
+                            chosen = candidates[0];
+                        } else {
+                            chosen = candidates[cubeless_best_move_index(
+                                current_strat, candidates, board)];
+                        }
+                    } catch (...) {
+                        move0_cache->state[actual_idx].store(-1, std::memory_order_release);
+                        throw;
                     }
                     move0_cache->chosen[actual_idx] = chosen;
                     move0_cache->state[actual_idx].store(2, std::memory_order_release);
                     used_move0_cache = true;
                 } else {
-                    while (move0_cache->state[actual_idx].load(std::memory_order_acquire) != 2) {
+                    int wait_s = move0_cache->state[actual_idx].load(std::memory_order_acquire);
+                    while (wait_s == 1) {
                         std::this_thread::yield();
+                        wait_s = move0_cache->state[actual_idx].load(std::memory_order_acquire);
+                    }
+                    if (wait_s != 2) {
+                        throw std::runtime_error("Move0Cache prefill failed");
                     }
                     chosen = move0_cache->chosen[actual_idx];
                     used_move0_cache = true;
@@ -2162,6 +2255,7 @@ RolloutResult RolloutStrategy::run_trials_parallel(
     const Board& board,
     RolloutProgressCallback progress) const
 {
+    std::lock_guard<std::recursive_mutex> instance_lock(rollout_mutex_);
     // Clear thread-local N-ply cache on the calling thread. Pool threads are
     // cleared inside their lambda. This prevents stale entries from other
     // strategies (which share the same persistent thread pool) from persisting
@@ -2270,9 +2364,9 @@ RolloutResult RolloutStrategy::run_trials_parallel(
         }
         SharedPosCache* shared_cache = shared_pos_cache_.get();
         std::atomic<int> next_trial{0};
-        std::atomic<int> completed_trials{0};
         const int report_interval = progress
             ? trial_report_interval(config_.truncation_depth, n_trials, n_threads) : 0;
+        MonotonicProgressReporter progress_reporter(progress, n_trials, report_interval, chunk_size);
 
         // Use the persistent thread pool to avoid creating and destroying
         // threads for every rollout (thousands of cycles in a benchmark run).
@@ -2282,13 +2376,12 @@ RolloutResult RolloutStrategy::run_trials_parallel(
             // threads) from accumulating and causing memory corruption.
             MultiPlyStrategy::get_cache().clear();
             clear_cubeful_eval_cache();
-            MultiPlyStrategy::set_shared_cache(shared_cache);
+            ScopedSharedCache shared_guard(shared_cache);
             int start;
             while ((start = next_trial.fetch_add(chunk_size, std::memory_order_relaxed))
                    < n_trials) {
                 // Check cancellation between trial chunks
-                if (config_.cancel_flag &&
-                    config_.cancel_flag->load(std::memory_order_relaxed)) {
+                if (is_cancelled()) {
                     break;
                 }
                 int end = std::min(start + chunk_size, n_trials);
@@ -2298,14 +2391,8 @@ RolloutResult RolloutStrategy::run_trials_parallel(
                         all_dice[t].data(), max_moves,
                         &move0_cache, &move1_cache);
                 }
-                if (report_interval) {
-                    int done = completed_trials.fetch_add(end - start, std::memory_order_relaxed) + (end - start);
-                    if (done % report_interval < chunk_size || done >= n_trials) {
-                        progress(std::min(done, n_trials), n_trials);
-                    }
-                }
+                progress_reporter.report_chunk(end - start);
             }
-            MultiPlyStrategy::set_shared_cache(nullptr);
         });
 
         // Check if cancelled after trial loop completes
@@ -2368,6 +2455,7 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision(
     const CubeInfo& cube,
     RolloutProgressCallback progress) const
 {
+    std::lock_guard<std::recursive_mutex> instance_lock(rollout_mutex_);
     // Clear thread-local N-ply cache (same rationale as run_trials_parallel).
     MultiPlyStrategy::get_cache().clear();
     clear_cubeful_eval_cache();
@@ -2466,7 +2554,7 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision(
         SharedPosCache* shared_cache = shared_pos_cache_.get();
         std::atomic<int> next_roll{0};
         std::atomic<int> next_trial{0};
-        std::atomic<int> completed_trials{0};
+        MonotonicProgressReporter progress_reporter(progress, n_trials, report_interval, chunk_size);
 
         // Precompute move0 strategy selection (same for all rolls).
         const Strategy* m0_strat = checker_strat_.get();
@@ -2486,7 +2574,7 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision(
             // Clear thread-local N-ply cache (same as cubeless path).
             MultiPlyStrategy::get_cache().clear();
             clear_cubeful_eval_cache();
-            MultiPlyStrategy::set_shared_cache(shared_cache);
+            ScopedSharedCache shared_guard(shared_cache);
 
             // Phase 1+2: Combined move0 + move1 prefill per roll.
             // When cube-aware selection is on, prefill calls the SAME multi-
@@ -2501,42 +2589,53 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision(
 
             int r;
             while ((r = next_roll.fetch_add(1, std::memory_order_relaxed)) < 21) {
-                TrialMoveScratch<std::vector<Board>> scratch;
-                auto& candidates = scratch.get();
-                candidates.clear();
-                const auto& roll = ALL_ROLLS[r];
-                possible_boards_unsorted(pre_roll_board,
-                                         roll.d1, roll.d2, candidates);
-                Board chosen;
-                if (candidates.empty()) {
-                    chosen = pre_roll_board;
-                } else if (candidates.size() == 1) {
-                    chosen = candidates[0];
-                } else if (select_cubes_ptr) {
-                    std::array<int, 4> picks{0, 0, 0, 0};
-                    m0_strat->best_move_index_cubeful_multi(
-                        candidates, pre_roll_board,
-                        select_cubes_ptr, n_select_cubes,
-                        cube_x_stamp, picks.data());
-                    chosen = candidates[picks[0]];
-                } else if (m0_strat == base_.get()) {
-                    chosen = candidates[base_->best_move_index(
-                        candidates, pre_roll_board)];
-                } else {
-                    // Matches the trial loop's cubeless fallback exactly so
-                    // the cache value is byte-identical to per-trial
-                    // recomputation (the trial-side CAS fallback uses the
-                    // same dead-cube selection).
-                    chosen = candidates[cubeless_best_move_index(
-                        *m0_strat, candidates, pre_roll_board)];
-                }
-                move0_cache.chosen[r] = chosen;
-                move0_cache.state[r].store(2, std::memory_order_release);
+                try {
+                    TrialMoveScratch<std::vector<Board>> scratch;
+                    auto& candidates = scratch.get();
+                    candidates.clear();
+                    const auto& roll = ALL_ROLLS[r];
+                    possible_boards_unsorted(pre_roll_board,
+                                             roll.d1, roll.d2, candidates);
+                    Board chosen;
+                    if (candidates.empty()) {
+                        chosen = pre_roll_board;
+                    } else if (candidates.size() == 1) {
+                        chosen = candidates[0];
+                    } else if (select_cubes_ptr) {
+                        std::array<int, 4> picks{0, 0, 0, 0};
+                        m0_strat->best_move_index_cubeful_multi(
+                            candidates, pre_roll_board,
+                            select_cubes_ptr, n_select_cubes,
+                            cube_x_stamp, picks.data());
+                        chosen = candidates[picks[0]];
+                    } else if (m0_strat == base_.get()) {
+                        chosen = candidates[base_->best_move_index(
+                            candidates, pre_roll_board)];
+                    } else {
+                        // Matches the trial loop's cubeless fallback exactly so
+                        // the cache value is byte-identical to per-trial
+                        // recomputation (the trial-side CAS fallback uses the
+                        // same dead-cube selection).
+                        chosen = candidates[cubeless_best_move_index(
+                            *m0_strat, candidates, pre_roll_board)];
+                    }
+                    move0_cache.chosen[r] = chosen;
+                    move0_cache.state[r].store(2, std::memory_order_release);
 
-                if (uses_move1_cache) {
-                    populate_move1_cache_entry(move0_cache, r, move1_cache.entries[r],
-                                               select_cubes_ptr, n_select_cubes);
-                    move1_cache.state[r].store(2, std::memory_order_release);
+                    if (uses_move1_cache) {
+                        populate_move1_cache_entry(move0_cache, r, move1_cache.entries[r],
+                                                   select_cubes_ptr, n_select_cubes);
+                        move1_cache.state[r].store(2, std::memory_order_release);
+                    }
+                } catch (...) {
+                    if (move0_cache.state[r].load(std::memory_order_relaxed) == 1) {
+                        move0_cache.state[r].store(-1, std::memory_order_release);
+                    }
+                    if (uses_move1_cache &&
+                        move1_cache.state[r].load(std::memory_order_relaxed) == 1) {
+                        move1_cache.state[r].store(-1, std::memory_order_release);
+                    }
+                    throw;
                 }
             }
 
@@ -2548,8 +2647,7 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision(
             while ((start = next_trial.fetch_add(chunk_size, std::memory_order_relaxed))
                    < n_trials) {
                 // Check cancellation between trial chunks
-                if (config_.cancel_flag &&
-                    config_.cancel_flag->load(std::memory_order_relaxed)) {
+                if (is_cancelled()) {
                     break;
                 }
                 int end = std::min(start + chunk_size, n_trials);
@@ -2561,15 +2659,8 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision(
                     trial_results[t].nd_equity = branches[0].final_equity;
                     trial_results[t].dt_equity = branches[1].final_equity;
                 }
-                if (report_interval) {
-                    int done = completed_trials.fetch_add(end - start, std::memory_order_relaxed) + (end - start);
-                    if (done % report_interval < chunk_size || done >= n_trials) {
-                        progress(std::min(done, n_trials), n_trials);
-                    }
-                }
+                progress_reporter.report_chunk(end - start);
             }
-
-            MultiPlyStrategy::set_shared_cache(nullptr);
         });
 
         // Check if cancelled after trial loop completes
@@ -2636,6 +2727,7 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision_bat
     const CubeInfo& cube,
     RolloutProgressCallback progress) const
 {
+    std::lock_guard<std::recursive_mutex> instance_lock(rollout_mutex_);
     // Clear thread-local N-ply cache (same rationale as cubeful_cube_decision).
     MultiPlyStrategy::get_cache().clear();
     clear_cubeful_eval_cache();
@@ -2709,7 +2801,7 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision_bat
         multipy_parallel_run(n_threads, [&]() {
             MultiPlyStrategy::get_cache().clear();
             clear_cubeful_eval_cache();
-            MultiPlyStrategy::set_shared_cache(shared_cache);
+            ScopedSharedCache shared_guard(shared_cache);
 
             float cube_x_stamp = 0.0f;
             if (select_cubes_ptr) {
@@ -2752,7 +2844,6 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision_bat
                     move1_cache.state[r].store(2, std::memory_order_release);
                 }
             }
-            MultiPlyStrategy::set_shared_cache(nullptr);
         });
     }
 
@@ -2795,16 +2886,15 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision_bat
             }
         } else {
             std::atomic<int> next_trial{0};
-            std::atomic<int> completed_trials{0};
+            MonotonicProgressReporter progress_reporter(progress, n_trials, report_interval, chunk_size);
             multipy_parallel_run(n_threads, [&]() {
                 MultiPlyStrategy::get_cache().clear();
                 clear_cubeful_eval_cache();
-                MultiPlyStrategy::set_shared_cache(shared_cache);
+                ScopedSharedCache shared_guard(shared_cache);
                 int start;
                 while ((start = next_trial.fetch_add(chunk_size, std::memory_order_relaxed))
                        < n_trials) {
-                    if (config_.cancel_flag &&
-                        config_.cancel_flag->load(std::memory_order_relaxed)) {
+                    if (is_cancelled()) {
                         break;
                     }
                     int end = std::min(start + chunk_size, n_trials);
@@ -2816,14 +2906,8 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision_bat
                         trial_results[t].nd_equity = branches[0].final_equity;
                         trial_results[t].dt_equity = branches[1].final_equity;
                     }
-                    if (report_interval) {
-                        int done = completed_trials.fetch_add(end - start, std::memory_order_relaxed) + (end - start);
-                        if (done % report_interval < chunk_size || done >= n_trials) {
-                            progress(std::min(done, n_trials), n_trials);
-                        }
-                    }
+                    progress_reporter.report_chunk(end - start);
                 }
-                MultiPlyStrategy::set_shared_cache(nullptr);
             });
             if (is_cancelled()) {
                 throw RolloutCancelled();
@@ -2926,6 +3010,7 @@ RolloutStrategy::CubefulPositionResult RolloutStrategy::cubeful_rollout_position
     const CubeInfo& cube,
     RolloutProgressCallback progress) const
 {
+    std::lock_guard<std::recursive_mutex> instance_lock(rollout_mutex_);
     // Cubeful equity of a post-move position must include the opponent's
     // optimal cube action at the start of their turn — otherwise moves that
     // leave a drop position are scored as if the opponent will not double.
@@ -3140,6 +3225,7 @@ int RolloutStrategy::best_move_index(const std::vector<Board>& candidates,
 int RolloutStrategy::best_move_index(const std::vector<Board>& candidates,
                                       const Board& pre_move_board) const
 {
+    std::lock_guard<std::recursive_mutex> instance_lock(rollout_mutex_);
     const int n = static_cast<int>(candidates.size());
     if (n <= 1) return 0;
 

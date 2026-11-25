@@ -60,98 +60,92 @@ public:
 
     template<typename F>
     void parallel_for(int n_items, int n_threads, F&& fn) const {
-        if (n_items <= 1 || n_threads <= 1) {
+        if (n_items <= 0) return;
+        if (n_items == 1 || n_threads <= 1) {
             for (int i = 0; i < n_items; ++i) {
                 fn(i);
             }
             return;
         }
-
-        const int workers = std::min(n_threads, n_items);
-        const auto task_fn = std::forward<F>(fn);
-
-        struct JobState {
-            std::atomic<int> completed_workers{0};
-            std::mutex done_mutex;
-            std::condition_variable done_cv;
-        };
-
-        JobState state;
-
-        // Barrier-exit synchronization must go through done_mutex, NOT the
-        // atomic alone: state is on the caller's stack and gets destroyed
-        // when this function returns. If the last worker increments the
-        // atomic without holding the lock, the caller can observe count ==
-        // workers, return, and destroy state while that worker is still
-        // about to enter its lock_guard — use-after-free on done_mutex.
-        auto run_chunk = [&](int start) {
-            for (int item = start; item < n_items; item += workers) {
-                task_fn(item);
-            }
-            std::lock_guard<std::mutex> lock(state.done_mutex);
-            if (state.completed_workers.fetch_add(1, std::memory_order_acq_rel) + 1 == workers) {
-                state.done_cv.notify_one();
-            }
-        };
-
-        for (int t = 1; t < workers; ++t) {
-            enqueue([&state, run_chunk, t]() mutable { run_chunk(t); });
-        }
-
-        run_chunk(0);
-
-        {
-            std::unique_lock<std::mutex> lock(state.done_mutex);
-            state.done_cv.wait(lock, [&state, workers]() {
-                return state.completed_workers.load(std::memory_order_acquire) == workers;
-            });
-        }
+        cooperative_for(n_items, n_threads, std::function<void(int)>(std::forward<F>(fn)));
     }
 
-    // Dispatch n_workers copies of fn() — caller runs one, pool runs the rest.
-    // Each worker runs the same function; callers use shared atomics for
-    // work-stealing coordination.
+    // Dispatch up to n_workers concurrent executions of fn() — caller runs one,
+    // idle pool threads may run the rest. Unstarted helpers bail out once the
+    // caller finishes, so nested calls never deadlock even when all pool
+    // workers are saturated. Drains all started workers before releasing
+    // caller captures and rethrows the first captured exception.
     void parallel_run(int n_workers, const std::function<void()>& fn) const {
         if (n_workers <= 1) {
             fn();
             return;
         }
 
-        struct JobState {
-            std::atomic<int> completed_workers{0};
-            std::mutex done_mutex;
-            std::condition_variable done_cv;
+        struct RunJob {
+            explicit RunJob(std::function<void()> task) : run(std::move(task)) {}
+            std::function<void()> run;
+            std::mutex mutex;
+            std::condition_variable done;
+            bool open = true;
+            int active = 0;
+            std::exception_ptr error;
         };
 
-        JobState state;
-
-        // See barrier-exit comment in parallel_for above.
-        auto run_worker = [&]() {
-            fn();
-            std::lock_guard<std::mutex> lock(state.done_mutex);
-            if (state.completed_workers.fetch_add(1, std::memory_order_acq_rel) + 1 == n_workers) {
-                state.done_cv.notify_one();
+        auto job = std::make_shared<RunJob>(fn);
+        auto helper = [job] {
+            {
+                std::lock_guard<std::mutex> lock(job->mutex);
+                if (!job->open) return;
+                ++job->active;
             }
+            std::exception_ptr err;
+            try {
+                job->run();
+            } catch (...) {
+                err = std::current_exception();
+            }
+            std::lock_guard<std::mutex> lock(job->mutex);
+            if (err && !job->error) job->error = err;
+            if (--job->active == 0) job->done.notify_one();
         };
 
-        for (int t = 1; t < n_workers; ++t) {
-            enqueue([run_worker]() mutable { run_worker(); });
+        std::exception_ptr submission_error;
+        try {
+            const int helpers = std::min(n_workers - 1, n_threads_);
+            for (int t = 0; t < helpers; ++t) enqueue(helper);
+        } catch (...) {
+            submission_error = std::current_exception();
         }
 
-        run_worker();  // caller is worker 0
+        std::exception_ptr caller_error;
+        if (!submission_error) {
+            try {
+                job->run();
+            } catch (...) {
+                caller_error = std::current_exception();
+            }
+        }
 
         {
-            std::unique_lock<std::mutex> lock(state.done_mutex);
-            state.done_cv.wait(lock, [&state, n_workers]() {
-                return state.completed_workers.load(std::memory_order_acquire) == n_workers;
-            });
+            std::unique_lock<std::mutex> lock(job->mutex);
+            job->open = false;
+            job->done.wait(lock, [&] { return job->active == 0; });
         }
+        // All started helpers have exited job->run(), and late helpers will
+        // see open == false without touching job->run(). Release caller
+        // captures before the caller's stack frame unwinds.
+        job->run = nullptr;
+
+        if (submission_error) std::rethrow_exception(submission_error);
+        if (caller_error) std::rethrow_exception(caller_error);
+        if (job->error) std::rethrow_exception(job->error);
     }
 
     // A nested caller must never wait for an idle pool thread. It claims work
     // alongside the helpers and waits only for items another thread has taken.
     void cooperative_for(int n_items, int n_workers, std::function<void(int)> fn) const {
-        if (n_items <= 1 || n_workers <= 1) {
+        if (n_items <= 0) return;
+        if (n_items == 1 || n_workers <= 1) {
             for (int i = 0; i < n_items; ++i) fn(i);
             return;
         }
@@ -159,6 +153,7 @@ public:
             explicit Job(std::function<void(int)> task) : evaluate(std::move(task)) {}
             std::function<void(int)> evaluate;
             std::atomic<int> next{0};
+            std::atomic<bool> failed{false};
             std::mutex mutex;
             std::condition_variable done;
             int completed = 0;
@@ -170,15 +165,18 @@ public:
             std::exception_ptr error;
             for (int i = job->next.fetch_add(1, std::memory_order_relaxed); i < n_items;
                  i = job->next.fetch_add(1, std::memory_order_relaxed)) {
-                try {
-                    job->evaluate(i);
-                } catch (...) {
-                    if (!error) error = std::current_exception();
+                if (!job->failed.load(std::memory_order_relaxed)) {
+                    try {
+                        job->evaluate(i);
+                    } catch (...) {
+                        if (!error) error = std::current_exception();
+                        job->failed.store(true, std::memory_order_relaxed);
+                    }
                 }
                 ++completed;
             }
             if (!completed) return;
-            std::lock_guard lock(job->mutex);
+            std::lock_guard<std::mutex> lock(job->mutex);
             if (error && !job->error) job->error = error;
             job->completed += completed;
             if (job->completed == n_items) job->done.notify_one();
@@ -188,14 +186,17 @@ public:
         // the job before releasing the evaluation's captured buffers.
         std::exception_ptr submission_error;
         try {
-            const int workers = std::min(n_workers, n_items);
-            for (int t = 1; t < workers; ++t) enqueue(claim);
+            const int helpers = std::min(std::min(n_workers, n_items) - 1, n_threads_);
+            for (int t = 0; t < helpers; ++t) enqueue(claim);
         } catch (...) {
             submission_error = std::current_exception();
+            job->failed.store(true, std::memory_order_relaxed);
         }
         claim();
-        std::unique_lock lock(job->mutex);
-        job->done.wait(lock, [&] { return job->completed == n_items; });
+        {
+            std::unique_lock<std::mutex> lock(job->mutex);
+            job->done.wait(lock, [&] { return job->completed == n_items; });
+        }
         // Late helpers own only this drained job. Release the caller's
         // captures now, before its stack and roll-result storage go away.
         job->evaluate = nullptr;
@@ -222,7 +223,12 @@ private:
                 item = std::move(queue_.front());
                 queue_.pop_front();
             }
-            item.fn();
+            try {
+                item.fn();
+            } catch (...) {
+                // Every pool entry point catches inside its job wrapper; guard
+                // worker_loop as defense-in-depth against std::terminate().
+            }
         }
     }
 
@@ -605,44 +611,38 @@ std::array<float, NUM_OUTPUTS> MultiPlyStrategy::evaluate_probs_nply_impl(
         } else if (full_depth_opponent_ && plies > 2) {
             // Full-depth mode: opponent evaluates all candidates at (plies-1) depth.
             // Opponent picks the move that maximizes THEIR equity (minimizes current player's).
-            const int n_opp = static_cast<int>(opp_candidates.size());
+            // Snapshot thread_local opp_candidates before recursing: child calls
+            // on this thread overwrite opp_candidates, and parallel workers
+            // would otherwise race on the caller's thread_local vector.
+            const std::vector<Board> local_opp_candidates = opp_candidates;
+            const int n_opp = static_cast<int>(local_opp_candidates.size());
             int full_depth_threads = std::max(1, parallel_thread_count(plies - 1));
             std::vector<std::array<float, NUM_OUTPUTS>> opp_full_depth_probs(
                 n_opp);
             std::vector<double> opp_full_depth_eq(n_opp);
 
+            auto eval_candidate = [&](int i) {
+                GameResult opp_result = check_game_over(local_opp_candidates[i]);
+                std::array<float, NUM_OUTPUTS> candidate_p1_probs;
+
+                if (opp_result != GameResult::NOT_OVER) {
+                    candidate_p1_probs = invert_probs(terminal_probs(opp_result));
+                } else {
+                    auto opp_probs = evaluate_probs_nply_impl(
+                        local_opp_candidates[i], opp_board, plies - 1, false);
+                    candidate_p1_probs = invert_probs(opp_probs);
+                }
+                opp_full_depth_probs[i] = candidate_p1_probs;
+                opp_full_depth_eq[i] = compute_equity(candidate_p1_probs);
+            };
+
             if (n_opp > 1 && full_depth_threads > 1) {
                 full_depth_threads = std::min(full_depth_threads, n_opp);
                 get_multipy_executor().parallel_for(
-                    n_opp, full_depth_threads,
-                    [&](int i) {
-                        GameResult opp_result = check_game_over(opp_candidates[i]);
-                        std::array<float, NUM_OUTPUTS> candidate_p1_probs;
-
-                        if (opp_result != GameResult::NOT_OVER) {
-                            candidate_p1_probs = invert_probs(terminal_probs(opp_result));
-                        } else {
-                            auto opp_probs = evaluate_probs_nply_impl(
-                                opp_candidates[i], opp_board, plies - 1, false);
-                            candidate_p1_probs = invert_probs(opp_probs);
-                        }
-                        opp_full_depth_probs[i] = candidate_p1_probs;
-                        opp_full_depth_eq[i] = compute_equity(candidate_p1_probs);
-                    });
+                    n_opp, full_depth_threads, eval_candidate);
             } else {
                 for (int i = 0; i < n_opp; ++i) {
-                    GameResult opp_result = check_game_over(opp_candidates[i]);
-                    std::array<float, NUM_OUTPUTS> candidate_p1_probs;
-
-                    if (opp_result != GameResult::NOT_OVER) {
-                        candidate_p1_probs = invert_probs(terminal_probs(opp_result));
-                    } else {
-                        auto opp_probs = evaluate_probs_nply_impl(
-                            opp_candidates[i], opp_board, plies - 1, false);
-                        candidate_p1_probs = invert_probs(opp_probs);
-                    }
-                    opp_full_depth_probs[i] = candidate_p1_probs;
-                    opp_full_depth_eq[i] = compute_equity(candidate_p1_probs);
+                    eval_candidate(i);
                 }
             }
 

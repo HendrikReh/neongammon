@@ -164,7 +164,7 @@ struct SharedPosCache {
         std::size_t idx = key & MASK;
         for (int probe = 0; probe < MAX_PROBE; ++probe) {
             auto& e = entries[idx];
-            int s = e.state.load(std::memory_order_relaxed);
+            int s = e.state.load(std::memory_order_acquire);
             if (s == STATE_EMPTY) {
                 int expected = STATE_EMPTY;
                 if (e.state.compare_exchange_strong(expected, STATE_CLAIMED,
@@ -520,12 +520,17 @@ private:
 
 // Execute fn(i) for i in [0, n_items) using the shared persistent thread pool.
 // Falls back to serial execution when n_threads <= 1 or n_items <= 1.
+// Nesting-safe (work-stealing cooperative dispatch) and exception-safe
+// (drains all active workers before rethrowing the first captured exception).
 void multipy_parallel_for(int n_items, int n_threads,
                           const std::function<void(int)>& fn);
 
-// Dispatch n_workers copies of fn() to the persistent thread pool. The caller
-// runs one copy; the remaining (n_workers - 1) run on pool threads. Blocks
-// until all workers complete. Useful for work-stealing patterns where each
+// Dispatch up to n_workers concurrent executions of fn() on the persistent
+// thread pool. The caller always runs one copy; up to (n_workers - 1) idle
+// pool workers may join concurrently. Unstarted helpers are skipped once the
+// caller returns from fn(), so nested calls never deadlock even when all pool
+// workers are busy. Blocks until all started workers finish, then rethrows the
+// first captured exception if any. Designed for work-stealing loops where each
 // worker pulls items from a shared atomic counter.
 void multipy_parallel_run(int n_workers, const std::function<void()>& fn);
 

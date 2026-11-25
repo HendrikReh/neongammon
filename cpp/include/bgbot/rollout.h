@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <atomic>
 #include <functional>
+#include <mutex>
 #include <stdexcept>
 
 namespace bgbot {
@@ -275,6 +276,7 @@ public:
     // SharedPosCache warm (e.g. lockstep target-SE checker rollouts driven
     // from Python). Clears the cached dice so the next rollout regenerates them.
     void set_seed(uint32_t seed) {
+        std::lock_guard<std::recursive_mutex> lock(rollout_mutex_);
         config_.seed = seed;
         cached_dice_.clear();
         cached_max_moves_ = 0;
@@ -305,8 +307,13 @@ public:
 
 private:
     // Owned cancel flag for strategies created via Python bindings.
-    // config_.cancel_flag points to this when set via cancel().
+    // config_.cancel_flag is initialized to point here (unless caller supplied
+    // an external flag) at construction time and never mutated thereafter.
     std::atomic<bool> owned_cancel_flag_{false};
+    // Serializes concurrent external rollout / cache / seed calls on the same
+    // RolloutStrategy instance without deadlocking nested calls or blocking
+    // lock-free cancel()/reset_cancel()/is_cancelled().
+    mutable std::recursive_mutex rollout_mutex_;
     mutable std::vector<std::vector<std::pair<int, int>>> cached_dice_;
     mutable int cached_max_moves_ = 0;
 

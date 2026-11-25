@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <memory>
 #include <array>
+#include <atomic>
 #include <mutex>
 
 namespace bgbot {
@@ -94,17 +95,19 @@ public:
     // Thread-safe: multiple threads may call this concurrently during benchmark
     // scoring; the mutex ensures only one thread rebuilds.
     void ensure_transposed_weights() const {
-        if (!transposed_weights_valid_) {
+        if (!transposed_weights_valid_.load(std::memory_order_acquire)) {
             std::lock_guard<std::mutex> lock(transposed_weights_mutex_);
-            if (!transposed_weights_valid_) {  // double-check after acquiring lock
+            if (!transposed_weights_valid_.load(std::memory_order_relaxed)) {  // double-check after acquiring lock
                 build_transposed_weights();
-                transposed_weights_valid_ = true;
+                transposed_weights_valid_.store(true, std::memory_order_release);
             }
         }
     }
 
     // Mark transposed weights as stale (call after modifying hidden_weights_).
-    void invalidate_transposed_weights() { transposed_weights_valid_ = false; }
+    void invalidate_transposed_weights() {
+        transposed_weights_valid_.store(false, std::memory_order_release);
+    }
 
     // Legacy overload for std::array<float, 196>
     void forward_batch(
@@ -174,7 +177,7 @@ private:
     mutable std::vector<float> hidden_weights_T_;
     // Cached hidden bias vector (contiguous copy for fast memcpy initialization)
     mutable std::vector<float> hidden_biases_;
-    mutable volatile bool transposed_weights_valid_ = false;
+    mutable std::atomic<bool> transposed_weights_valid_{false};
     mutable std::mutex transposed_weights_mutex_;
     void build_transposed_weights() const;
 

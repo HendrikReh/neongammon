@@ -423,11 +423,17 @@ void eval_each_impl(const Strategy& strat, const std::vector<Board>& cands,
 {
     if (n <= 0) return;
 
+    // Frame-local storage avoids thread_local aliasing across nested
+    // BearoffStrategy wrappers and re-entrant fallback calls, with zero heap
+    // allocation for typical roll sizes (<= 64 candidates).
+    constexpr int kStackRestCap = 64;
+    int stack_rest[kStackRestCap];
+    std::vector<int> heap_rest;
+
     const Strategy* model = &strat;
     while (const auto* bs = dynamic_cast<const BearoffStrategy*>(model)) {
         const BearoffDB& db = bs->db();
-        thread_local std::vector<int> rest;
-        rest.resize(n);
+        int* dst = (n <= kStackRestCap) ? stack_rest : (heap_rest.resize(n), heap_rest.data());
         int remaining = 0;
         for (int j = 0; j < n; ++j) {
             const int idx = idxs[j];
@@ -435,12 +441,13 @@ void eval_each_impl(const Strategy& strat, const std::vector<Board>& cands,
             if (db.is_bearoff(c)) {
                 out[idx] = db.lookup_probs(c, /*post_move=*/true);
             } else {
-                rest[remaining++] = idx;
+                dst[remaining++] = idx;
             }
         }
         if (remaining == 0) return;
-        // An explicitly nested wrapper compacts the surviving indices in place.
-        idxs = rest.data();
+        // An explicitly nested wrapper compacts surviving indices in place or
+        // into stack_rest without reallocating the active input buffer.
+        idxs = dst;
         n = remaining;
         model = &bs->base();
     }
