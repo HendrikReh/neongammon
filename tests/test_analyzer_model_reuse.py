@@ -1,18 +1,10 @@
 # SPDX-License-Identifier: MPL-2.0
-"""The analyzer loads each model once on its checker side and shares the
-bearoff database; empty batches load nothing.
-
-A 3-ply BgBotAnalyzer loaded Stage 11 three times: for its 1-ply strategy,
-again inside create_multipy for the N-ply strategy, and once more for the
-cube strategy on its first cube action. Every analyzer also read the bearoff
-database from disk. Now the N-ply strategy is built around the 1-ply
-strategy's base (create_multipy_from_base), the database is loaded once per
-process, and BatchModels loads it only when a batch has positions. The cube
-strategy keeps its own base, so its evaluator configuration stays separate.
-"""
+"""Model sharing and bearoff database lifetime across public analysis interfaces."""
 
 import os
+import subprocess
 import sys
+import textwrap
 from dataclasses import asdict
 from unittest.mock import patch
 
@@ -64,7 +56,7 @@ def test_loads_at_each_stage_of_a_three_ply_analyzer():
         a.checker_play(STARTING_BOARD, 3, 1)
         assert c.take() == {}
         a.cube_action(STARTING_BOARD)
-        assert c.take() == {"create_strategy": 1}     # the cube strategy, once
+        assert c.take() == {}
         a.cube_action(CONTACT)
         a.checker_play(CONTACT, 6, 2)
         assert c.take() == {}
@@ -115,3 +107,45 @@ def test_results_equal_the_old_construction(model, bearoff_db, level):
     old = BgBotAnalyzer(weights=w, eval_level=level, parallel_threads=2, bearoff_db=db)
     _old_nply(old)
     assert _results(new) == _results(old)
+
+def test_all_public_consumers_share_one_model():
+    from neongammon import Difficulty, DifficultyPolicy, batch_cube_action_nply
+
+    with (patch.object(bgbot_cpp, "create_strategy", wraps=bgbot_cpp.create_strategy) as load,
+          patch.object(bgbot_cpp, "create_rollout", side_effect=AssertionError("duplicate weights"))):
+        checker = BgBotAnalyzer(eval_level="3ply", parallel_threads=1)
+        models = BatchModels.from_analyzer(checker)
+        cube = BgBotAnalyzer(eval_level="2ply", models=models, parallel_threads=1)
+        rollout = BgBotAnalyzer(eval_level="truncated1", models=models, parallel_threads=1)
+        assert BatchModels.from_analyzer(rollout) is models
+        cube.cube_decision(CONTACT)
+        batch_checker_play([dict(board=CONTACT, die1=6, die2=2)], models=models)
+        batch_cube_action_nply([dict(board=CONTACT)], models=models)
+        weak = BgBotAnalyzer(models=models)
+        policies = [DifficultyPolicy(d, analyzer=checker if d == Difficulty.FULL_STRENGTH else weak)
+                    for d in Difficulty]
+        assert len(policies) == 4
+        assert load.call_count == 1
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS process RSS")
+def test_four_shared_presets_add_less_than_five_mib():
+    # Measure in a fresh process, before any search populates worker caches.
+    probe = textwrap.dedent("""
+        import gc, os, subprocess
+        from neongammon import BatchModels, BgBotAnalyzer, Difficulty, DifficultyPolicy
+
+        def resident_kib():
+            gc.collect()
+            return int(subprocess.check_output(["ps", "-o", "rss=", "-p", str(os.getpid())]))
+
+        one = BgBotAnalyzer(parallel_threads=1)
+        models = BatchModels.from_analyzer(one)
+        before = resident_kib()
+        three = BgBotAnalyzer(models=models, eval_level="3ply", parallel_threads=1)
+        policies = [DifficultyPolicy(d, analyzer=three if d == Difficulty.FULL_STRENGTH else one)
+                    for d in Difficulty]
+        print(resident_kib() - before)
+    """)
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(sys.path))
+    kib = int(subprocess.check_output([sys.executable, "-c", probe], env=env))
+    assert kib < 5 * 1024

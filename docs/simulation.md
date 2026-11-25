@@ -83,6 +83,10 @@ Use a `DifficultyPolicy` in either player slot. The four presets in order of
 increasing strength are `beginner`, `casual`, `intermediate`, and
 `full_strength`. The `Difficulty` enum provides the same values. Use a fresh
 policy per player and match to replay its choices with the same seed.
+`policy.reseed(seed)` restarts its random stream. Pass `analyzer=` and
+`cube_analyzer=` to supply the checker and cube evaluators. Full Strength
+defaults to 3-ply checker play and 2-ply cube play on one shared model.
+The public `Policy` protocol types the direct move and cube decision methods.
 
 ```python
 from neongammon import Difficulty, DifficultyPolicy, simulate_match
@@ -106,16 +110,20 @@ for measured PR and match conditions.
 
 ## PureTD checker policy
 
-`simulate_game()` uses PureTD with one opponent reply and a 0.075 equity
-filter for Jacoby money games when no `players` are supplied and the native
-library and cubeful checkpoint can be loaded. Stage 11 at 2 ply handles
-the cube in this hybrid. To make the files available, set
-`NEONGAMMON_PURETD_LIBRARY` and `NEONGAMMON_PURETD_MODEL` to their paths before
-running the simulation. In a source checkout the simulator also checks
-`build/puretd/libpuretd_cblas.so` and `build/puretd/cubeful.bin` when both
-variables are unset. Stage 11 handles play when PureTD cannot be loaded or the
-game uses match play or non-Jacoby rules. Providing `players` selects the
-policies explicitly.
+With default players, simulations use the production 1-ply analyzer for both
+players. To select the filtered PureTD hybrid for a Jacoby money game, call
+`default_money_policy()` explicitly. It reads `NEONGAMMON_PURETD_LIBRARY` and
+`NEONGAMMON_PURETD_MODEL`, or checks `build/puretd/` when both are unset.
+It returns `None` if the optional library or model is unavailable.
+
+```python
+from neongammon import default_money_policy, simulate_game
+
+policy = default_money_policy()
+if policy is not None:
+    with policy:
+        game = simulate_game(seed=42, players=(policy, policy))
+```
 
 For explicit `PureTDPolicy` instances, the constructor defaults to choosing
 the move without lookahead. Pass `checker_plies=1`

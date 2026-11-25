@@ -403,12 +403,23 @@ size_t MultiPlyStrategy::cache_misses() const {
     return PosCache::global_misses.load(std::memory_order_relaxed);
 }
 
-std::size_t MultiPlyStrategy::cache_key_for(const Board& b, int plies) const {
+std::size_t MultiPlyStrategy::cache_key_for(const Board& b, int plies, PrefilterParams prefilter) const {
     std::size_t h = hash_board(b);
     const std::uint64_t cache_salt = cache_salt_.load(std::memory_order_relaxed);
     h ^= (static_cast<std::size_t>(cache_salt) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2));
     h ^= (static_cast<std::size_t>(plies) + 0x9e3779b9 + (h << 6) + (h >> 2));
     h ^= (full_depth_opponent_ ? 0x85ebca6bU : 0x27d4eb2fU);
+    // The legacy search prunes opponent replies before scoring them. Both
+    // the thread-local and shared worker caches use this key.
+    if (filter_strat_) {
+        h ^= filter_strat_->eval_identity() + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+    }
+    if (move_prefilter_) {
+        for (auto setting : {move_prefilter_->eval_identity(),
+                             static_cast<std::uint64_t>(prefilter.threshold),
+                             static_cast<std::uint64_t>(prefilter.keep)})
+            h ^= setting + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+    }
     // The bearoff database short-circuits the search, so it is part of what
     // an entry means (and set_bearoff_db can change it after construction).
     if (bearoff_db_)
@@ -492,7 +503,7 @@ std::array<float, NUM_OUTPUTS> MultiPlyStrategy::evaluate_probs_nply(
 
 std::array<float, NUM_OUTPUTS> MultiPlyStrategy::evaluate_probs_nply_impl(
     const Board& board, const Board& pre_move_board, int plies,
-    bool allow_parallel) const
+    bool allow_parallel, PrefilterParams prefilter) const
 {
     // Bearoff DB short-circuit at any depth: positions in the DB get exact
     // cubeless probs without recursion. Mirrors the BearoffStrategy wrapping
@@ -518,7 +529,7 @@ std::array<float, NUM_OUTPUTS> MultiPlyStrategy::evaluate_probs_nply_impl(
     }
 
     // Cache lookup
-    std::size_t bh = cache_enabled_ ? cache_key_for(board, plies) : 0;
+    std::size_t bh = cache_enabled_ ? cache_key_for(board, plies, prefilter) : 0;
     auto& cache = get_cache();
     if (cache_enabled_) {
         const auto* cached = cache.lookup(bh, /*plies folded into key*/ 0, board);
@@ -551,10 +562,6 @@ std::array<float, NUM_OUTPUTS> MultiPlyStrategy::evaluate_probs_nply_impl(
     // opponent's probs and invert them back to the current player's perspective.
     std::array<double, NUM_OUTPUTS> sum_probs = {0, 0, 0, 0, 0};
 
-    // PubEval pre-filter: configurable via set_prefilter_params().
-    const int PREFILTER_THRESHOLD = prefilter_threshold_;
-    const int PREFILTER_KEEP = prefilter_keep_;
-
     auto evaluate_roll = [&](const DiceRoll& roll) -> std::array<float, NUM_OUTPUTS> {
         thread_local std::vector<Board> opp_candidates;
         thread_local std::vector<Board> filtered_candidates;
@@ -568,7 +575,7 @@ std::array<float, NUM_OUTPUTS> MultiPlyStrategy::evaluate_probs_nply_impl(
 
         // Pre-filter with cheap evaluator (PubEval) if available, otherwise skip.
         // Replaces old pip-based heuristic with same threshold.
-        if (move_prefilter_ && static_cast<int>(opp_candidates.size()) > PREFILTER_THRESHOLD) {
+        if (move_prefilter_ && static_cast<int>(opp_candidates.size()) > prefilter.threshold) {
             const int n_cand = static_cast<int>(opp_candidates.size());
             thread_local std::vector<std::pair<double, int>> filter_scores;
             filter_scores.clear();
@@ -581,7 +588,7 @@ std::array<float, NUM_OUTPUTS> MultiPlyStrategy::evaluate_probs_nply_impl(
                     : move_prefilter_->evaluate(opp_candidates[ci], opp_race);
                 filter_scores.push_back({-eq, ci});
             }
-            int keep = std::min(PREFILTER_KEEP, n_cand);
+            int keep = std::min(prefilter.keep, n_cand);
             std::partial_sort(filter_scores.begin(), filter_scores.begin() + keep,
                               filter_scores.end());
             filtered_candidates.clear();
@@ -605,7 +612,7 @@ std::array<float, NUM_OUTPUTS> MultiPlyStrategy::evaluate_probs_nply_impl(
             } else {
                 // Evaluate from opponent's perspective at (plies-1), invert for current player.
                 // opp_best is opponent's post-move board, opp_board is their pre-move board.
-                auto opp_probs = evaluate_probs_nply_impl(opp_best, opp_board, plies - 1, false);
+                auto opp_probs = evaluate_probs_nply_impl(opp_best, opp_board, plies - 1, false, prefilter);
                 p1_probs = invert_probs(opp_probs);
             }
         } else if (full_depth_opponent_ && plies > 2) {
@@ -629,7 +636,7 @@ std::array<float, NUM_OUTPUTS> MultiPlyStrategy::evaluate_probs_nply_impl(
                     candidate_p1_probs = invert_probs(terminal_probs(opp_result));
                 } else {
                     auto opp_probs = evaluate_probs_nply_impl(
-                        local_opp_candidates[i], opp_board, plies - 1, false);
+                        local_opp_candidates[i], opp_board, plies - 1, false, prefilter);
                     candidate_p1_probs = invert_probs(opp_probs);
                 }
                 opp_full_depth_probs[i] = candidate_p1_probs;
@@ -691,7 +698,7 @@ std::array<float, NUM_OUTPUTS> MultiPlyStrategy::evaluate_probs_nply_impl(
                 if (opp_result != GameResult::NOT_OVER) {
                     p1_probs = invert_probs(terminal_probs(opp_result));
                 } else {
-                    auto opp_probs = evaluate_probs_nply_impl(opp_best, opp_board, plies - 1, false);
+                    auto opp_probs = evaluate_probs_nply_impl(opp_best, opp_board, plies - 1, false, prefilter);
                     p1_probs = invert_probs(opp_probs);
                 }
             }

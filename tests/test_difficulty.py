@@ -14,11 +14,11 @@ def test_weights_favor_better_moves_and_exclude_large_errors():
     assert _choice_weights([0, 0, 0.05], 0.10, 0) == [1, 0, 0]
 
 
-def test_full_strength_uses_stage11_two_ply():
+def test_full_strength_depths():
     policy = ng.DifficultyPolicy(ng.Difficulty.FULL_STRENGTH)
     analyzer = ng.BgBotAnalyzer(eval_level="2ply", parallel_threads=1)
     context = {"away1": 5, "away2": 5}
-    best = analyzer.checker_play(ng.STARTING_BOARD, 4, 3, **context).moves[0]
+    best = ng.BgBotAnalyzer(eval_level="3ply", parallel_threads=1).checker_play(ng.STARTING_BOARD, 4, 3, **context).moves[0]
 
     assert policy.select_checker_move(ng.STARTING_BOARD, 4, 3, **context) == best.board
     assert policy.cube_decision(ng.STARTING_BOARD, **context) == analyzer.cube_decision(
@@ -57,3 +57,11 @@ def test_beginner_cannot_double_opponents_cube_with_mixed_case_owner(away):
     assert not policy.cube_decision(
         board, cube_owner="Opponent", away1=away, away2=away, beaver=False,
     ).should_double
+
+def test_public_reseed_replays_policy_stream():
+    policy = ng.DifficultyPolicy("beginner", seed=35)
+    def sequence():
+        return [policy.select_checker_move(ng.STARTING_BOARD, 4, 3) for _ in range(10)]
+    expected = sequence()
+    policy.reseed(35)
+    assert sequence() == expected

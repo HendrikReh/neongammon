@@ -15,8 +15,8 @@ Quick start::
         print(f"{m.equity:+.3f}  {m.probs.win:.1%}")
 """
 
-from .analyzer import BgBotAnalyzer, RolloutCancelled, create_analyzer
-from .batch import BatchModels, PositionEval, batch_checker_play, batch_cube_action, batch_evaluate, batch_post_move_evaluate
+from .analyzer import BgBotAnalyzer, RolloutCancelled, contact_cube_life, contact_cube_slope, create_analyzer, flip_owner
+from .batch import BatchModels, PositionEval, batch_checker_play, batch_cube_action, batch_cube_action_nply, batch_evaluate, batch_post_move_evaluate
 from .board import (
     STARTING_BOARD,
     can_double_match,
@@ -43,8 +43,8 @@ from .types import (
     Probabilities,
 )
 from .gnubg import GnuBgAnalyzer
-from .difficulty import Difficulty, DifficultyPolicy
-from .puretd import PureTDPolicy
+from .difficulty import Difficulty, DifficultyPolicy, Policy
+from .puretd import PureTDPolicy, default_money_policy
 from . import settings
 from .luck import luck_from_equities, roll_luck
 from .types import LuckResult, RollEquity
@@ -65,10 +65,16 @@ __all__ = [
     "GnuBgAnalyzer",
     "Difficulty",
     "DifficultyPolicy",
+    "Policy",
+    "default_money_policy",
+    "flip_owner",
+    "contact_cube_life",
+    "contact_cube_slope",
     "PureTDPolicy",
     "BatchModels",
     "batch_checker_play",
     "batch_cube_action",
+    "batch_cube_action_nply",
     "batch_evaluate",
     "batch_post_move_evaluate",
     "create_analyzer",

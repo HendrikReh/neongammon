@@ -7,11 +7,21 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from math import exp
 from random import Random
+from typing import Protocol
 
 from .analyzer import BgBotAnalyzer
 from .board import can_double_match, possible_moves
 from .types import CubeDecisionResult
-from .weights import WeightConfig
+from .batch import BatchModels
+
+
+class Policy(Protocol):
+    """An opponent that supplies a legal checker move and cube response."""
+
+    def select_checker_move(self, board: list[int], die1: int, die2: int, **context) -> list[int]: ...
+
+    def cube_decision(self, board: list[int], cube_value: int = 1,
+                      cube_owner: str = "centered", **context) -> CubeDecisionResult: ...
 
 
 class Difficulty(str, Enum):
@@ -63,15 +73,26 @@ class DifficultyPolicy:
     Use BgBotAnalyzer separately to rank moves or review the game.
     """
 
-    def __init__(self, difficulty: Difficulty | str, *, seed: int = 42, parallel_threads: int = 1):
+    def __init__(self, difficulty: Difficulty | str, *, seed: int = 42, parallel_threads: int = 1,
+                 analyzer: BgBotAnalyzer | None = None, cube_analyzer: BgBotAnalyzer | None = None):
         self.difficulty = Difficulty(difficulty)
         self._profile = _PROFILES.get(self.difficulty)
-        self._analyzer = BgBotAnalyzer(
-            weights=WeightConfig.from_model("stage11"),
-            eval_level="1ply" if self._profile else "2ply",
+        self._analyzer = analyzer if analyzer is not None else BgBotAnalyzer(
+            eval_level="1ply" if self._profile else "3ply",
+            models=BatchModels.from_analyzer(cube_analyzer) if cube_analyzer is not None else None,
             parallel_threads=parallel_threads,
         )
+        if cube_analyzer is None:
+            cube_analyzer = self._analyzer
+            if self._profile is None and self._analyzer._eval_level != "2ply":
+                cube_analyzer = BgBotAnalyzer(eval_level="2ply", parallel_threads=parallel_threads,
+                                               models=BatchModels.from_analyzer(self._analyzer))
+        self._cube_analyzer = cube_analyzer
         self._rng = Random(seed)
+
+    def reseed(self, seed: int) -> None:
+        """Restart this policy's random stream while retaining its models."""
+        self._rng.seed(seed)
 
     def select_checker_move(self, board: list[int], die1: int, die2: int, **context) -> list[int]:
         """Return a legal post-move board from the mover's perspective."""
@@ -94,7 +115,7 @@ class DifficultyPolicy:
         the caller reads the responder's ``should_take`` flag.
         """
         cube_owner = cube_owner.lower()
-        decision = self._analyzer.cube_decision(board, cube_value, cube_owner, **context)
+        decision = self._cube_analyzer.cube_decision(board, cube_value, cube_owner, **context)
         profile = self._profile
         if profile is None or decision.is_beaver:
             return decision

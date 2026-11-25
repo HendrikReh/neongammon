@@ -22,7 +22,8 @@ import functools
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any
 
 import bgbot_cpp
 
@@ -36,7 +37,10 @@ from .types import (
     PostMoveAnalysis,
     Probabilities,
 )
-from .weights import WeightConfig, WeightConfigPair, bearoff_db_path, default_weights
+from .weights import WeightConfig, WeightConfigPair, default_weights
+
+if TYPE_CHECKING:
+    from .batch import BatchModels
 
 # ---------------------------------------------------------------------------
 # Cube owner mapping
@@ -60,6 +64,11 @@ def resolve_owner(cube_owner: str | Any) -> Any:
     if isinstance(cube_owner, str):
         return OWNER_MAP[cube_owner.lower()]
     return cube_owner
+
+
+def flip_owner(cube_owner):
+    """Return the native cube owner from the other player's perspective."""
+    return _FLIP_OWNER[resolve_owner(cube_owner)]
 
 
 def _validate_cube_limit(cube_value: int, max_cube_value: int) -> None:
@@ -164,19 +173,24 @@ MONEY_CONTACT_CUBE_LIFE: dict[int, float] = {1: 0.7375, 2: 0.7625}
 MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE: dict[int, float] = {1: 0.00175, 2: 0.00125}
 
 
-def _contact_cube_life(n_plies: int, away1: int = 0, away2: int = 0) -> float:
+def contact_cube_life(n_plies: int, away1: int = 0, away2: int = 0) -> float:
     """``contact_x`` for a cube tree of depth ``n_plies``; -1 = engine default."""
     if away1 > 0 or away2 > 0:
         return -1.0
     return MONEY_CONTACT_CUBE_LIFE.get(n_plies, -1.0)
 
 
-def _contact_cube_slope(n_plies: int, away1: int = 0, away2: int = 0) -> float:
+def contact_cube_slope(n_plies: int, away1: int = 0, away2: int = 0) -> float:
     """``contact_x_pip_slope`` for a cube tree of depth ``n_plies``; 0 = flat.
     Only takes effect where ``_contact_cube_life`` sets ``contact_x``."""
     if _contact_cube_life(n_plies, away1, away2) < 0.0:
         return 0.0
     return MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE.get(n_plies, 0.0)
+
+
+# Older integrations imported these internal names directly.
+_contact_cube_life = contact_cube_life
+_contact_cube_slope = contact_cube_slope
 
 
 def _janowski_x(probs, board, n_plies: int | None, away1: int = 0, away2: int = 0) -> float:
@@ -196,33 +210,11 @@ def _janowski_x(probs, board, n_plies: int | None, away1: int = 0, away2: int = 
 class _CubelessBase:
     """Shared infrastructure for cubeless analyzers."""
 
-    def __init__(self, weights: WeightConfig | WeightConfigPair):
-        self._weights = weights
-        self._strategy_1ply = bgbot_cpp.create_strategy(
-            weights.strategy_type, weights.weight_paths_list, weights.hidden_sizes_list)
-        self._bearoff_db = None  # Set by BgBotAnalyzer after construction
-        self._cube_strategy_lock = threading.Lock()
-        self._cube_strategy_cache = None
-
-    @property
-    def _cube_strategy(self):
-        # Cube evaluation historically creates a fresh base strategy, separate
-        # from the checker strategy's bearoff wrapper and root-routing controls.
-        # Keep that configuration, but load its immutable weights only once
-        # under a lock so concurrent callers never race to double-load weights.
-        strategy = self._cube_strategy_cache
-        if strategy is None:
-            with self._cube_strategy_lock:
-                strategy = self._cube_strategy_cache
-                if strategy is None:
-                    weights = self._weights
-                    strategy = bgbot_cpp.create_strategy(
-                        weights.strategy_type,
-                        weights.weight_paths_list,
-                        weights.hidden_sizes_list,
-                    )
-                    self._cube_strategy_cache = strategy
-        return strategy
+    def __init__(self, models: BatchModels):
+        self._weights = models.weights
+        self._strategy_1ply = models.base()
+        self._raw_base = models._raw_base
+        self._bearoff_db = models.bearoff_db
 
     def _score_candidates(
         self,
@@ -374,8 +366,8 @@ class _CubelessBase:
 
 class _OnePlyAnalyzer(_CubelessBase):
 
-    def __init__(self, weights, parallel_threads=0):
-        super().__init__(weights)
+    def __init__(self, models, parallel_threads=0):
+        super().__init__(models)
         self._parallel_threads = (
             parallel_threads if parallel_threads > 0 else _default_parallel_threads()
         )
@@ -425,7 +417,7 @@ class _OnePlyAnalyzer(_CubelessBase):
             jacoby=jacoby, beaver=beaver, **_cube_limit_kwargs(max_cube_value),
             contact_x=_contact_cube_life(1, away1, away2),
             contact_x_pip_slope=_contact_cube_slope(1, away1, away2),
-            bearoff_db=self._bearoff_db, strategy=self._cube_strategy,
+            bearoff_db=self._bearoff_db, strategy=self._raw_base,
         )
         return self._format_cube_result(r, eval_level="1-ply")
 
@@ -435,8 +427,8 @@ class _MultiPlyAnalyzer(_CubelessBase):
     FILTER_MAX_MOVES = 5
     FILTER_THRESHOLD = 0.08
 
-    def __init__(self, weights, n_plies, parallel_evaluate=True, parallel_threads=0):
-        super().__init__(weights)
+    def __init__(self, models, n_plies, parallel_evaluate=True, parallel_threads=0):
+        super().__init__(models)
         self._n_plies = n_plies
         self._parallel_evaluate = parallel_evaluate
         requested_threads = parallel_threads
@@ -446,11 +438,8 @@ class _MultiPlyAnalyzer(_CubelessBase):
         # parallelises across positions (the benchmarks) asks for one thread
         # per analysis and gets inline evaluation, no worker pool.
         self._parallel_threads = requested_threads
-        # Around the 1-ply strategy's loaded base: the weights are immutable,
-        # so the checker side loads them once (the cube strategy keeps its
-        # own, see _cube_strategy).
         self._strategy_nply = bgbot_cpp.create_multipy_from_base(
-            self._strategy_1ply,
+            self._raw_base,
             n_plies=n_plies,
             parallel_evaluate=parallel_evaluate,
             parallel_threads=self._parallel_threads,
@@ -531,7 +520,7 @@ class _MultiPlyAnalyzer(_CubelessBase):
             contact_x=_contact_cube_life(self._n_plies, away1, away2),
             contact_x_pip_slope=_contact_cube_slope(self._n_plies, away1, away2),
             bearoff_db=self._bearoff_db,
-            incl_2ply_details=incl_2ply_details, strategy=self._cube_strategy,
+            incl_2ply_details=incl_2ply_details, strategy=self._raw_base,
             decision_only=decision_only,
         )
         if decision_only:
@@ -564,7 +553,7 @@ class _RolloutAnalyzer(_CubelessBase):
     FILTER_THRESHOLD = 0.08
 
     def __init__(
-        self, weights, n_trials=1296, truncation_depth=0,
+        self, models, n_trials=1296, truncation_depth=0,
         decision_ply=1, truncation_ply=-1, n_threads=0, seed=42,
         late_ply=-1, late_threshold=20,
         parallelize_trials=True,
@@ -579,7 +568,7 @@ class _RolloutAnalyzer(_CubelessBase):
         filter_max_moves=None,
         filter_threshold=None,
     ):
-        super().__init__(weights)
+        super().__init__(models)
         # Candidate-selection filter for checker_play_analytics: how many of
         # the top scored moves get rolled out (the rest keep their filter-stage
         # equity). Instance attrs shadow the TINY class defaults when a wider
@@ -597,7 +586,7 @@ class _RolloutAnalyzer(_CubelessBase):
         self._strategy_2ply = None
         if self._prefilter_threshold > 0:
             self._strategy_2ply = bgbot_cpp.create_multipy_from_base(
-                self._strategy_1ply,
+                self._raw_base,
                 n_plies=2,
                 parallel_evaluate=True,
                 parallel_threads=max(2, _default_parallel_threads()),
@@ -628,8 +617,8 @@ class _RolloutAnalyzer(_CubelessBase):
         cube_cfg = cube if cube is not None else _empty
         cube_late_cfg = cube_late if cube_late is not None else _empty
 
-        self._rollout_strategy = bgbot_cpp.create_rollout(
-            weights.strategy_type, weights.weight_paths_list, weights.hidden_sizes_list,
+        self._rollout_strategy = bgbot_cpp.create_rollout_from_base(
+            self._raw_base,
             n_trials=n_trials,
             truncation_depth=truncation_depth,
             decision_ply=decision_ply,
@@ -1361,7 +1350,8 @@ class BgBotAnalyzer:
         late_ply: int = -1,
         late_threshold: int = 20,
         seed: int = 42,
-        bearoff_db: bool | str = True,
+        bearoff_db: bool | str | None = None,
+        models: BatchModels | None = None,
         checker=None,
         checker_late=None,
         cube=None,
@@ -1373,9 +1363,10 @@ class BgBotAnalyzer:
         target_se: float = 0.0,
         max_batches: int = 50,
     ):
-        if weights is None:
-            weights = default_weights()
-        self._weights = weights
+        from .batch import _resolve_models
+
+        self._models = _resolve_models(weights, models, bearoff_db)
+        self._weights = self._models.weights
         self._eval_level = eval_level
         self._cubeful = bool(cubeful)
         # Two-stage checker_play filter: 1-ply loose cull (prefilter_threshold)
@@ -1412,21 +1403,16 @@ class BgBotAnalyzer:
         # ultra_late_threshold=9999 keeps cubeful active for ~50 half-moves.
         # 0 = inherit from ultra_late_threshold (no separate drop).
         self._cubeful_late_threshold = int(cubeful_late_threshold)
-        # Load bearoff database
-        self._bearoff_db = None
-        if bearoff_db:
-            db_path = bearoff_db if isinstance(bearoff_db, str) else bearoff_db_path()
-            if db_path:
-                self._bearoff_db = load_bearoff_db(db_path)
+        self._bearoff_db = self._models.bearoff_db
 
         if eval_level == "1ply":
             inner: _CubelessBase = _OnePlyAnalyzer(
-                weights, parallel_threads=parallel_threads,
+                self._models, parallel_threads=parallel_threads,
             )
         elif eval_level in ("2ply", "3ply", "4ply"):
             n_plies = int(eval_level[0])
             inner = _MultiPlyAnalyzer(
-                weights, n_plies=n_plies,
+                self._models, n_plies=n_plies,
                 parallel_threads=parallel_threads,
             )
         elif eval_level == "truncated1":
@@ -1435,7 +1421,7 @@ class BgBotAnalyzer:
             # 6 ordered first rolls and biases the result (benchmark PR 2.23 ->
             # 0.50 going 42 -> 72). Otherwise XG-Roller-style: trunc-5, 1-ply.
             inner = _RolloutAnalyzer(
-                weights,
+                self._models,
                 n_trials=72,
                 truncation_depth=5,
                 decision_ply=1,
@@ -1453,7 +1439,7 @@ class BgBotAnalyzer:
             # 1-ply late cube + 1-ply truncation eval (the ply-drop economies
             # that cost ~0.5 PR).
             inner = _RolloutAnalyzer(
-                weights,
+                self._models,
                 n_trials=360,
                 truncation_depth=7,
                 decision_ply=2,
@@ -1473,7 +1459,7 @@ class BgBotAnalyzer:
             # 3T: trunc-7, 3-ply early then 2-ply late (ultra_late=9999 disables
             # the 1-ply drop). Closer to XG Roller++. (Was trunc-5 / 1-ply late.)
             inner = _RolloutAnalyzer(
-                weights,
+                self._models,
                 n_trials=360,
                 truncation_depth=7,
                 decision_ply=3,
@@ -1488,7 +1474,7 @@ class BgBotAnalyzer:
             )
         elif eval_level == "rollout":
             inner = _RolloutAnalyzer(
-                weights,
+                self._models,
                 n_trials=n_trials,
                 truncation_depth=truncation_depth,
                 decision_ply=decision_ply,
@@ -1515,15 +1501,6 @@ class BgBotAnalyzer:
 
         # Set bearoff DB on inner analyzer and its C++ strategies
         if self._bearoff_db is not None:
-            inner._bearoff_db = self._bearoff_db
-            # Wrap the 1-ply strategy in BearoffStrategy so 1-ply scoring used
-            # for filter ranking returns exact DB probs at bearoff positions.
-            # Without this, the 1-ply NN can mis-rank candidates whose post-move
-            # boards are bearoff (e.g. a position the NN says has P(GL)=0.01 but
-            # the DB knows is exactly 0.139), causing the filter to drop near-
-            # equivalent moves before N-ply evaluation.
-            inner._strategy_1ply = bgbot_cpp.BearoffStrategy(
-                inner._strategy_1ply, self._bearoff_db)
             if isinstance(inner, _MultiPlyAnalyzer):
                 bgbot_cpp.multipy_set_bearoff_db(inner._strategy_nply, self._bearoff_db)
             elif isinstance(inner, _RolloutAnalyzer):
@@ -1656,6 +1633,49 @@ class BgBotAnalyzer:
             moves=moves, board=board, die1=die1, die2=die2,
             eval_level=eval_level,
         )
+
+    def top_two_promote(
+        self, board: list[int], moves: list[MoveAnalysis], *, max_gap: float = 0.010,
+        cube_value: int = 1, cube_owner: str = "centered", away1: int = 0,
+        away2: int = 0, is_crawford: bool = False, jacoby: bool = True,
+        beaver: bool = True, max_cube_value: int = 0,
+    ) -> tuple[list[MoveAnalysis], str]:
+        """Re-rank two close 2-ply contact moves at 3-ply, using the original root.
+
+        Returns the input ranking and "2-ply" for races, forced moves and gaps
+        above max_gap. A promotion returns just the two searched candidates.
+        """
+        if self._eval_level != "2ply" or not self._cubeful:
+            raise ValueError("top_two_promote requires a cubeful 2-ply analyzer")
+        _validate_cube_limit(cube_value, max_cube_value)
+        if len(moves) < 2 or bgbot_cpp.is_race(board):
+            return moves, "2-ply"
+        first, second = moves[:2]
+        if any(move.eval_level != "2-ply" for move in (first, second)):
+            raise ValueError("both leading moves must have 2-ply evaluations")
+        if first.equity - second.equity > max_gap:
+            return moves, "2-ply"
+        inner = self._analyzer._inner
+        owner = flip_owner(cube_owner)
+        money = away1 == away2 == 0
+
+        opponent_cube = bgbot_cpp.CubeInfo(
+            cube_value, owner, away2, away1, is_crawford, money and jacoby,
+            money and beaver, max_cube_value, contact_cube_life(3, away1, away2),
+            contact_cube_slope(3, away1, away2),
+        )
+        endpoints = [first.board, second.board]
+        scores = bgbot_cpp.score_checker_endpoints(
+            board, endpoints, opponent_cube, inner._strategy_1ply, 3, inner._parallel_threads,
+        )
+        promoted = [
+            replace(first if r["board"] == first.board else second,
+                    equity=r["equity"], cubeless_equity=r["cubeless_equity"],
+                    probs=Probabilities.from_list(r["probs"]), equity_diff=r["equity_diff"],
+                    eval_level=r["eval_level"])
+            for r in scores
+        ]
+        return promoted, "3-ply"
 
     def post_move_analytics(
         self,

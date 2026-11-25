@@ -40,8 +40,8 @@ _MAX_C_FLOAT = float.fromhex("0x1.fffffep127")
 _CUBE_OWNER = {"centered": 0, "player": 1, "opponent": 2}
 
 
-def _default_money_policy() -> PureTDPolicy | None:
-    """Load the tested policy for an implicit Jacoby money game."""
+def default_money_policy() -> PureTDPolicy | None:
+    """Load the optional filtered PureTD money policy, or return None if unavailable."""
     library = os.environ.get("NEONGAMMON_PURETD_LIBRARY")
     model = os.environ.get("NEONGAMMON_PURETD_MODEL")
     if library is None and model is None:

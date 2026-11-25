@@ -117,8 +117,7 @@ def simulate_game(*, seed: int = 42, config: GameConfig | None = None,
     Policies can implement ``select_checker_move`` to return a board directly,
     or ``checker_play`` to return the usual analysis results. For the cube they
     implement ``cube_decision`` or ``cube_action`` like BgBotAnalyzer.
-    Without explicit players, Jacoby money games prefer filtered PureTD
-    checker play when its native library and model are available.
+    Without explicit players, both sides use the production 1-ply analyzer.
     The responder policy evaluates the doubler's board: ``should_take`` is the
     opponent's response, as in the public cube API. Returned moves are checked
     against native legal moves. Same seed/policies/engine build reproduce dice
@@ -126,13 +125,6 @@ def simulate_game(*, seed: int = 42, config: GameConfig | None = None,
     """
     _integer('seed', seed, 0, 2147483647)
     cfg = config or GameConfig()
-    if players is None and cfg.jacoby and not cfg.match_length:
-        from .puretd import _default_money_policy
-
-        policy = _default_money_policy()
-        if policy is not None:
-            with policy:
-                return _play_game(seed, cfg, (policy, policy), cancel)
     return _play_game(seed, cfg, _players(players), cancel)
 
 

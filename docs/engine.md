@@ -2,22 +2,21 @@
 
 NeonGammon has two entry points for different tasks. Use `simulate_game()` or
 `simulate_match()` to play out games with a policy. Use `BgBotAnalyzer` to rank
-moves, examine equities, or analyze cube decisions. Automatic PureTD selection
-belongs to game simulation. The analyzer defaults to cubeful Stage 11 at
+moves, examine equities, or analyze cube decisions. PureTD is an explicit simulation policy. The analyzer defaults to cubeful Stage 11 at
 1-ply, with optional weights and evaluation levels. [Simulation API](simulation.md)
 · [Analyzer configuration](../python/neongammon/analyzer.py) · [Model registry](../python/neongammon/weights.py)
 
 ## Which engine plays the position?
 
-The table describes simulation with the default players. Stage 11 is
+The table describes default players and the optional PureTD hybrid. Stage 11 is
 the default analyzer model in both the hybrid and the standalone Stage 11
 paths.
 
 | Situation | Checker play after the roll | Cube decision before the roll |
 | --- | --- | --- |
-| Jacoby money game, PureTD available, cube below its cap | PureTD searches one opponent reply with a 0.075 equity filter | Stage 11 at 2-ply |
+| Explicit filtered PureTD policy, Jacoby money game, cube below its cap | PureTD searches one opponent reply with a 0.075 equity filter | Stage 11 at 2-ply |
 | Same game once the cube reaches its cap | Stage 11 at 2-ply for the remaining moves | No further doubles |
-| Jacoby money game, PureTD unavailable | Stage 11 at 1-ply | Stage 11 at 1-ply |
+| Jacoby money game, default players | Stage 11 at 1-ply | Stage 11 at 1-ply |
 | Money game without Jacoby | Stage 11 at 1-ply | Stage 11 at 1-ply |
 | Match outside the Crawford game | Stage 11 at 1-ply with the match score | Stage 11 at 1-ply with the match score and match equity table |
 | Crawford game | Stage 11 at 1-ply with the match score and Crawford state | No doubles |
@@ -39,7 +38,7 @@ directly. [PureTD policy](simulation.md#puretd-checker-policy)
 `DifficultyPolicy` configures an explicit opponent preset. Beginner, Casual,
 and Intermediate sample cubeful Stage 11 1-ply checker alternatives within
 a preset equity-loss limit and sometimes vary close Cube decisions. Full
-Strength chooses the Stage 11 2-ply recommendation by default.
+Strength uses 3-ply checker play and 2-ply cube decisions by default.
 [Opponent difficulty](simulation.md#opponent-difficulty)
 
 ### NeonDojo five-point PR benchmark
@@ -68,10 +67,10 @@ expected loss under each preset's choice probabilities. The intervals use
 
 Set `NEONGAMMON_PURETD_LIBRARY` and `NEONGAMMON_PURETD_MODEL` to the native
 library and the exported cubeful money checkpoint. In a source checkout, when
-both variables are unset, the simulator looks for `build/puretd/libpuretd_cblas.so`
+both variables are unset, the explicit `default_money_policy()` factory looks for `build/puretd/libpuretd_cblas.so`
 and `build/puretd/cubeful.bin`. The tested filter requires a compatible ABI 7
 library that exports `bgc_set_search`. Missing or unloadable files, incompatible
-libraries and rejected models use the Stage 11 simulation fallback. An error
+libraries and rejected models cause the factory to return `None`. An error
 from PureTD while selecting a move surfaces to the caller. [Loading and fallback](../python/neongammon/puretd.py)
 
 ## How Stage 11 evaluates board positions

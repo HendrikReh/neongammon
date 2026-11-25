@@ -144,39 +144,16 @@ def test_concurrent_shared_analyzer_methods_match_serial(level):
 
 
 @pytest.mark.parametrize("level", ["1ply", "2ply"])
-def test_cube_strategy_lazy_init_loads_once_under_concurrency(level):
-    """Concurrent cube_action calls on a fresh analyzer must initialize
-    _cube_strategy exactly once (no double-load race on 24 NNs)."""
+def test_concurrent_cube_calls_reuse_checker_model(level):
     analyzer = BgBotAnalyzer(eval_level=level, parallel_threads=2)
-    real_create = bgbot_cpp.create_strategy
-    load_count = 0
-    count_lock = threading.Lock()
-
-    def slow_create(*args, **kwargs):
-        nonlocal load_count
-        # Widen the race window so every waiting thread hits _cube_strategy
-        # while the first caller is still loading weights.
-        time.sleep(0.05)
-        with count_lock:
-            load_count += 1
-        return real_create(*args, **kwargs)
-
-    n_threads = 8
-    barrier = threading.Barrier(n_threads)
-
-    with patch.object(bgbot_cpp, "create_strategy", side_effect=slow_create):
+    barrier = threading.Barrier(8)
+    with patch.object(bgbot_cpp, "create_strategy", side_effect=AssertionError("extra model load")):
         def call_cube(_):
             barrier.wait(timeout=10)
-            res = analyzer.cube_action(STARTING_BOARD)
-            inner = analyzer._analyzer._inner
-            return res.optimal_equity, inner._cube_strategy
-
-        with ThreadPoolExecutor(max_workers=n_threads) as pool:
-            outputs = list(pool.map(call_cube, range(n_threads)))
-
-    assert load_count == 1
-    first_eq, first_strat = outputs[0]
-    assert all(eq == first_eq and strat is first_strat for eq, strat in outputs)
+            return analyzer.cube_action(STARTING_BOARD)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            outputs = list(pool.map(call_cube, range(8)))
+    assert all(res == outputs[0] for res in outputs)
 
 
 def test_parallel_rollout_progress_callback_monotonic_and_serialized():
@@ -332,3 +309,71 @@ def test_double_wrapped_bearoff_strategy_parity():
         _NEAR_BEAROFF_BOARD, owner, double_mp, 2, n_threads=1
     )
     assert eq_double_mp == eq_single_mp
+
+@pytest.mark.parametrize("threads", [1, 4])
+@pytest.mark.parametrize("settings", [((20, 15), (1, 1)), ((1, 1), (20, 15))])
+def test_legacy_evaluator_reconfigures_reply_prefilter(threads, settings):
+    weights = WeightConfig.from_model("stage11")
+
+    def evaluator():
+        return bgbot_cpp.create_multipy(
+            weights.strategy_type, weights.weight_paths_list, weights.hidden_sizes_list,
+            n_plies=3 if threads > 1 else 2, full_depth_opponent=True, parallel_evaluate=threads > 1,
+            parallel_threads=threads,
+        )
+
+    reused, cold = evaluator(), evaluator()
+    boards = possible_moves(STARTING_BOARD, 3, 1)[:2]
+    first, second = settings
+    reused.set_prefilter_params(*first)
+    before = [reused.evaluate_board(b, STARTING_BOARD) for b in boards]
+    reused.set_prefilter_params(*second)
+    after = [reused.evaluate_board(b, STARTING_BOARD) for b in boards]
+    cold.set_prefilter_params(*second)
+    assert after == [cold.evaluate_board(b, STARTING_BOARD) for b in boards]
+    assert before != after
+
+
+@pytest.mark.parametrize("operation", ["weights", "single_board", "single_cube", "recursive_batch"])
+def test_python_thread_can_run_during_each_native_operation(operation):
+    import sys
+    from neongammon import BatchModels, batch_cube_action_nply
+
+    weights = WeightConfig.from_model("stage11")
+    args = (weights.strategy_type, weights.weight_paths_list, weights.hidden_sizes_list)
+    models = BatchModels(weights, bearoff_db=False)
+    base = models.base()
+    owner = bgbot_cpp.CubeOwner.CENTERED
+    operations = {
+        "weights": lambda: bgbot_cpp.create_strategy(*args),
+        "single_board": lambda: base.evaluate_board(STARTING_BOARD, STARTING_BOARD),
+        "single_cube": lambda: bgbot_cpp.evaluate_cube_decision_unified(
+            STARTING_BOARD, 1, owner, *args, strategy=base),
+        "recursive_batch": lambda: batch_cube_action_nply(
+            [dict(board=STARTING_BOARD)], models=models, decision_only=True),
+    }
+    evaluate = operations[operation]
+    ready, start, ran = threading.Event(), threading.Event(), threading.Event()
+
+    def observer():
+        ready.set()
+        start.wait()
+        ran.set()
+
+    observer_thread = threading.Thread(target=observer)
+    observer_thread.start()
+    ready.wait()
+    old_interval = sys.getswitchinterval()
+    try:
+        # Disable bytecode-timeslice handoffs. Only the native call can let
+        # the waiting observer run before this loop returns to normal scheduling.
+        sys.setswitchinterval(10.0)
+        start.set()
+        for _ in range(500):
+            evaluate()
+            if ran.is_set():
+                break
+        assert ran.is_set(), operation
+    finally:
+        sys.setswitchinterval(old_interval)
+        observer_thread.join()

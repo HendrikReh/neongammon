@@ -19,6 +19,13 @@ Timings below were measured on an M4 Pro Mac mini (10P+4E cores).
 
 ## [Unreleased]
 
+- Added recursive cube batches, shared checker/cube/rollout models, public
+  top-two promotion, difficulty evaluator injection and policy reseeding.
+- Full Strength defaults to 3-ply checker decisions and 2-ply cube decisions.
+  PureTD simulation is opt-in through `default_money_policy()` or `PureTDPolicy`.
+- Corrected stale legacy prefilter cache results, gammon price player ordering
+  and the live money take point.
+
 ## [3.1.2] - 2026-11-25
 
 ### Changed

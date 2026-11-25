@@ -48,10 +48,10 @@ from dataclasses import dataclass
 import bgbot_cpp
 
 from .analyzer import (
-    CUBEFUL_FILTERED_PLIES, _contact_cube_life, _contact_cube_slope,
+    BgBotAnalyzer, CUBEFUL_FILTERED_PLIES, _optimal_action, _contact_cube_life, _contact_cube_slope,
     _validate_cube_limit, load_bearoff_db, resolve_owner,
 )
-from .types import CheckerPlayResult, CubeActionResult, MoveAnalysis, PostMoveAnalysis, Probabilities
+from .types import CheckerPlayResult, CubeActionResult, CubeDecisionResult, MoveAnalysis, PostMoveAnalysis, Probabilities
 from .weights import WeightConfig, WeightConfigPair, bearoff_db_path, default_weights
 
 _LEVELS = ("1ply", "2ply", "3ply", "4ply")
@@ -134,6 +134,11 @@ class BatchModels:
         self._raw_base = None
         self._base = None
         self._multipy: dict[tuple, object] = {}
+
+    @classmethod
+    def from_analyzer(cls, analyzer: BgBotAnalyzer) -> BatchModels:
+        """Share the analyzer's model weights and bearoff database."""
+        return analyzer._models
 
     @property
     def bearoff_db(self):
@@ -481,6 +486,61 @@ def batch_cube_action(
         )
         for e in evals
     ]
+
+
+def batch_cube_action_nply(
+    positions: list[dict],
+    eval_level: str = "2ply",
+    weights: WeightConfig | WeightConfigPair | None = None,
+    *,
+    n_threads: int = 0,
+    filter_max_moves: int = 5,
+    filter_threshold: float = 0.08,
+    jacoby: bool = True,
+    beaver: bool = True,
+    decision_only: bool = False,
+    models: BatchModels | None = None,
+    bearoff_db: bool | str | None = None,
+) -> list[CubeActionResult | CubeDecisionResult]:
+    """Run the analyzer's recursive cube search in parallel across positions.
+
+    Each entry accepts the board and cube context of BgBotAnalyzer.cube_action,
+    including max_cube_value and optional jacoby/beaver overrides. The optional
+    contact_x and contact_x_pip_slope fields override the money contact defaults.
+    With decision_only=True the cubeless search is skipped.
+    """
+    ply = _check_level(eval_level)
+    models = _resolve_models(weights, models, bearoff_db)
+    if not positions:
+        return []
+    inputs = []
+    for p in positions:
+        value, cap = p.get("cube_value", 1), p.get("max_cube_value", 0)
+        _validate_cube_limit(value, cap)
+        a1, a2 = p.get("away1", 0), p.get("away2", 0)
+        money = a1 == a2 == 0
+        info = bgbot_cpp.CubeInfo(
+            value, resolve_owner(p.get("cube_owner", "centered")), a1, a2,
+            p.get("is_crawford", False), money and p.get("jacoby", jacoby),
+            money and p.get("beaver", beaver), cap,
+            p.get("contact_x", _contact_cube_life(ply, a1, a2)) if money else -1.0,
+            p.get("contact_x_pip_slope", _contact_cube_slope(ply, a1, a2)) if money else 0.0,
+        )
+        inputs.append((p["board"], info))
+    raw = bgbot_cpp.batch_cube_action_nply(
+        inputs, models.base(), models.bearoff_db, ply, n_threads, decision_only,
+        filter_max_moves, filter_threshold,
+    )
+    results = []
+    for r in raw:
+        r["eval_level"] = f"{ply}-ply"
+        r["optimal_action"] = _optimal_action(r["should_double"], r["should_take"], r["is_beaver"])
+        if decision_only:
+            results.append(CubeDecisionResult(**r))
+        else:
+            r["probs"] = Probabilities.from_list(r["probs"])
+            results.append(CubeActionResult(**r))
+    return results
 
 
 def batch_checker_play(
