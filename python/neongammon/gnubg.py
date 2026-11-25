@@ -53,6 +53,19 @@ def _flip_board(checkers):
     return flipped
 
 
+def _flip_cube_owner(cube_owner):
+    """Flip cube ownership to the opponent's perspective."""
+    if cube_owner == "player":
+        return "opponent"
+    if cube_owner == "opponent":
+        return "player"
+    if cube_owner == "centered":
+        return "centered"
+    raise ValueError(
+        f"cube_owner must be 'centered', 'player', or 'opponent', got {cube_owner!r}"
+    )
+
+
 def _run_gnubg(cmd, timeout=60, gnubg_path=None):
     """Run the GNUbg CLI with the given command and return stdout.
 
@@ -194,6 +207,8 @@ def _parse_cube_section_full(lines):
     # Line 1: "N-ply cubeless equity +X.XXX" or "+X.XXX (Money: +Y.YYY)" in match play
     eq_line = lines[1].strip()
     eq_match = re.search(r'equity\s+([+-]?\d+\.\d+)', eq_line)
+    if eq_match is None:
+        raise ValueError(f"Could not parse cubeless equity line: {eq_line!r}")
     eq_cubeless = float(eq_match.group(1))
 
     # Line 2: "  0.527 0.148 0.008 - 0.473 0.128 0.005"
@@ -217,11 +232,13 @@ def _parse_cube_section_full(lines):
         if m:
             act_name = m.group(1).strip()
             val = float(m.group(2))
-            if 'No double' in act_name or 'No dbl' in act_name:
+            if ('No double' in act_name or 'No dbl' in act_name
+                    or 'No redouble' in act_name):
                 nd = val
-            elif 'Double, take' in act_name:
+            elif ('Double, take' in act_name or 'Redouble, take' in act_name
+                    or 'Double, beaver' in act_name or 'Redouble, beaver' in act_name):
                 dt = val
-            elif 'Double, pass' in act_name:
+            elif 'Double, pass' in act_name or 'Redouble, pass' in act_name:
                 dp = val
         elif 'Proper cube action' in line:
             if ':' in line:
@@ -265,6 +282,117 @@ def _parse_cube_analytics_full(output, search_start=0):
     # Find next offset past this section
     next_offset = idx + len('Cube analysis') + 1
     return result, next_offset
+
+
+_EVAL_ROW_RE = re.compile(
+    r'^\s*(static|(\d+)\s*-?\s*ply):\s+'
+    r'(\d+\.\d+)\s+(\d+\.\d+)\s+(\d+\.\d+)\s+(\d+\.\d+)\s+(\d+\.\d+)\s+'
+    r'([+-]?\d+\.\d+)(?:\s+([+-]?\d+\.\d+))?'
+)
+
+_EVAL_BLOCK_SPLIT_RE = re.compile(r'^Evaluator:\s*', re.MULTILINE)
+
+
+def _parse_eval_section(section, n_plies=0):
+    """Parse a single GNUbg ``eval`` output section.
+
+    GNUbg's ``eval`` command always emits a ply evaluation table::
+
+                Win     W(g)    W(bg)   L(g)    L(bg)   Equity    Cubeful
+        static: 0.253   0.000   0.000   0.000   0.000   -0.494    -0.793
+         1 ply: 0.255   0.000   0.000   0.000   0.000   -0.491    -0.816
+
+    regardless of cube ownership, Crawford, DMP, or dead-cube status.  When
+    the player on roll is allowed to double, ``eval`` also appends a
+    ``Cube analysis`` block with ND/DT/DP equities.
+
+    Returns:
+        dict with keys: p_win, p_gw, p_bw, p_gl, p_bl, equity_cubeless,
+        equity_nd, equity_dt, equity_dp, optimal_equity, optimal_action,
+        can_double.
+    """
+    cube_idx = section.find('Cube analysis')
+    table_part = section[:cube_idx] if cube_idx != -1 else section
+
+    rows_by_ply = {}
+    last_row = None
+    for line in table_part.split('\n'):
+        m = _EVAL_ROW_RE.match(line)
+        if not m:
+            continue
+        ply = 0 if m.group(1) == 'static' else int(m.group(2))
+        eq_cl = float(m.group(8))
+        eq_cf = float(m.group(9)) if m.group(9) is not None else eq_cl
+        row = {
+            'p_win': float(m.group(3)),
+            'p_gw': float(m.group(4)),
+            'p_bw': float(m.group(5)),
+            'p_gl': float(m.group(6)),
+            'p_bl': float(m.group(7)),
+            'equity_cubeless': eq_cl,
+            'equity_cubeful': eq_cf,
+        }
+        rows_by_ply[ply] = row
+        last_row = row
+
+    if last_row is None:
+        raise ValueError(f"No eval table row found in gnubg output:\n{section}")
+
+    chosen = rows_by_ply.get(n_plies, last_row)
+    nd = chosen['equity_cubeful']
+    dt = None
+    dp = None
+    optimal_action = ""
+    can_double = False
+    optimal_equity = nd
+
+    if cube_idx != -1:
+        cube = _parse_cube_section_full(section[cube_idx:].split('\n'))
+        if cube['equity_nd'] is not None:
+            nd = cube['equity_nd']
+        dt = cube['equity_dt']
+        dp = cube['equity_dp']
+        optimal_action = cube['optimal_action']
+        if dt is not None and dp is not None:
+            can_double = True
+            should_double = min(dt, dp) > nd
+            should_take = dt <= dp
+            optimal_equity = (dt if should_take else dp) if should_double else nd
+        else:
+            optimal_equity = nd
+
+    return {
+        'p_win': chosen['p_win'],
+        'p_gw': chosen['p_gw'],
+        'p_bw': chosen['p_bw'],
+        'p_gl': chosen['p_gl'],
+        'p_bl': chosen['p_bl'],
+        'equity_cubeless': chosen['equity_cubeless'],
+        'equity_nd': nd,
+        'equity_dt': dt,
+        'equity_dp': dp,
+        'optimal_equity': optimal_equity,
+        'optimal_action': optimal_action,
+        'can_double': can_double,
+    }
+
+
+def _parse_eval_batch(output, n_plies=0):
+    """Parse all ``eval`` sections from a GNUbg stdout string."""
+    parts = _EVAL_BLOCK_SPLIT_RE.split(output)
+    if len(parts) > 1:
+        return [_parse_eval_section(blk, n_plies=n_plies) for blk in parts[1:]]
+    if _EVAL_ROW_RE.search(output):
+        return [_parse_eval_section(output, n_plies=n_plies)]
+    return []
+
+
+def _parse_eval_single(output, n_plies=0):
+    """Parse a single ``eval`` section from a GNUbg stdout string."""
+    results = _parse_eval_batch(output, n_plies=n_plies)
+    if not results:
+        raise ValueError(f"No evaluation found in gnubg output:\n{output}")
+    return results[-1]
 
 
 # ---------------------------------------------------------------------------
@@ -441,34 +569,48 @@ class GnuBgAnalyzer:
         """Evaluate cube decision for a pre-roll position.
 
         Returns CubeActionResult with cubeful ND/DT/DP equities and cubeless
-        probabilities, all from the current player's perspective.
+        probabilities, all from the current player's perspective.  When the
+        player on roll cannot double (opponent owns the cube, Crawford game,
+        DMP, or dead cube), returns ``should_double=False``,
+        ``optimal_action="No Double"``, and ``equity_nd == optimal_equity``
+        from GNUbg's ``eval`` output without crashing.
 
         Args:
             jacoby: Override the instance default. None = use self.jacoby.
                 Auto-disabled for match play.
         """
+        if len(board) != 26:
+            raise ValueError(f"board must have 26 elements, got {len(board)}")
+
         j = self.jacoby if jacoby is None else jacoby
         if away1 > 0 or away2 > 0:
             j = False
         cmd = self._build_preroll_command(board, cube_value, cube_owner,
-                                         away1=away1, away2=away2,
-                                         is_crawford=is_crawford, jacoby=j)
+                                          away1=away1, away2=away2,
+                                          is_crawford=is_crawford, jacoby=j)
         output = _run_gnubg(cmd, timeout=self.timeout, gnubg_path=self.gnubg_path)
-        r, _ = _parse_cube_analytics_full(output)
+        r = _parse_eval_single(output, n_plies=self.n_plies)
 
         probs = Probabilities(r['p_win'], r['p_gw'], r['p_bw'],
                               r['p_gl'], r['p_bl'])
 
-        nd = r['equity_nd'] if r['equity_nd'] is not None else 0.0
-        dt = r['equity_dt'] if r['equity_dt'] is not None else 0.0
-        dp = r['equity_dp'] if r['equity_dp'] is not None else 1.0
-
-        should_double = min(dt, dp) > nd
-        should_take = dt <= dp
-        if should_double:
-            optimal_action = "Double/Take" if should_take else "Double/Pass"
-            optimal_equity = dt if should_take else dp
+        nd = r['equity_nd']
+        if r['can_double']:
+            dt = r['equity_dt']
+            dp = r['equity_dp']
+            should_double = min(dt, dp) > nd
+            should_take = dt <= dp
+            if should_double:
+                optimal_action = "Double/Take" if should_take else "Double/Pass"
+                optimal_equity = dt if should_take else dp
+            else:
+                optimal_action = "No Double"
+                optimal_equity = nd
         else:
+            dt = nd
+            dp = 1.0
+            should_double = False
+            should_take = dt <= dp
             optimal_action = "No Double"
             optimal_equity = nd
 
@@ -506,14 +648,17 @@ class GnuBgAnalyzer:
         if away1 > 0 or away2 > 0:
             j = False
 
-        # Flip to opponent's perspective (they are about to roll)
+        # Flip board, cube ownership, and match scores to opponent's perspective
+        # (opponent is about to roll).
         opp_board = _flip_board(board)
+        opp_owner = _flip_cube_owner(cube_owner)
+        opp_away1, opp_away2 = away2, away1
 
-        cmd = self._build_preroll_command(opp_board, cube_value, cube_owner,
-                                         away1=away1, away2=away2,
-                                         is_crawford=is_crawford, jacoby=j)
+        cmd = self._build_preroll_command(opp_board, cube_value, opp_owner,
+                                          away1=opp_away1, away2=opp_away2,
+                                          is_crawford=is_crawford, jacoby=j)
         output = _run_gnubg(cmd, timeout=self.timeout, gnubg_path=self.gnubg_path)
-        r, _ = _parse_cube_analytics_full(output)
+        r = _parse_eval_single(output, n_plies=self.n_plies)
 
         # Invert to mover's perspective
         probs = Probabilities(
@@ -524,7 +669,7 @@ class GnuBgAnalyzer:
             backgammon_loss=r['p_bw'],
         )
         cubeless_eq = -r['equity_cubeless']
-        cubeful_eq = -r['equity_nd'] if r['equity_nd'] is not None else cubeless_eq
+        cubeful_eq = -r['equity_nd']
 
         return PostMoveAnalysis(
             probs=probs,
@@ -539,15 +684,20 @@ class GnuBgAnalyzer:
                      *, away1=0, away2=0, is_crawford=False, jacoby=None):
         """Evaluate all legal moves for a position + dice.
 
-        Returns CheckerPlayResult with moves sorted best-first by cubeless equity.
-        Uses batch evaluation: generates all legal boards, evaluates each in a
-        single GNUbg subprocess (one hint per board from the opponent's perspective).
+        Returns CheckerPlayResult with moves sorted best-first by cubeful equity
+        (tie-broken by cubeless equity, then board).  Uses batch evaluation:
+        generates all legal boards, flips each board along with cube ownership
+        and match scores to the opponent's perspective, and evaluates them with
+        GNUbg ``eval`` in a single subprocess.
 
         Args:
             jacoby: Override the instance default. None = use self.jacoby.
                 Auto-disabled for match play.
         """
         from .board import possible_moves
+
+        if len(board) != 26:
+            raise ValueError(f"board must have 26 elements, got {len(board)}")
 
         j = self.jacoby if jacoby is None else jacoby
         if away1 > 0 or away2 > 0:
@@ -560,63 +710,45 @@ class GnuBgAnalyzer:
                 moves=[], board=list(board), die1=die1, die2=die2,
                 eval_level=self.eval_level_str)
 
-        if len(candidates) == 1:
-            # Single legal move — still evaluate it
-            b = candidates[0]
-            opp_board = _flip_board(b)
-            cmd = self._build_preroll_command(opp_board, cube_value, cube_owner,
-                                             away1=away1, away2=away2,
-                                             is_crawford=is_crawford, jacoby=j)
-            output = _run_gnubg(cmd, timeout=self.timeout, gnubg_path=self.gnubg_path)
-            r, _ = _parse_cube_analytics_full(output)
-            probs = Probabilities(
-                win=1.0 - r['p_win'], gammon_win=r['p_gl'],
-                backgammon_win=r['p_bl'], gammon_loss=r['p_gw'],
-                backgammon_loss=r['p_bw'])
-            eq = -r['equity_cubeless']
-            move = MoveAnalysis(
-                board=list(b), equity=eq, cubeless_equity=eq,
-                probs=probs, equity_diff=0.0, eval_level=self.eval_level_str)
-            return CheckerPlayResult(
-                moves=[move], board=list(board), die1=die1, die2=die2,
-                eval_level=self.eval_level_str)
-
-        # Batch: evaluate all candidate boards in one GNUbg subprocess
+        # Evaluate all candidate boards in a single GNUbg subprocess.
         cmd = self._build_batch_postmove_command(
             candidates, cube_value, cube_owner,
             away1=away1, away2=away2, is_crawford=is_crawford, jacoby=j)
         output = _run_gnubg(cmd, timeout=self.timeout, gnubg_path=self.gnubg_path)
+        eval_results = _parse_eval_batch(output, n_plies=self.n_plies)
+
+        if len(eval_results) != len(candidates):
+            raise ValueError(
+                f"Expected {len(candidates)} GNUbg eval results, "
+                f"got {len(eval_results)}"
+            )
 
         move_analyses = []
-        search_start = 0
-        for cand_board in candidates:
-            idx = output.find('Cube analysis', search_start)
-            if idx == -1:
-                continue
-            section_lines = output[idx:].split('\n')
-            r = _parse_cube_section_full(section_lines)
-            search_start = idx + len('Cube analysis') + 1
-
+        for cand_board, r in zip(candidates, eval_results):
             # Invert to mover's perspective
             probs = Probabilities(
                 win=1.0 - r['p_win'], gammon_win=r['p_gl'],
                 backgammon_win=r['p_bl'], gammon_loss=r['p_gw'],
                 backgammon_loss=r['p_bw'])
-            eq = -r['equity_cubeless']
+            cubeless_eq = -r['equity_cubeless']
+            cubeful_eq = -r['optimal_equity']
 
             move_analyses.append(MoveAnalysis(
-                board=list(cand_board), equity=eq, cubeless_equity=eq,
+                board=list(cand_board), equity=cubeful_eq,
+                cubeless_equity=cubeless_eq,
                 probs=probs, equity_diff=0.0,
                 eval_level=self.eval_level_str))
 
-        # Sort best-first by equity
-        move_analyses.sort(key=lambda m: m.equity, reverse=True)
+        # Sort best-first by cubeful equity, breaking ties by cubeless equity
+        # (saturated -1.000 pass positions) and board representation.
+        move_analyses.sort(
+            key=lambda m: (-m.equity, -m.cubeless_equity, tuple(m.board))
+        )
 
         # Compute equity_diff relative to best
-        if move_analyses:
-            best_eq = move_analyses[0].equity
-            for m in move_analyses:
-                m.equity_diff = m.equity - best_eq
+        best_eq = move_analyses[0].equity
+        for m in move_analyses:
+            m.equity_diff = m.equity - best_eq
 
         return CheckerPlayResult(
             moves=move_analyses, board=list(board), die1=die1, die2=die2,
@@ -646,51 +778,62 @@ class GnuBgAnalyzer:
             cmd += 'set postcrawford on\n'
         return cmd
 
+    @staticmethod
+    def _cube_owner_cmd(cube_owner):
+        """Return the GNUbg command setting cube ownership from the on-roll POV.
+
+        In GNUbg, player 1 is on roll (``set turn 1``) and player 0 is the
+        opponent.
+        """
+        if cube_owner == "player":
+            return 'set cube owner 1\n'
+        if cube_owner == "opponent":
+            return 'set cube owner 0\n'
+        if cube_owner == "centered":
+            return 'set cube centre\n'
+        raise ValueError(
+            f"cube_owner must be 'centered', 'player', or 'opponent', got {cube_owner!r}"
+        )
+
     def _build_preroll_command(self, checkers, cube_value=1, cube_owner="centered",
                                *, away1=0, away2=0, is_crawford=False, jacoby=True):
-        """Build a GNUbg command for a pre-roll position hint (cube analytics)."""
+        """Build a GNUbg command for a pre-roll position evaluation."""
         cmd = self._match_prefix(away1, away2, is_crawford)
         cmd += f'set jacoby {"on" if jacoby else "off"}\n'
         cmd += f'set evaluation chequer eval plies {self.n_plies}\n'
         cmd += f'set evaluation cubedecision eval plies {self.n_plies}\n'
         cmd += f'set cube value {cube_value}\n'
-
-        # Cube owner: "centered" = default, "player" = turn 1 (on roll),
-        # "opponent" = turn 0
-        if cube_owner == "player":
-            cmd += 'set cube owner 1\n'
-        elif cube_owner == "opponent":
-            cmd += 'set cube owner 0\n'
+        cmd += self._cube_owner_cmd(cube_owner)
 
         cmd += f'set board simple {_board_simple_str(checkers)}\n'
         cmd += 'set turn 1\n'
-        cmd += 'hint\n'
+        cmd += 'eval\n'
         return cmd
 
     def _build_batch_postmove_command(self, boards, cube_value=1,
-                                       cube_owner="centered",
-                                       *, away1=0, away2=0, is_crawford=False,
-                                       jacoby=True):
+                                      cube_owner="centered",
+                                      *, away1=0, away2=0, is_crawford=False,
+                                      jacoby=True):
         """Build a GNUbg command that evaluates multiple post-move positions.
 
-        For each board, we flip to the opponent's perspective and run hint.
-        All boards are evaluated in a single GNUbg subprocess.
+        ``boards``, ``cube_owner``, and ``(away1, away2)`` are given from the
+        mover's perspective.  Each board is flipped to the opponent's
+        perspective together with flipped cube ownership and swapped match
+        scores, and evaluated via GNUbg ``eval`` in a single subprocess.
         """
-        cmd = self._match_prefix(away1, away2, is_crawford)
+        opp_owner = _flip_cube_owner(cube_owner)
+        opp_away1, opp_away2 = away2, away1
+        cmd = self._match_prefix(opp_away1, opp_away2, is_crawford)
         cmd += f'set jacoby {"on" if jacoby else "off"}\n'
         cmd += f'set evaluation chequer eval plies {self.n_plies}\n'
         cmd += f'set evaluation cubedecision eval plies {self.n_plies}\n'
         cmd += f'set cube value {cube_value}\n'
-
-        if cube_owner == "player":
-            cmd += 'set cube owner 1\n'
-        elif cube_owner == "opponent":
-            cmd += 'set cube owner 0\n'
+        cmd += self._cube_owner_cmd(opp_owner)
 
         for board in boards:
             opp_board = _flip_board(board)
             cmd += f'set board simple {_board_simple_str(opp_board)}\n'
             cmd += 'set turn 1\n'
-            cmd += 'hint\n'
+            cmd += 'eval\n'
 
         return cmd
