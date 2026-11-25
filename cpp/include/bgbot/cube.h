@@ -8,6 +8,7 @@
 #include "types.h"
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 namespace bgbot {
@@ -407,7 +408,8 @@ std::vector<CubefulProbsAndEquity> cubeful_checker_endpoints_nply(
     const CubeInfo& cube,
     const Strategy& strategy,
     int plies,
-    int threads);
+    int threads,
+    const std::function<void()>& check_budget = {});
 
 // Batched version: evaluate cubeful equity for the SAME board at N-ply depth
 // against MULTIPLE cube states simultaneously. Returns one equity per cube

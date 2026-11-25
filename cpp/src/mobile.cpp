@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (C) 2026 Mark Higgins
 #include "bgbot/mobile.h"
+#include "bgbot/analyzer_session.h"
 #include "bgbot/bearoff.h"
 #include "bgbot/board.h"
 #include "bgbot/cube.h"
-#include "bgbot/moves.h"
 #include "bgbot/neural_net.h"
-#include "bgbot/pubeval.h"
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <iomanip>
@@ -23,17 +21,10 @@ struct NeongammonMobileEngine {
     BearoffDB db;
     std::shared_ptr<Strategy> base;
     std::shared_ptr<Strategy> strategy;
+    std::shared_ptr<MultiPlyStrategy> checker_2ply;
 };
 namespace {
 thread_local std::string last_error;
-struct Move { Board board; std::array<double, 5> probs; double equity, cubeless; };
-std::array<double, 5> widen(const std::array<float, 5>& p) {
-    return {p[0], p[1], p[2], p[3], p[4]};
-}
-std::array<double, 5> invert(const std::array<float, 5>& p) {
-    return {1.0-p[0], p[3], p[4], p[1], p[2]};
-}
-double cl(const std::array<double,5>& p) { return 2*p[0]-1+p[1]-p[3]+p[2]-p[4]; }
 template<typename T, size_t N> void array(std::ostringstream& s, const std::array<T,N>& a) {
     s << '[';
     for(size_t i=0;i<N;++i) { if(i) s << ','; s << a[i]; }
@@ -72,6 +63,9 @@ extern "C" NeongammonMobileEngine* neongammon_mobile_create(const char* type,
         else throw std::invalid_argument("unsupported model strategy");
         if(!e->db.load(bearoff)) throw std::runtime_error("bearoff asset unavailable");
         e->strategy=std::make_shared<BearoffStrategy>(e->base,&e->db);
+        const auto filter = MoveFilters::TINY;
+        e->checker_2ply = make_multipy(e->base, 2, filter.max_moves, filter.threshold, false, false, 1);
+        e->checker_2ply->set_bearoff_db(&e->db);
         last_error.clear(); return e.release();
     } catch(const std::exception& ex) { last_error=ex.what(); return nullptr; }
     catch(...) { last_error="engine initialization failed"; return nullptr; }
@@ -92,51 +86,37 @@ extern "C" char* neongammon_mobile_analyze(NeongammonMobileEngine* e, int operat
         const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(r.budget_ms);
         const auto check_budget=[&] { if(std::chrono::steady_clock::now()>deadline) throw std::runtime_error("native budget exceeded"); };
         std::ostringstream s; s.imbue(std::locale::classic()); s << std::setprecision(17) << std::boolalpha;
-        const MoveFilter filter{5,0.08f};
+        const auto filter = MoveFilters::TINY;
+        const auto life = AnalyzerSession::contact_life(r.ply, ci.match);
         if(operation==0) {
-            std::vector<Board> candidates; possible_boards(board,r.die1,r.die2,candidates);
-            std::vector<Move> moves;
-            for(const auto& b:candidates) {
-                check_budget(); Move m{}; m.board=b;
-                if(r.ply==1) {
-                    auto p=e->strategy->evaluate_probs(b,board); m.probs=widen(p);
-                    auto [pp,op]=pip_counts(b); const auto x=cube_efficiency(p,is_race(b),pp,op);
-                    m.equity=cl2cf(p,ci,x);
-                } else {
-                    // Mirrors BgBotAnalyzer's cube-aware rescore of EVERY
-                    // candidate, including root routing and flipped match state.
-                    auto v=cubeful_probs_and_equity_nply(flip(b),flip_cube_perspective(ci),
-                        *e->strategy,r.ply,filter,1,nullptr,&board);
-                    m.probs=invert(v.probs); m.equity=-v.equity;
-                }
-                m.cubeless=cl(m.probs); moves.push_back(m);
+            CheckerPosition pos{board, r.die1, r.die2, ci.cube_value, ci.owner, ci.match};
+            std::vector<ScoredMove> moves;
+            if (r.ply == 1) {
+                moves = ranked_checker_moves_1ply(pos, *e->strategy, ci.jacoby, ci.beaver, life, check_budget);
+            } else {
+                const auto& depths = AnalyzerSession::filtered_plies;
+                AnalyzerSession session(*e->strategy, *e->checker_2ply, filter, ci.jacoby, ci.beaver,
+                    AnalyzerSession::contact_life(1, ci.match), life,
+                    std::find(depths.begin(), depths.end(), r.ply) != depths.end());
+                moves = session.score_checker_position(pos, 1, check_budget);
+                e->checker_2ply->clear_cache();
             }
-            std::sort(moves.begin(),moves.end(),[](const Move& a,const Move& b) {
-                if(a.equity!=b.equity) return a.equity>b.equity;
-                if(a.cubeless!=b.cubeless) return a.cubeless>b.cubeless;
-                return a.board<b.board;
-            });
             s << "{\"moves\":[";
-            for(size_t i=0;i<moves.size();++i) { const auto& m=moves[i]; if(i) s << ',';
+            for(size_t i=0;i<moves.size();++i) {
+                check_budget();
+                const auto& m=moves[i]; if(i) s << ',';
                 s << "{\"board\":"; array(s,m.board); s << ",\"probs\":"; array(s,m.probs);
-                s << ",\"equity\":" << m.equity << ",\"cubeless_equity\":" << m.cubeless
-                  << ",\"equity_diff\":" << m.equity-moves[0].equity << ",\"eval_level\":\"" << r.ply << "-ply\"}";
+                s << ",\"equity\":" << m.cubeful_equity << ",\"cubeless_equity\":" << m.cubeless_equity
+                  << ",\"equity_diff\":" << m.cubeful_equity-moves[0].cubeful_equity << ",\"eval_level\":\"" << (m.searched ? r.ply : 1) << "-ply\"}";
             } s << "]}";
         } else {
-            std::array<float,5> p; CubeDecision cd;
-            if(r.ply==1) {
-                p=invert_probs(e->strategy->evaluate_probs(flip(board),is_race(board)));
-                auto [pp,op]=pip_counts(board);
-                cd=cube_decision_1ply(p,ci,cube_efficiency(p,is_race(board),pp,op));
-            } else {
-                PubEval prefilter;
-                cd=cube_decision_nply(board,ci,*e->strategy,r.ply,filter,1,&prefilter);
-                check_budget();
-                MultiPlyStrategy multipy(e->strategy,r.ply,filter,false,false,1);
-                multipy.set_bearoff_db(&e->db);
-                const Board flipped=flip(board);
-                p=invert_probs(multipy.evaluate_probs(flipped,flipped)); multipy.clear_cache();
-            }
+            ci.contact_x = static_cast<float>(life.value);
+            ci.contact_x_pip_slope = static_cast<float>(life.pip_slope);
+            const auto result = r.ply == 1
+                ? evaluate_cube_leaf(board, ci, *e->strategy)
+                : evaluate_cube_tree(board, ci, e->strategy, &e->db, r.ply, filter, 1, false);
+            const auto& p = result.probs;
+            const auto& cd = result.decision;
             const char* action=!cd.should_double ? "No Double" : cd.is_beaver ? "Double/Beaver" : cd.should_take ? "Double/Take" : "Double/Pass";
             s << "{\"probs\":"; array(s,p);
             s << ",\"cubeless_equity\":" << cubeless_equity(p)

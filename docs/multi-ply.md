@@ -144,8 +144,8 @@ systematic bias at odd ply levels.
 1-ply Janowski leaf before the player's next cube node, where `0.68` under-values
 No Double for the side with initiative):
 
-- `MONEY_CONTACT_CUBE_LIFE = {1: 0.7375, 2: 0.7625}` (`python/neongammon/analyzer.py`,
-  values at 120 average pips)
+- `MONEY_CONTACT_CUBE_LIFE = {1: 0.7375, 2: 0.7625}` (values at 120 average pips,
+  defined by `AnalyzerSession::money_contact_life` and exposed by `python/neongammon/analyzer.py`)
 - `MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE = {1: 0.00175, 2: 0.00125}`:
   `x = value + slope * (avg_pips - 120)`, clamped to `[0.5, 1.0]`
 - Races keep their pip-based formula; match play, 3-ply+, and rollouts keep `0.68`.

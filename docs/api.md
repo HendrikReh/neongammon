@@ -239,15 +239,20 @@ C++ batch checker play: `bgbot_cpp.batch_checker_play(inputs, strategy_1ply, [st
 filter_max_moves, filter_threshold, n_threads)` via pybind11; takes `list[dict]` with
 `{board, die1, die2, cube_value, cube_owner}`, returns `list[dict]` each with `moves` list
 sorted by cubeful equity desc. Overloads for 1-ply and for N-ply (1-ply strategy +
-MultiPlyStrategy). The N-ply ones run, per position, the same native routine as
-`BgBotAnalyzer.checker_play` (`score_checker_position` in `bindings.cpp`; the analyzer
-reaches it through `bgbot_cpp.checker_play_nply`, with its forced boards, cube cap and
-thread budget), so the Python wrapper returns the analyzer's list field for field, with the
-bearoff database as with it off. Rows may carry `max_cube_value` and `force_boards`. At the
+MultiPlyStrategy). The N-ply overloads call `AnalyzerSession::score_checker_position`
+in `bgbot_lib` for each position. `BgBotAnalyzer.checker_play` calls the same routine
+through `bgbot_cpp.checker_play_nply`, passing its forced boards, cube cap and thread
+budget. Both return the same ranked moves with the bearoff database enabled or disabled. Rows may carry `max_cube_value` and `force_boards`. At the
 depths in
 `cubeful_filtered_plies` (the wrapper passes `CUBEFUL_FILTERED_PLIES`, i.e. 2-ply) only the
 filter's survivors and promotions go through the cube-aware tree, the rest keep 1-ply
 values; at other depths every move does. `tests/test_batch_checker_play_parity.py`.
+
+The standalone mobile C ABI uses the same checker scoring and cube evaluation
+at 1-ply and 2-ply. A 2-ply checker response labels moves retained at 1-ply
+with `"eval_level": "1-ply"`. Run `python -m pytest -q tests/test_mobile_parity.py`
+in the development build environment to compile both native targets and compare
+the public desktop results with the C ABI JSON.
 
 **Python batch wrapper** — `batch_checker_play()` (`python/neongammon/batch.py`):
 ```python

@@ -35,6 +35,7 @@ endif()
 
 # Core library (CPU only)
 add_library(bgbot_lib STATIC
+    ${BGBOT_CPU_ROOT}/src/analyzer_session.cpp
     ${BGBOT_CPU_ROOT}/src/board.cpp
     ${BGBOT_CPU_ROOT}/src/moves.cpp
     ${BGBOT_CPU_ROOT}/src/strategy.cpp

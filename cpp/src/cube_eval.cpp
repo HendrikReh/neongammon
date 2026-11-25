@@ -1362,7 +1362,7 @@ void cubeful_equity_nply_multi(
 
 std::vector<CubefulProbsAndEquity> cubeful_checker_endpoints_nply(
     const Board& before, const std::vector<Board>& endpoints, const CubeInfo& cube,
-    const Strategy& strategy, int plies, int threads)
+    const Strategy& strategy, int plies, int threads, const std::function<void()>& check_budget)
 {
     const int count = static_cast<int>(endpoints.size());
     if (count <= 0) return {};
@@ -1382,6 +1382,7 @@ std::vector<CubefulProbsAndEquity> cubeful_checker_endpoints_nply(
         for (int i = next.fetch_add(1, std::memory_order_relaxed); i < count;
              i = next.fetch_add(1, std::memory_order_relaxed)) {
             try {
+                if (check_budget) check_budget();
                 auto& result = results[i];
                 cubeful_equity_nply_multi_impl<false>(
                     flip(endpoints[i]), &cube, 1, strategy, plies, &result.equity,

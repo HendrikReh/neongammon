@@ -141,7 +141,7 @@ def _move_order_key(m: dict):
 #: references and leaves the money benchmark flat (checker -0.016 +- 0.022);
 #: at 3-ply it costs the money benchmark +0.044 +- 0.011 checker PR, so 3-ply
 #: keeps the full search.
-CUBEFUL_FILTERED_PLIES: frozenset[int] = frozenset({2})
+CUBEFUL_FILTERED_PLIES: frozenset[int] = frozenset(bgbot_cpp.CUBEFUL_FILTERED_PLIES)
 
 # Capability observed by integrations that verify Python candidate pools.
 SERIAL_CUBEFUL_1PLY = True
@@ -158,7 +158,7 @@ SERIAL_CUBEFUL_1PLY = True
 #: values do not help (1-ply 2.35 -> 2.38, 2-ply 1.58 -> 1.82). The values
 #: are the ones at 120 average pips; the slopes below make them rise with
 #: the pip count (they replaced a flat 0.75 and 0.80).
-MONEY_CONTACT_CUBE_LIFE: dict[int, float] = {1: 0.7375, 2: 0.7625}
+MONEY_CONTACT_CUBE_LIFE: dict[int, float] = dict(bgbot_cpp.MONEY_CONTACT_CUBE_LIFE)
 
 #: Per-pip slope of the contact cube life above, by depth: the engine uses
 #: ``MONEY_CONTACT_CUBE_LIFE[n] + slope * (average pips - 120)`` (clamped to
@@ -170,7 +170,7 @@ MONEY_CONTACT_CUBE_LIFE: dict[int, float] = {1: 0.7375, 2: 0.7625}
 #: 2.07 -> 1.68 (1-ply) and 1.09 -> 0.90 (2-ply) against XG, 2.49 -> 1.98
 #: and 1.44 -> 1.21 against the Neongammon reference, with fewer blunders
 #: (scripts/fit_contact_cube_life.py).
-MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE: dict[int, float] = {1: 0.00175, 2: 0.00125}
+MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE: dict[int, float] = dict(bgbot_cpp.MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE)
 
 
 def contact_cube_life(n_plies: int, away1: int = 0, away2: int = 0) -> float:
