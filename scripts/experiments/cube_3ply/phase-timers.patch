@@ -1,0 +1,24 @@
+--- a/cpp/src/cube_eval.cpp
++++ b/cpp/src/cube_eval.cpp
+@@ -36,2 +36,4 @@
+ #include <algorithm>
++#include <chrono>
++#include <cstdio>
+ #include <cstdlib>
+@@ -1753,2 +1755,4 @@
+ #endif
++    using clock = std::chrono::steady_clock;
++    const auto start = clock::now();
+     CandidateBatchCache batches(n_plies_, share_survivors);
+@@ -1759,2 +1763,3 @@
+     batches.reading = true;
++    const auto split = clock::now();
+     const auto post_probs = cubeless_post_probs<true>(
+@@ -1763,2 +1768,7 @@
+     pre_roll_probs = invert_probs(post_probs);
++    const auto end = clock::now();
++    using ns = std::chrono::nanoseconds;
++    std::fprintf(stderr, "NG63 %lld %lld\n",
++        static_cast<long long>(std::chrono::duration_cast<ns>(split - start).count()),
++        static_cast<long long>(std::chrono::duration_cast<ns>(end - split).count()));
+     return decision;
