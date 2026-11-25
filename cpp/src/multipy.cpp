@@ -76,11 +76,6 @@ public:
     // workers are saturated. Drains all started workers before releasing
     // caller captures and rethrows the first captured exception.
     void parallel_run(int n_workers, const std::function<void()>& fn) const {
-        if (n_workers <= 1) {
-            fn();
-            return;
-        }
-
         struct RunJob {
             explicit RunJob(std::function<void()> task) : run(std::move(task)) {}
             std::function<void()> run;
@@ -264,6 +259,10 @@ void multipy_parallel_for(int n_items, int n_threads,
 }
 
 void multipy_parallel_run(int n_workers, const std::function<void()>& fn) {
+    if (n_workers <= 1) {
+        fn();
+        return;
+    }
     get_multipy_executor().parallel_run(n_workers, fn);
 }
 

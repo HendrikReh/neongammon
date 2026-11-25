@@ -4,7 +4,7 @@
 BgBotAnalyzer.checker_play (cube-aware N-ply) and batch_checker_play used to
 implement the 2-ply filter, the cubeless survivor search and promotions, the
 cube-aware rescoring and the final top-two promotions twice, in Python and in
-C++. Both now go through score_checker_position in the bindings: the analyzer
+C++. Both now go through AnalyzerSession::score_checker_position: the analyzer
 via bgbot_cpp.checker_play_nply (with its forced boards, cube cap and thread
 budget), the batch per position. These tests hold the two entry points to the
 same lists, check the single-position options, and check that the old Python

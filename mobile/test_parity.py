@@ -57,20 +57,31 @@ def main():
     bearoff[1:5] = [4, 3, 4, 4]
     bearoff[22:25] = [-4, -5, -6]
     boards.append(bearoff)
+    # A forced pass, an open race, and a contact board where cube life
+    # changes the money cube decision. Keep the seeded baseline cases above.
+    positions = [(board, (3, 1)) for board in boards]
+    positions.extend([
+        ([0, 0, 0, 0, 0, 0, 5, 0, 3, 0, 0, 0, -3, 6, 0, 0, 0, 0, 0,
+         -2, -2, -2, -2, -2, -2, 1], (6, 6)),
+        ([0, 1, 1, 2, 2, 2, 3, 1, 0, 1, 2, 0, -1, 0, 0, 0, -2, -2, 0,
+         -2, -1, -2, -1, -2, -2, 0], (6, 6)),
+        ([0, 0, 0, 0, 2, 2, 4, -2, 2, 0, 2, 0, -2, 3, -1, 0, -1, -2, 0,
+         -2, -3, -2, 0, 0, 0, 0], (3, 1)),
+    ])
     cases = 0
     max_error = 0.0
     timings = []
     try:
         for ply in (1, 2):
             reference = BgBotAnalyzer(eval_level=f"{ply}ply", parallel_threads=2)
-            for index, board in enumerate(boards):
+            for index, (board, dice) in enumerate(positions):
                 match = index % 3 == 1
                 settings = dict(cube_value=2 if index % 2 else 1, cube_owner=("centered", "player", "opponent")[index % 3],
                     away1=3 if match else 0, away2=5 if match else 0, is_crawford=False,
                     jacoby=not match and index % 2 == 0, beaver=not match and index % 2 == 0)
                 if index == 1: settings.update(cube_value=1,away1=1,away2=3,is_crawford=True)
                 if index == 4: settings.update(away1=5,away2=1)
-                request = Request((C.c_int * 26)(*board), 3, 1, ply, settings["cube_value"], index % 3,
+                request = Request((C.c_int * 26)(*board), *dice, ply, settings["cube_value"], index % 3,
                     settings["away1"], settings["away2"], int(settings["is_crawford"]), int(settings["jacoby"]), int(settings["beaver"]), 1000)
                 for operation in (0, 1):
                     started = time.perf_counter()
@@ -79,27 +90,30 @@ def main():
                     assert value, (index, ply, operation, lib.neongammon_mobile_last_error())
                     try: actual = json.loads(C.string_at(value))
                     finally: lib.neongammon_mobile_free(value)
+                    context = (index, ply, operation)
+                    errors = []
                     if operation == 0:
-                        expected = reference._analyzer.checker_play_analytics(board, 3, 1, **settings)
-                        actual_moves = {tuple(m["board"]): m for m in actual["moves"]}
-                        assert set(actual_moves) == {tuple(m["board"]) for m in expected}
-                        for m in expected:
-                            got = actual_moves[tuple(m["board"])]
-                            errors = [abs(got[key]-m[key]) for key in ("equity", "cubeless_equity", "equity_diff")]
-                            errors += [abs(a-b) for a, b in zip(got["probs"], m["probs"])]
-                            max_error = max(max_error, *errors)
-                            assert max(errors) < 1e-5, (index, ply, operation, errors)
-                            assert got["eval_level"] == m["eval_level"]
-                        if expected:
-                            assert abs(actual["moves"][0]["equity"] - expected[0]["equity"]) < 1e-5
+                        expected = reference.checker_play(board, *dice, **settings).moves
+                        moves = actual["moves"]
+                        assert [m["board"] for m in moves] == [m.board for m in expected], context
+                        for got, move in zip(moves, expected):
+                            assert got["eval_level"] == move.eval_level, context
+                            assert len(got["probs"]) == 5, context
+                            errors.extend(abs(a - b) for a, b in zip(got["probs"], move.probs.to_list()))
+                            for key in ("equity", "cubeless_equity", "equity_diff"):
+                                errors.append(abs(got[key] - getattr(move, key)))
                     else:
-                        expected = reference._analyzer.cube_action_analytics(board, **settings)
-                        for key in ("should_double", "should_take", "is_beaver", "eval_level"):
-                            assert actual[key] == expected[key], (index, ply, key, actual[key], expected[key])
-                        errors = [abs(actual[key]-expected[key]) for key in ("equity_nd", "equity_dt", "equity_dp", "optimal_equity", "cubeless_equity")]
-                        errors += [abs(a-b) for a,b in zip(actual["probs"], expected["probs"])]
-                        max_error = max(max_error, *errors)
-                        assert max(errors) < 1e-5, (index, ply, operation, errors)
+                        expected = reference.cube_action(board, **settings)
+                        for key in ("should_double", "should_take", "is_beaver", "eval_level",
+                                    "optimal_action", "cubeless_se", "equity_nd_se", "equity_dt_se"):
+                            assert actual[key] == getattr(expected, key), (context, key)
+                        assert len(actual["probs"]) == 5, context
+                        errors.extend(abs(a - b) for a, b in zip(actual["probs"], expected.probs.to_list()))
+                        for key in ("equity_nd", "equity_dt", "equity_dp", "optimal_equity",
+                                    "cubeless_equity"):
+                            errors.append(abs(actual[key] - getattr(expected, key)))
+                    assert all(error < 1e-5 for error in errors), (context, errors)
+                    max_error = max(max_error, max(errors, default=0.0))
                     cases += 1
         request.ply = 3
         assert not lib.neongammon_mobile_analyze(handle, 0, C.byref(request))
