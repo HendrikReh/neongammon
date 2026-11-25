@@ -409,10 +409,9 @@ static std::vector<ScoredMove> score_checker_1ply(
     if (candidates.empty()) return out;
 
     const size_t n = candidates.size();
-    std::vector<double> equities(n);
     std::vector<std::array<float, NUM_OUTPUTS>> probs_per(n);
     strategy_1ply.batch_evaluate_candidates_equity_probs(
-        candidates, pos.board, equities.data(), probs_per.data());
+        candidates, pos.board, nullptr, probs_per.data());
 
     const bool money = pos.match.is_money();
     const bool dead_cube = pos.max_cube_value > 0 && pos.cube_value >= pos.max_cube_value;
@@ -2554,6 +2553,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
     py::class_<RolloutStrategy, Strategy, std::shared_ptr<RolloutStrategy>>(m, "RolloutStrategy")
         .def("config", &RolloutStrategy::config, py::return_value_policy::reference_internal)
         .def("clear_internal_caches", &RolloutStrategy::clear_internal_caches,
+             py::call_guard<py::gil_scoped_release>(),
              "Clear thread-local N-ply caches to prevent state accumulation")
         .def("cancel", &RolloutStrategy::cancel,
              "Request cancellation of in-progress rollout. Thread-safe.")
@@ -2564,7 +2564,8 @@ PYBIND11_MODULE(bgbot_cpp, m) {
         .def("set_move_filter", [](RolloutStrategy& self,
                                      PubEval& filter) {
             self.set_move_filter(std::make_shared<PubEval>(filter));
-        }, "Set PubEval or other cheap strategy as pre-filter for N-ply opponent moves",
+        }, py::call_guard<py::gil_scoped_release>(),
+           "Set PubEval or other cheap strategy as pre-filter for N-ply opponent moves",
            py::arg("filter"))
         .def("rollout_position", [](const RolloutStrategy& self,
                                      const std::vector<int>& board_vec) {
@@ -2672,7 +2673,8 @@ PYBIND11_MODULE(bgbot_cpp, m) {
            py::arg("beaver") = true,
            py::arg("max_cube_value") = 0,
            py::arg("progress") = py::none())
-        .def("set_seed", &RolloutStrategy::set_seed, py::arg("seed"))
+        .def("set_seed", &RolloutStrategy::set_seed,
+             py::call_guard<py::gil_scoped_release>(), py::arg("seed"))
         .def("cube_decision", [](RolloutStrategy& self,
                                   const std::vector<int>& checkers,
                                   int cube_value,
@@ -4191,7 +4193,8 @@ PYBIND11_MODULE(bgbot_cpp, m) {
     // Setter for RolloutStrategy bearoff DB
     m.def("rollout_set_bearoff_db", [](RolloutStrategy& strat, const BearoffDB* db) {
         strat.set_bearoff_db(db);
-    }, "Set bearoff DB on a RolloutStrategy for exact bearoff evaluation",
+    }, py::call_guard<py::gil_scoped_release>(),
+       "Set bearoff DB on a RolloutStrategy for exact bearoff evaluation",
        py::arg("strategy"), py::arg("db"));
 
     // =====================================================================

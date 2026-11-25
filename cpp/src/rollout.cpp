@@ -3303,6 +3303,7 @@ void RolloutStrategy::best_move_index_cubeful_multi(
     float cube_x,
     int* out_indices) const
 {
+    std::lock_guard<std::recursive_mutex> instance_lock(rollout_mutex_);
     const int n = static_cast<int>(candidates.size());
     if (n == 0) return;
     if (n_cubes <= 0) return;

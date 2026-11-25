@@ -1016,6 +1016,43 @@ class _CubefulAnalyzer:
             m["probs"] = list(m["probs"])
         return moves
 
+    def _checker_play_1ply_native(self, board, die1, die2, owner, cube_value,
+                                  away1, away2, is_crawford, jacoby, beaver,
+                                  max_cube_value):
+        """1-ply cubeful checker play in the single-threaded native routine
+        shared with batch_checker_play and 2-ply's 1-ply filter
+        (bgbot_cpp.batch_checker_play(..., n_threads=1) -> score_checker_1ply).
+
+        Keeps SERIAL_CUBEFUL_1PLY intact (zero thread pools spawned) while
+        batching candidate NN evaluations in BLAS and guaranteeing exact
+        bit-for-bit parity with batch_checker_play("1ply") and pruned 1-ply
+        moves in 2-ply checker play.
+        """
+        inner = self._inner
+        pos = {
+            "board": list(board),
+            "die1": die1,
+            "die2": die2,
+            "cube_value": cube_value,
+            "cube_owner": owner,
+        }
+        if away1 > 0 or away2 > 0:
+            pos["away1"] = away1
+            pos["away2"] = away2
+            pos["is_crawford"] = is_crawford
+        if max_cube_value:
+            pos["max_cube_value"] = max_cube_value
+        moves = bgbot_cpp.batch_checker_play(
+            [pos], inner._strategy_1ply,
+            n_threads=1,
+            jacoby=jacoby, beaver=beaver,
+            contact_x_1ply=_contact_cube_life(1, away1, away2),
+            contact_x_pip_slope_1ply=_contact_cube_slope(1, away1, away2),
+        )[0]["moves"]
+        for m in moves:
+            m["probs"] = list(m["probs"])
+        return moves
+
     def checker_play_analytics(
         self, board, die1, die2, cube_value=1, cube_owner="centered",
         progress_callback=None,
@@ -1030,6 +1067,11 @@ class _CubefulAnalyzer:
             return self._checker_play_native(
                 board, die1, die2, owner, cube_value, away1, away2, is_crawford,
                 jacoby, beaver, max_cube_value, force_boards)
+
+        if isinstance(inner, _OnePlyAnalyzer) and owner is not None:
+            return self._checker_play_1ply_native(
+                board, die1, die2, owner, cube_value, away1, away2, is_crawford,
+                jacoby, beaver, max_cube_value)
 
         results = inner.checker_play_analytics(
             board, die1, die2, cube_value, cube_owner, progress_callback,
