@@ -577,6 +577,9 @@ class _RolloutAnalyzer(_CubelessBase):
             self.FILTER_MAX_MOVES = int(filter_max_moves)
         if filter_threshold is not None:
             self.FILTER_THRESHOLD = float(filter_threshold)
+        requested_threads = n_threads if n_threads > 0 else _default_parallel_threads()
+        self._parallel_threads = max(1, requested_threads)
+
         # Two-stage candidate filter for checker_play_analytics: when
         # prefilter_threshold > 0, stage 1 is a loose 1-ply cull at that
         # threshold (no max_moves cap), stage 2 is the standard TINY filter
@@ -589,14 +592,8 @@ class _RolloutAnalyzer(_CubelessBase):
                 self._raw_base,
                 n_plies=2,
                 parallel_evaluate=True,
-                parallel_threads=max(2, _default_parallel_threads()),
+                parallel_threads=self._parallel_threads,
             )
-        requested_threads = n_threads
-        if n_threads <= 0:
-            requested_threads = _default_parallel_threads()
-        elif n_threads < 1:
-            requested_threads = 1
-        self._parallel_threads = max(1, requested_threads)
         self._parallelize_trials = bool(parallelize_trials)
         self._rollout_config = {
             "n_trials": n_trials,

@@ -87,3 +87,19 @@ def test_n_ply_cube_action_does_not_depend_on_thread_budget():
     out = [asdict(BgBotAnalyzer(eval_level="3ply", parallel_threads=n).cube_action(board))
            for n in (1, 2, 4)]
     assert out[0] == out[1] == out[2]
+
+
+@pytest.mark.parametrize(
+    "requested,env,expected",
+    [(1, "6", 1), (3, "6", 3), (0, None, 8), (0, "1", 1), (0, "invalid", 1)],
+)
+def test_truncated2_checker_prefilter_uses_rollout_budget(monkeypatch, requested, env, expected):
+    import bgbot_cpp
+
+    if env is not None:
+        monkeypatch.setenv("BGBOT_MULTIPLY_THREADS", env)
+    with patch.object(
+        bgbot_cpp, "create_multipy_from_base", wraps=bgbot_cpp.create_multipy_from_base
+    ) as prefilter:
+        BgBotAnalyzer(eval_level="truncated2", parallel_threads=requested)
+    assert prefilter.call_args.kwargs["parallel_threads"] == expected
