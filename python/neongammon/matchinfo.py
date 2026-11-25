@@ -93,6 +93,8 @@ def take_points(away1, away2, cube_value=1):
         Tuple of (take_point_for_player1, take_point_for_player2).
     """
     c = cube_value
+    if away1 == away2 == 0:
+        return (0.22, 0.22)
     # Check for automatic redouble cases
     p1_auto = away2 - 2 * c <= 0  # player 2 doubles, player 1 has auto-redouble
     p2_auto = away1 - 2 * c <= 0  # player 1 doubles, player 2 has auto-redouble
@@ -250,6 +252,6 @@ def gammon_prices(away1, away2, cube_value=1):
     den = _mwc(away1 - 2 * c, away2) - _mwc(away1, away2 - 2 * c)
     if den == 0:
         return (0.5, 0.5)
-    g1 = (_mwc(away1, away2 - 2 * c) - _mwc(away1, away2 - 4 * c)) / den
-    g2 = (_mwc(away1 - 4 * c, away2) - _mwc(away1 - 2 * c, away2)) / den
-    return (g1, g2)
+    player1_gain = _mwc(away1 - 4 * c, away2) - _mwc(away1 - 2 * c, away2)
+    player2_gain = _mwc(away1, away2 - 2 * c) - _mwc(away1, away2 - 4 * c)
+    return (player1_gain / den, player2_gain / den)
