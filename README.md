@@ -1,3 +1,5 @@
+<img src="web/public/neondojo-logo.svg" alt="NeonDojo logo: a torii gate whose pillars are backgammon points, in front of a checker as the rising sun" width="128" height="128">
+
 # NeonGammon
 
 [![Release](https://img.shields.io/github/v/release/HendrikReh/neongammon)](https://github.com/HendrikReh/neongammon/releases)
