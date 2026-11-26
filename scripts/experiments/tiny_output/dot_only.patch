@@ -1,0 +1,11 @@
+--- a/cpp/src/neural_net.cpp
++++ b/cpp/src/neural_net.cpp
+@@ -1132,7 +1132,7 @@
+                 const float* weights = output_weights_.data() + o * hid_stride;
+                 result[o] = simd_dot(row, weights, nh) + weights[nh];
+             }
+-            sigmoid_inplace_neon(result.data(), result.size());
++            for (float& value : result) value = fast_sigmoid(value);
+         }
+         return;
+     }

@@ -1,0 +1,11 @@
+--- a/cpp/src/neural_net.cpp
++++ b/cpp/src/neural_net.cpp
+@@ -1093,0 +1094,6 @@
++// Read counters after a search joins its workers, from this diagnostic build only.
++static std::atomic<uint64_t> group_calls[3]{};
++extern "C" __attribute__((visibility("default"))) uint64_t take_group_calls(int bin) {
++    return group_calls[bin].exchange(0, std::memory_order_relaxed);
++}
++
+@@ -1100,0 +1107 @@
++    group_calls[std::min(count, 3) - 1].fetch_add(1, std::memory_order_relaxed);
