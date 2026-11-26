@@ -18,6 +18,11 @@ def test_modules_and_model_files_belong_to_the_installed_wheel():
         path = Path(module.__file__).resolve()
         assert path.is_relative_to(site_packages) and path in installed
 
+    assert Path(ng.__file__).with_name("py.typed").resolve() in installed
+    assert ng.TrialEvalConfig is bgbot_cpp.TrialEvalConfig
+    assert set(ng.__all__) <= set(dir(ng))
+    assert all(getattr(ng, name) is not None for name in ng.__all__)
+
     db = bearoff_db_path()
     assert db is not None
     assert Path(db).resolve() in installed

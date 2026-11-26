@@ -1,5 +1,9 @@
 # Python and C++ API Reference
 
+The pure-Python `neongammon.weights`, `neongammon.text_export` and
+`neongammon.settings` modules can be imported without the native extension.
+Engine exports such as `BgBotAnalyzer` load the extension on first use.
+
 For game/match simulation (`simulate_game`, `simulate_match`, `PureTDPolicy`, `DifficultyPolicy`), see [docs/simulation.md](simulation.md) and [docs/engine.md](engine.md). For algorithmic details of multi-ply search and rollouts, see [docs/multi-ply.md](multi-ply.md) and [docs/rollout.md](rollout.md).
 
 ## Interfaces
