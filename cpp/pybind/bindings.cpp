@@ -112,6 +112,10 @@ private:
     std::exception_ptr err_;
 };
 
+static void validate_search_depth(int plies) {
+    if (plies < 1) throw std::invalid_argument("n_plies must be at least 1");
+}
+
 // Convert a Python list of 26 ints to a Board
 static Board list_to_board(const std::vector<int>& v) {
     if (v.size() != 26) {
@@ -4678,6 +4682,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
 
     m.def("score_checker_endpoints", [](const Board& board, const std::vector<Board>& endpoints,
              const CubeInfo& opponent_cube, const Strategy& strategy, int plies, int threads) {
+        validate_search_depth(plies);
         std::vector<ScoredMove> moves;
         {
             py::gil_scoped_release release;
@@ -4690,6 +4695,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
     m.def("batch_cube_action_nply", [](const std::vector<std::pair<Board, CubeInfo>>& positions,
             const std::shared_ptr<Strategy>& base, const BearoffDB* db, int plies,
             int threads, bool decision_only, int max_moves, float threshold) {
+        validate_search_depth(plies);
         if (!base) throw std::invalid_argument("base strategy is None");
         auto strategy = with_bearoff_db(base, db);
         std::vector<CubeEvaluation> results(positions.size());
