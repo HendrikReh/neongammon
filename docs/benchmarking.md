@@ -320,6 +320,65 @@ out=build/ng63
 "$ENGINE_PYTHON" -I "$FIXTURE_SCRIPT"
 ```
 
+### Lazy allocation of the per-thread cube evaluation cache
+
+On 2026-11-26, deferring the 32,768-entry table until a thread first stores a result
+saved **6.77 MiB of resident memory** on the first 3-ply bearoff post-move evaluation.
+That public call clears the cache and obtains probabilities from the bearoff database.
+A contact cube search stores results and still needs the table. Its warm timings
+varied in both directions across two runs.
+
+| 3-ply public call | Build | First call (ms) | Warm call (ms) | RSS growth on first call (MiB) |
+|---|---|---:|---:|---:|
+| Bearoff `post_move_analytics` | Baseline | 0.403 / 0.419 | 0.0049 / 0.0048 | 6.859 / 6.859 |
+| | Lazy | 0.075 / 0.075 | 0.0048 / 0.0050 | 0.094 / 0.094 |
+| Owned-money contact `cube_action` | Baseline | 9.119 / 9.125 | 5.917 / 5.985 | 51.172 / 51.148 |
+| | Lazy | 9.094 / 9.078 | 5.836 / 6.033 | 51.211 / 51.336 |
+
+Values are medians from two independent runs on an Apple M4 Pro, macOS 27.0.1,
+Apple Clang 21.0.0, SDK 27.2, Accelerate, four engine threads and single-thread
+BLAS. Each run used 16 fresh processes per build per position, alternating
+baseline and candidate order. Timing starts after analyzer construction and ends
+when the public call returns. Warm values pool five calls per process after three
+discarded warmups. RSS growth is the difference between two macOS `ps` samples
+immediately before and after the first call. It measures the entire process,
+including worker threads and other allocations. Background desktop and VM
+activity remained present.
+
+The local baseline (`39db41d`) and candidate used the same toolchain and locked
+3.2.1 Python package, Stage 11 assets and bearoff database. All public result
+fields matched exactly at **both 3 and 4 ply** across 44 checker and 43 cube
+decisions from the seed-42 five-point game, including forced played boards.
+Separately, the official 3.2.1 sidecar verified its scalar and batched results on
+all 87 decisions at both depths. The sidecar comparison uses the shipped
+extension. The source-build comparison isolates the allocation change.
+
+To reproduce from this revision, use a fresh output directory, CMake, Ninja and
+a Python interpreter with pybind11 on `PATH`. Set `ENGINE_PYTHON` to the locked
+CPython 3.12 NeonGammon 3.2.1 interpreter and `FIXTURE_SCRIPT` to NeonDojo's
+`tools/open-sage/verify_game_batches.py`. The driver loads one local extension per
+process and uses the installed wheel for Python code and model assets.
+[Timing and parity driver](../scripts/experiments/lazy_cube_cache/measure.py)
+
+```sh
+out=build/lazy-cache-ab
+mkdir -p "$out/src"
+git archive 39db41d cpp | tar -x -C "$out/src"
+cmake -S "$out/src/cpp" -B "$out/native" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+  -DBGBOT_BUILD_APPS=OFF -DPYBIND11_FINDPYTHON=ON \
+  -DPython_EXECUTABLE="$ENGINE_PYTHON" -Dpybind11_DIR="$(python -m pybind11 --cmakedir)"
+cmake --build "$out/native" --target bgbot_cpp
+mkdir "$out/pristine"
+cp "$out/native"/bgbot_cpp*.so "$out/pristine/"
+cp cpp/src/cube_eval.cpp "$out/src/cpp/src/cube_eval.cpp"
+cmake --build "$out/native" --target bgbot_cpp
+driver=scripts/experiments/lazy_cube_cache/measure.py
+"$ENGINE_PYTHON" -I "$driver" "$out/pristine" "$out/native" timing
+"$ENGINE_PYTHON" -I "$driver" "$out/pristine" "$out/native" parity "$FIXTURE_SCRIPT"
+"$ENGINE_PYTHON" -I "$FIXTURE_SCRIPT"
+```
+
 ## Rollout and N-Ply Regression Benchmarks
 
 Saved-baseline regression scripts (each supports `--save`/`--compare` with a material band of `max(SE, 0.01)` for equities and `0.005` for probabilities; the cubeless rollout bench widens the prob band to each prob's own SE):
