@@ -44,7 +44,7 @@ Key regression tests to run when touching sensitive areas:
 ### Promoting a New Production Model
 
 1. Register the model in `MODELS` and set `PRODUCTION_MODEL` in [python/neongammon/weights.py](python/neongammon/weights.py) (currently `"stage11"`, a 24-NN backgame-aware phased pair strategy).
-2. Add any new required weight files to the `sdist.include` **allowlist** in [pyproject.toml](pyproject.toml) (the sdist excludes `models/` and `data/` by default; omitting a weight file breaks wheel/sdist builds).
+2. List the exact weight paths for all bundled models in `sdist.include` in [pyproject.toml](pyproject.toml). CMake reads the same list for wheels. Verify the packaged models in [tests/wheel_contents.py](tests/wheel_contents.py).
 3. Record results in [docs/model-benchmarks.md](docs/model-benchmarks.md) and architecture/training details in [docs/model-history.md](docs/model-history.md).
 
 ## Core Domain Invariants

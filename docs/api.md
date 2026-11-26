@@ -15,7 +15,7 @@ specific model type or need parameters not exposed by the public API.
 
 The library provides both **Python** and **C++** interfaces across seven categories
 of functionality. All Python functions default to the production model (`stage11`); pass
-`weights=WeightConfig.from_model("stage5")` to use a different model.
+`weights=WeightConfig.from_model("stage9")` to use the other bundled model.
 
 ### 1. Checker Play Analytics
 
@@ -279,7 +279,7 @@ bearoff positions, so batch and analyzer agree there too. The batch functions ta
 `bearoff_db=` when they are given `weights` rather than `models`.
 ```python
 from neongammon import BatchModels, batch_checker_play, batch_evaluate
-models = BatchModels()          # or BatchModels(WeightConfig.from_model("stage5"))
+models = BatchModels()          # or BatchModels(WeightConfig.from_model("stage9"))
 for chunk in chunks:
     batch_checker_play(chunk, eval_level="2ply", models=models)
     batch_evaluate(chunk, eval_level="1ply", models=models)
@@ -457,13 +457,15 @@ present) return `None` — the caller decides how to record "no luck computed".
 
 ### Model Selection
 
-All interfaces default to the production model. To use a specific model:
+Wheels and source distributions include weights for the production model (`stage11`)
+and `stage9`. The other registered models (`stage3` through `stage8`, including
+`stage5small`, and `stage10`) require weights from the Git checkout.
 
 ```python
 from neongammon import BgBotAnalyzer, batch_evaluate, batch_post_move_evaluate
 from neongammon.weights import WeightConfig
 
-weights = WeightConfig.from_model("stage3")
+weights = WeightConfig.from_model("stage9")
 
 # Single-position
 analyzer = BgBotAnalyzer(weights=weights, eval_level="2ply")
@@ -549,7 +551,7 @@ analyzer = BgBotAnalyzer(eval_level="rollout",
 > Prefer `BgBotAnalyzer(eval_level="rollout", checker=..., cube=..., target_se=...)`
 > for model-independent rollouts (including the 24-NN `stage11` production model).
 > The low-level `bgbot_cpp.cube_decision_rollout` and `create_rollout_5nn` helpers
-> below accept a 5-NN `WeightConfig` (10 unpacked args) — use `WeightConfig.from_model("stage5")`,
+> below accept a 5-NN `WeightConfig` (10 unpacked args) — use `WeightConfig.from_model("stage5")` from the Git checkout,
 > not `WeightConfig.default()` (which returns a 24-NN `WeightConfigPair`).
 
 ```python

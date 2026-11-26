@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.12", "tomli; python_version < '3.11'"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -67,13 +67,34 @@ sdist.exclude = [
     "tests/",
     "logs/",
 ]
-# Re-added after the excludes above. These patterns contain a "/", so they are
-# anchored to the repo root and cannot match copies under .claude/worktrees/.
+# Exact weight manifest shared with the CMake wheel install. Stage 11 uses
+# 21 distinct files; Stage 9 also uses its original race net and two backgame nets.
 sdist.include = [
     "data/bearoff_1sided.db",
-    "models/sl_s9_*.weights.best",
-    "models/sl_s11_*.weights.best",
+    "models/sl_s11_bg_containment.weights.best",
+    "models/sl_s11_bg_deep.weights.best",
+    "models/sl_s11_bg_double.weights.best",
+    "models/sl_s11_bg_massive.weights.best",
+    "models/sl_s11_bg_middle.weights.best",
+    "models/sl_s11_bg_p3.weights.best",
+    "models/sl_s11_bg_snake.weights.best",
     "models/sl_s5_purerace.weights.best",
+    "models/sl_s9_anch_att.weights.best",
+    "models/sl_s9_anch_race.weights.best",
+    "models/sl_s9_att_anch.weights.best",
+    "models/sl_s9_att_att.weights.best",
+    "models/sl_s9_att_prim.weights.best",
+    "models/sl_s9_att_race.weights.best",
+    "models/sl_s9_opponent_bg.weights.best",
+    "models/sl_s9_player_bg.weights.best",
+    "models/sl_s9_prim_anch.weights.best",
+    "models/sl_s9_prim_att.weights.best",
+    "models/sl_s9_prim_race.weights.best",
+    "models/sl_s9_purerace.weights.best",
+    "models/sl_s9_race_anch.weights.best",
+    "models/sl_s9_race_att.weights.best",
+    "models/sl_s9_race_prim.weights.best",
+    "models/sl_s9_race_race.weights.best",
 ]
 
 # ---------------------------------------------------------------------------
