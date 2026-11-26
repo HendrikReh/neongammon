@@ -21,55 +21,20 @@ if(TARGET bgbot_cpp)
         RUNTIME DESTINATION .)
 endif()
 
-# Bundle the production model's weights and the bearoff database into the
-# wheel, inside the `neongammon` package under `_assets/`.  `weights.py` discovers
-# them there when running from an installed wheel.
-#
-# The production model is `stage11` (PRODUCTION_MODEL in python/neongammon/weights.py),
-# a 24-NN layout: Stage 9's 17 standard pair NNs (sl_s9_*), with Stage 5's
-# 200h pure-race net (sl_s5_purerace) in place of sl_s9_purerace, plus 7
-# backgame/containment specialists (sl_s11_bg_*).  All three are
-# required — omitting either makes BgBotAnalyzer() fail with FileNotFoundError
-# at runtime, which the build itself would not catch.
-#
-# WHEN PROMOTING A NEW PRODUCTION MODEL: add its weight-file pattern here, and
-# keep the NEONGAMMON_MIN_WEIGHTS floor below in step with the new file count.
-file(GLOB NEONGAMMON_MODEL_WEIGHTS
-    "${CMAKE_CURRENT_SOURCE_DIR}/models/sl_s9_*.weights.best"
-    "${CMAKE_CURRENT_SOURCE_DIR}/models/sl_s11_*.weights.best"
-    "${CMAKE_CURRENT_SOURCE_DIR}/models/sl_s5_purerace.weights.best")
-
-# The glob alone would silently skip a missing single file.
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/models/sl_s5_purerace.weights.best")
-    message(FATAL_ERROR
-        "models/sl_s5_purerace.weights.best is missing: stage11 uses it as its "
-        "pure-race net, so the wheel could not construct an analyzer.")
+# Read the same explicit paths scikit-build-core uses for its sdist.
+find_package(Python 3.10 COMPONENTS Interpreter REQUIRED)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    pyproject.toml cmake/model_weights.py)
+execute_process(
+    COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/model_weights.py"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    RESULT_VARIABLE weights_status
+    OUTPUT_VARIABLE model_weights
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT weights_status EQUAL 0)
+    message(FATAL_ERROR "Cannot read the model weight manifest in pyproject.toml")
 endif()
-
-# Drop training artifacts the registry never loads (e.g. the TD-init variant
-# sl_s11_bg_deep_tdinit) — they'd be dead weight in every wheel.
-list(FILTER NEONGAMMON_MODEL_WEIGHTS EXCLUDE REGEX "_tdinit\\.weights\\.best$")
-
-# stage11 resolves to 21 distinct files (13 sl_s9_* after NN sharing, 1
-# sl_s5_purerace, 7 sl_s11_bg_*).  The glob picks up all 19 sl_s9_* files, so
-# 27 is the expected
-# count; require at least 21 so a partial checkout fails the build loudly
-# rather than shipping a wheel that cannot construct an analyzer.
-set(NEONGAMMON_MIN_WEIGHTS 21)
-list(LENGTH NEONGAMMON_MODEL_WEIGHTS NEONGAMMON_N_WEIGHTS)
-
-if(NEONGAMMON_N_WEIGHTS LESS NEONGAMMON_MIN_WEIGHTS)
-    message(FATAL_ERROR
-        "Only ${NEONGAMMON_N_WEIGHTS} model weight files found under "
-        "${CMAKE_CURRENT_SOURCE_DIR}/models/ (need at least ${NEONGAMMON_MIN_WEIGHTS}). "
-        "The production model needs both sl_s9_*.weights.best and "
-        "sl_s11_*.weights.best to be present for the wheel build.")
-endif()
-
-message(STATUS "neongammon: bundling ${NEONGAMMON_N_WEIGHTS} model weight files")
-
-install(FILES ${NEONGAMMON_MODEL_WEIGHTS}
-    DESTINATION neongammon/_assets/models)
+install(FILES ${model_weights} DESTINATION neongammon/_assets/models)
 
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/data/bearoff_1sided.db"
     DESTINATION neongammon/_assets/data)
