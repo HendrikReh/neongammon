@@ -46,6 +46,10 @@ public:
     std::vector<ScoredMove> score_checker_position(const CheckerPosition& pos,
         int candidate_threads, const std::function<void()>& check_budget = {}) const;
 
+    bool can_share_checker_endpoints() const { return !filtered && strategy_nply.n_plies() == 3; }
+    std::vector<std::vector<ScoredMove>> score_unfiltered_checker_batch(
+        const std::vector<CheckerPosition>& positions, int threads) const;
+
     static constexpr std::array<ContactCubeLife, 2> money_contact_life{{
         {0.7375, 0.00175}, {0.7625, 0.00125}
     }};
@@ -53,6 +57,7 @@ public:
     static ContactCubeLife contact_life(int plies, const MatchInfo& match);
 
 private:
+    CubeInfo opponent_cube(const CheckerPosition& pos) const;
     const Strategy& strategy_1ply;
     const MultiPlyStrategy& strategy_nply;
     MoveFilter filter;

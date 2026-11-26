@@ -162,8 +162,8 @@ class BatchModels:
                 filter_threshold: float = 0.08):
         """The N-ply strategy for these settings, built around :meth:`base`.
 
-        Serial (``parallel_evaluate=False``): the batch functions parallelise
-        across positions.
+        The cached strategy uses serial evaluation. The batch scheduler owns
+        parallelism across rows and within cube-aware candidate searches.
         """
         key = (n_plies, filter_max_moves, float(filter_threshold))
         self.base()
@@ -580,7 +580,7 @@ def batch_checker_play(
         positions: List of position dicts.
         eval_level: ``"1ply"``, ``"2ply"``, ``"3ply"``, or ``"4ply"``.
         weights: Weight configuration (defaults to production model).
-        n_threads: Number of threads for position-level parallelism
+        n_threads: Thread budget shared across positions and candidate searches
             (0 = auto-detect all cores).
         filter_max_moves: Max moves for N-ply move filter.
         filter_threshold: Equity threshold for N-ply move filter.

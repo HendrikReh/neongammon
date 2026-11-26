@@ -47,6 +47,22 @@ python scripts/eval_position.py checker --checkers "..." --dice 3 1
 python scripts/eval_position.py checker --checkers "..." --dice 3 1 --match 5 --score 3 0
 ```
 
+### Native batch scheduling
+
+Run `PYTHONPATH=build:python python scripts/bench_search_batches.py --threads 4`
+to compare scalar 3-ply checker play with batches of four and 64 on the same
+seeded five-point game. The cube cases combine one contact row with zero to
+three bearoff rows. The script checks complete results against scalar and
+reports median wall time with models loaded. Each sample uses a fresh
+evaluator identity so earlier searches cannot warm the pool's per-thread
+position caches.
+
+On an M4 Pro with four threads (five samples, Accelerate, seed 42), the
+44 checker positions took 1.794 s scalar, 1.722 s in chunks of four, and
+1.722 s in a single chunk of up to 64. One contact cube took 7.12 ms scalar
+and 7.17 ms batched. With three bearoff rows added the same comparison was
+8.14 ms and 8.06 ms. All returned fields matched.
+
 ### Benchmark PR rollout sample (this fork)
 
 The full reference `data/benchmark_pr/rollouts.jsonl` is gitignored and was
