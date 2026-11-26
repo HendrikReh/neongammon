@@ -126,7 +126,7 @@ Files that came from upstream keep their original copyright notices (Mark Higgin
 
 Copyright © 2026 Hendrik Reh for his original contributions to the NeonGammon fork.
 
-That covers everything in this repository, including the **trained model weights** in
+The MPL-2.0 license covers everything in this repository, including the **trained model weights** in
 `models/` and the bearoff database in `data/`. Those aren't source code, so to be
 unambiguous: they are licensed on exactly the same terms as the code, and you are free to
 use them in a commercial product.
