@@ -522,6 +522,47 @@ out=build/tiny-output-ab
 "$ENGINE_PYTHON" -IB "$exp/measure.py" "$out" "$FIXTURE_SCRIPT" compare --depths 3 4 --pairs 2 --reverse
 ```
 
+### Grouping cube-search candidates by network on M4 Pro
+
+The Accelerate path in `eval_groups_pair` scans the remaining candidates for
+each distinct neural network. The experimental patch collects candidates into
+network-indexed buckets in one pass. It preserves both first-seen network order
+and the order of boards within each batch. Blended positions still go directly
+through the blend-aware evaluator.
+
+The baseline and candidate used the same release build from `a4bb46b` with
+Apple Clang 21.0.0, SDK 27.2, and Accelerate. The M4 Pro ran macOS 27.0.1
+and CPython 3.12.13 using the verified NeonGammon 3.2.1 package and its Stage 11
+assets. The seed-42 five-point game contains 44 checker decisions with forced
+played boards and 43 rich cube decisions. The driver runs batches of four at
+four search threads and uses single-thread BLAS. It measures one pass through
+the public analysis APIs after model construction. Each depth has four pairs
+of fresh processes with alternating build order. Desktop services continued
+to run.
+
+| Search | Baseline median game time | One-pass median game time | Throughput change | Paired throughput changes |
+|---|---:|---:|---:|---:|
+| 3-ply | 1.9608 s | 1.9546 s | +0.31% | −0.05% to +2.53% |
+| 4-ply | 36.8486 s | 37.1860 s | −0.91% | −13.98% to +0.36% |
+
+Every returned field across the 44 checker and 43 cube decisions matched at
+both depths, including complete move rankings. The timings include all
+samples. The 42.16 s 4-ply candidate run widened the paired range. The
+throughput differences did not show a repeatable full-game speedup, so the
+production engine retains the existing grouping.
+
+Set `ENGINE_PYTHON` and `FIXTURE_SCRIPT` as in the preceding experiment, with
+CMake, Ninja, and a Python interpreter with pybind11 on the build path.
+[Build script](../scripts/experiments/candidate_grouping/build.sh) ·
+[Experimental patch](../scripts/experiments/candidate_grouping/candidate.patch)
+
+```sh
+out=build/candidate-grouping-ab
+scripts/experiments/candidate_grouping/build.sh "$out"
+"$ENGINE_PYTHON" -IB scripts/experiments/tiny_output/measure.py \
+    "$out" "$FIXTURE_SCRIPT" compare --depths 3 4 --pairs 4
+```
+
 ## Rollout and N-Ply Regression Benchmarks
 
 Saved-baseline regression scripts (each supports `--save`/`--compare` with a material band of `max(SE, 0.01)` for equities and `0.005` for probabilities; the cubeless rollout bench widens the prob band to each prob's own SE):
