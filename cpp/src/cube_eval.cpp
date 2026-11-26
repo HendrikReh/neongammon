@@ -186,8 +186,6 @@ struct CubefulEvalCache {
     std::vector<CubefulEvalCacheEntry> entries;
     uint32_t generation = 1;
 
-    CubefulEvalCache() : entries(SIZE) {}
-
     void clear() {
         if (++generation == 0) {
             for (auto& e : entries) e.generation = 0;
@@ -198,6 +196,7 @@ struct CubefulEvalCache {
     bool get(uint64_t key, uint64_t fp, const Board& b, int plies, int cci,
              bool ftop, float* vals, std::array<float, NUM_OUTPUTS>* probs) const
     {
+        if (entries.empty()) return false;
         size_t idx = static_cast<size_t>(key) & MASK;
         for (int p = 0; p < MAX_PROBE; ++p, idx = (idx + 1) & MASK) {
             const auto& e = entries[idx];
@@ -220,6 +219,8 @@ struct CubefulEvalCache {
              bool ftop, const float* vals,
              const std::array<float, NUM_OUTPUTS>& probs)
     {
+        // Threads that only clear the cache or miss a lookup need no table.
+        if (entries.empty()) entries.resize(SIZE);
         size_t idx = static_cast<size_t>(key) & MASK;
         size_t target = idx;
         for (int p = 0; p < MAX_PROBE; ++p, idx = (idx + 1) & MASK) {
