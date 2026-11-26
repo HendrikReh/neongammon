@@ -456,9 +456,11 @@ multiply and the sigmoid lookup table.
 | 4-ply checker | 44 | 612,700 | 472,609 | 4,509,701 | 19.40% |
 | 4-ply rich cube | 43 | 37,291 | 22,842 | 315,307 | 16.02% |
 
-A separate instrumented baseline counted positive-sized group calls across
-search workers and reset the counters between checker and cube batches. The
-timed builds omit instrumentation. For each affected row the candidate
+The table gives one instrumented pass. A second 3-ply pass on a clean rebuild
+counted 40,727 single-board and 22,272 two-board checker calls, again 19.52%
+combined. Its cube counts matched the table. The probe counts positive-sized
+groups across search workers and resets between checker and cube workloads.
+The timed builds omit instrumentation. For each affected row the candidate
 computes five output dot products with the engine's NEON `simd_dot`, adds the
 output biases, then runs `sigmoid_inplace_neon` on the five logits (four
 Cephes lanes and one scalar tail). The dot-only control keeps the baseline
