@@ -4,7 +4,7 @@
 
 [![Release](https://img.shields.io/github/v/release/HendrikReh/neongammon)](https://github.com/HendrikReh/neongammon/releases)
 [![Build wheels](https://github.com/HendrikReh/neongammon/actions/workflows/wheels.yml/badge.svg)](https://github.com/HendrikReh/neongammon/actions/workflows/wheels.yml)
-[![Docs](https://github.com/HendrikReh/neongammon/actions/workflows/docs.yml/badge.svg)](https://hendrikreh.github.io/neongammon/)
+[![Documentation](https://img.shields.io/badge/Documentation-GitHub%20Pages-0969DA)](https://hendrikreh.github.io/neongammon/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon%20%28arm64%29-000000?logo=apple&logoColor=white)](#installation--building-on-apple-silicon)
 [![Python](https://img.shields.io/badge/python-3.10%20%E2%80%93%203.14-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![License: MPL-2.0](https://img.shields.io/github/license/HendrikReh/neongammon)](LICENSE)
