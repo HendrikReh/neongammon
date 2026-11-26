@@ -379,6 +379,68 @@ driver=scripts/experiments/lazy_cube_cache/measure.py
 "$ENGINE_PYTHON" -I "$FIXTURE_SCRIPT"
 ```
 
+### M4 Pro automatic search thread count
+
+The 14-thread default at `1b6e682` delivered higher full-game throughput than
+a 10-thread performance-core default at both depths in both runs on 2026-11-26.
+The experimental change sized both the shared pool and the automatic scalar and
+batch search budgets from `hw.perflevel0.physicalcpu`. macOS scheduled the
+threads normally. The engine retains its existing default.
+
+| Full game | 14 threads, seconds | 10 threads, seconds | 14 threads, decisions/s | 10 threads, decisions/s |
+|---|---:|---:|---:|---:|
+| 3-ply, run 1 | 0.841 | 0.932 | 103.50 | 93.30 |
+| 3-ply, run 2 | 0.814 | 0.907 | 106.90 | 95.92 |
+| 4-ply, run 1 | 15.656 | 17.548 | 5.56 | 4.96 |
+| 4-ply, run 2 | 15.503 | 17.452 | 5.61 | 4.99 |
+
+The single-position cases used the game's opening 6–1 checker decision (10
+legal moves) and the first pre-roll cube decision, both in contact at 5-away/
+5-away. Each cell gives the two runs' median public-call latencies in milliseconds.
+
+| Position | 14 threads, first | 10 threads, first | 14 threads, warm | 10 threads, warm |
+|---|---:|---:|---:|---:|
+| 3-ply checker | 21.89 / 21.92 | 21.69 / 22.03 | 18.97 / 19.47 | 19.26 / 19.44 |
+| 3-ply cube | 6.15 / 6.22 | 5.96 / 5.87 | 3.32 / 3.51 | 3.47 / 3.47 |
+| 4-ply checker | 353.84 / 361.72 | 357.62 / 369.08 | 231.96 / 289.00 | 274.74 / 266.18 |
+| 4-ply cube | 53.39 / 54.14 | 60.69 / 60.72 | 43.57 / 44.66 | 46.21 / 46.26 |
+
+Each run alternated baseline/candidate order within pairs, with the starting
+order reversed for run 2. Each sample used a fresh process with Stage 11 models
+already loaded. Each run had four paired processes per scalar case (one first
+call, then the last five of six repeats for warm latency) and two pairs per
+full game. The verified seed-42 game comprised 44 checker decisions with forced
+played boards and 43 rich cube decisions in chunks of four. Both builds matched
+exactly in every returned field at both depths on every sample. The timer covers
+Python package calls and native search. Sidecar startup, JSON transport,
+integrity checks and persistence are outside it. These automatic budgets differ
+from NeonDojo's explicitly configured four threads.
+
+Two-row checker and cube controls observed the native functions receive explicit
+budgets of 1, 4 and 14 at both depths. Each batch matched scalar results across
+budgets and builds. After an automatic two-row call, the candidate process had
+11 threads, then grew to 15 on an explicit budget of 14. The baseline process
+had 15 throughout. Measurements used an M4 Pro (10 performance and 4 efficiency
+cores, 64 GB), macOS 27.0.1, Apple Clang 21.0.0, SDK 27.2, Accelerate, CPython
+3.12.13 and single-thread BLAS. Desktop services continued running, including
+an App Store process using about one core.
+
+Set `ENGINE_PYTHON` to the verified 3.2.1 interpreter and `FIXTURE_SCRIPT` to
+NeonDojo's `tools/open-sage/verify_game_batches.py`. Put CMake, Ninja and Python
+with pybind11 on the build path. Both builds use the same compiler, SDK, source
+revision and verified model assets. [Build script](../scripts/experiments/pcore_pool/build.sh) · [Experimental patch](../scripts/experiments/pcore_pool/candidate.patch) · [Timing and parity driver](../scripts/experiments/pcore_pool/measure.py)
+
+```sh
+exp=scripts/experiments/pcore_pool
+out=build/pcore-repro
+"$exp/build.sh" "$out"
+for order in '' '--reverse'; do
+    "$ENGINE_PYTHON" -IB "$exp/measure.py" "$out" "$FIXTURE_SCRIPT" --depths 4 3 --workloads game --pairs 2 $order
+    "$ENGINE_PYTHON" -IB "$exp/measure.py" "$out" "$FIXTURE_SCRIPT" --workloads checker cube --pairs 4 $order
+done
+"$ENGINE_PYTHON" -IB "$exp/measure.py" "$out" "$FIXTURE_SCRIPT" --controls-only
+```
+
 ## Rollout and N-Ply Regression Benchmarks
 
 Saved-baseline regression scripts (each supports `--save`/`--compare` with a material band of `max(SE, 0.01)` for equities and `0.005` for probabilities; the cubeless rollout bench widens the prob band to each prob's own SE):

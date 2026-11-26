@@ -1,0 +1,114 @@
+diff --git a/cpp/include/bgbot/multipy.h b/cpp/include/bgbot/multipy.h
+index 4b0d6f5..6fac6ae 100644
+--- a/cpp/include/bgbot/multipy.h
++++ b/cpp/include/bgbot/multipy.h
+@@ -526,0 +527,4 @@ private:
++// Resolve an auto or explicit search budget. A larger explicit budget allows
++// the shared worker pool to grow beyond its performance-core default.
++int multipy_thread_budget(int requested);
++
+diff --git a/cpp/pybind/bindings.cpp b/cpp/pybind/bindings.cpp
+index b51fc6a..338cc95 100644
+--- a/cpp/pybind/bindings.cpp
++++ b/cpp/pybind/bindings.cpp
+@@ -290 +290 @@ static int batch_thread_budget(int requested) {
+-    return requested > 0 ? requested : std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
++    return multipy_thread_budget(requested);
+@@ -657,0 +658 @@ PYBIND11_MODULE(bgbot_cpp, m) {
++    m.def("default_search_threads", []() { return multipy_thread_budget(0); });
+diff --git a/cpp/src/multipy.cpp b/cpp/src/multipy.cpp
+index 9b92f97..125fa80 100644
+--- a/cpp/src/multipy.cpp
++++ b/cpp/src/multipy.cpp
+@@ -14,0 +15,3 @@
++#ifdef __APPLE__
++#include <sys/sysctl.h>
++#endif
+@@ -38,0 +42,19 @@ namespace {
++int hardware_threads() {
++    static const int count = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
++    return count;
++}
++
++int default_pool_width() {
++    static const int width = [] {
++#ifdef __APPLE__
++        int performance = 0;
++        size_t size = sizeof(performance);
++        if (sysctlbyname("hw.perflevel0.physicalcpu", &performance, &size, nullptr, 0) == 0
++            && performance > 0)
++            return std::min(performance, hardware_threads());
++#endif
++        return hardware_threads();
++    }();
++    return width;
++}
++
+@@ -41,7 +63,11 @@ public:
+-    explicit MultiPlyThreadPool(int n_threads) {
+-        constexpr int kMinThreads = 1;
+-        n_threads_ = std::max(kMinThreads, n_threads);
+-        threads_.reserve(n_threads_);
+-        for (int i = 0; i < n_threads_; ++i) {
+-            threads_.emplace_back([this]() { worker_loop(); });
+-        }
++    MultiPlyThreadPool() {
++        grow(default_pool_width());
++    }
++
++    void grow(int requested) {
++        const int width = std::min(requested, hardware_threads());
++        if (width <= n_threads_.load(std::memory_order_acquire)) return;
++        std::lock_guard<std::mutex> lock(grow_mutex_);
++        while (static_cast<int>(threads_.size()) < width)
++            threads_.emplace_back([this] { worker_loop(); });
++        n_threads_.store(static_cast<int>(threads_.size()), std::memory_order_release);
+@@ -109 +135 @@ public:
+-            const int helpers = std::min(n_workers - 1, n_threads_);
++            const int helpers = std::min(n_workers - 1, n_threads_.load(std::memory_order_relaxed));
+@@ -184 +210 @@ public:
+-            const int helpers = std::min(std::min(n_workers, n_items) - 1, n_threads_);
++            const int helpers = std::min(std::min(n_workers, n_items) - 1, n_threads_.load(std::memory_order_relaxed));
+@@ -238 +264,2 @@ private:
+-    int n_threads_;
++    std::atomic<int> n_threads_{0};
++    std::mutex grow_mutex_;
+@@ -247,2 +274 @@ MultiPlyThreadPool& get_multipy_executor() {
+-    static MultiPlyThreadPool executor(
+-        std::max(1, static_cast<int>(std::thread::hardware_concurrency())));
++    static MultiPlyThreadPool executor;
+@@ -255,0 +282,6 @@ MultiPlyThreadPool& get_multipy_executor() {
++int multipy_thread_budget(int requested) {
++    if (requested <= 0) return default_pool_width();
++    if (requested > default_pool_width()) get_multipy_executor().grow(requested);
++    return requested;
++}
++
+@@ -321,0 +354 @@ MultiPlyStrategy::MultiPlyStrategy(std::shared_ptr<Strategy> base_strategy,
++    if (parallel_evaluate_) multipy_thread_budget(parallel_threads_);
+@@ -342,0 +376 @@ MultiPlyStrategy::MultiPlyStrategy(std::shared_ptr<Strategy> base_strategy,
++    if (parallel_evaluate_) multipy_thread_budget(parallel_threads_);
+@@ -433,15 +467 @@ int MultiPlyStrategy::parallel_thread_count(int plies) const {
+-    int hw = static_cast<int>(std::thread::hardware_concurrency());
+-    if (hw <= 0) hw = 1;
+-
+-    int n_threads = parallel_threads_;
+-    if (n_threads <= 0) {
+-        n_threads = hw;
+-    } else if (n_threads < 1) {
+-        n_threads = 1;
+-    }
+-    // Never request more workers than the shared pool has threads: a
+-    // parallel_for caller blocks waiting for its queued chunks, so
+-    // oversubscribed nested dispatch (4-ply trees nest a second level of
+-    // blocking parallel_for) can otherwise fill the pool with waiting
+-    // chunks and deadlock.
+-    n_threads = std::min(n_threads, hw);
++    int n_threads = std::min(hardware_threads(), multipy_thread_budget(parallel_threads_));
+diff --git a/python/neongammon/analyzer.py b/python/neongammon/analyzer.py
+index beeeaa7..53a022e 100644
+--- a/python/neongammon/analyzer.py
++++ b/python/neongammon/analyzer.py
+@@ -102 +102 @@ def _default_parallel_threads() -> int:
+-        return max(2, os.cpu_count() or 2)
++        return bgbot_cpp.default_search_threads()
