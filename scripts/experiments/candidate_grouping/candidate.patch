@@ -1,0 +1,89 @@
+--- a/cpp/src/cube_eval.cpp
++++ b/cpp/src/cube_eval.cpp
+@@ -292,40 +292,33 @@
+                       const int* idxs, int n, const DiceNode& node,
+                       std::array<float, NUM_OUTPUTS>* out, int pinned = -1)
+ {
+-    thread_local std::vector<int> nn_idx_of;
+-    thread_local std::vector<char> done;
+-
+-    nn_idx_of.resize(n);
+-    done.assign(n, 0);
++#if defined(BGBOT_USE_ACCELERATE)
++    thread_local std::vector<std::vector<int>> buckets;
++    thread_local std::vector<int> active_nets;
++    active_nets.clear();
++
+     for (int j = 0; j < n; ++j) {
+-        nn_idx_of[j] = (pinned >= 0 && !is_race(cands[idxs[j]]))
+-            ? pinned : s.nn_index_for(cands[idxs[j]]);
+-        if (nn_idx_of[j] >= BLENDED_SENTINEL_BASE) {
+-            // Blended backgame sentinel (21-NN hybrid): no shared base,
+-            // evaluate directly via the strategy's blend-aware probs.
+-            out[idxs[j]] = s.probs_with_nn(cands[idxs[j]], nn_idx_of[j]);
+-            done[j] = 1;
+-        }
+-    }
+-
+-#if defined(BGBOT_USE_ACCELERATE)
+-    thread_local std::vector<int> members;
++        const int idx = idxs[j];
++        const int nidx = (pinned >= 0 && !is_race(cands[idx]))
++            ? pinned : s.nn_index_for(cands[idx]);
++        if (nidx >= BLENDED_SENTINEL_BASE) {
++            out[idx] = s.probs_with_nn(cands[idx], nidx);
++            continue;
++        }
++        if (static_cast<int>(buckets.size()) <= nidx) buckets.resize(nidx + 1);
++        auto& members = buckets[nidx];
++        if (members.empty()) active_nets.push_back(nidx);
++        members.push_back(idx);
++    }
++
+     thread_local std::vector<float> encoded;
+     thread_local std::vector<std::array<float, NUM_OUTPUTS>> group_out;
+     thread_local std::vector<std::array<DiceEncodedBase, 2>> base_by_depth;
+     if (static_cast<int>(base_by_depth.size()) <= node.depth)
+         base_by_depth.resize(node.depth + 1);
+
+-    for (int j = 0; j < n; ++j) {
+-        if (done[j]) continue;
+-        const int nidx = nn_idx_of[j];
+-
+-        members.clear();
+-        for (int k = j; k < n; ++k) {
+-            if (done[k] || nn_idx_of[k] != nidx) continue;
+-            members.push_back(idxs[k]);
+-            done[k] = 1;
+-        }
++    for (const int nidx : active_nets) {
++        auto& members = buckets[nidx];
+         const int m = static_cast<int>(members.size());
+         const NeuralNetwork& nn = *s.nn(nidx);
+         const bool is_pr = (nidx == 0);
+@@ -366,8 +359,25 @@
+         group_out.resize(m);
+         nn.forward_group(encoded.data(), m, group_out.data());
+         for (int g = 0; g < m; ++g) out[members[g]] = group_out[g];
++        members.clear();
+     }
+ #else
++    thread_local std::vector<int> nn_idx_of;
++    thread_local std::vector<char> done;
++
++    nn_idx_of.resize(n);
++    done.assign(n, 0);
++    for (int j = 0; j < n; ++j) {
++        nn_idx_of[j] = (pinned >= 0 && !is_race(cands[idxs[j]]))
++            ? pinned : s.nn_index_for(cands[idxs[j]]);
++        if (nn_idx_of[j] >= BLENDED_SENTINEL_BASE) {
++            // Blended backgame sentinel (21-NN hybrid): no shared base,
++            // evaluate directly via the strategy's blend-aware probs.
++            out[idxs[j]] = s.probs_with_nn(cands[idxs[j]], nn_idx_of[j]);
++            done[j] = 1;
++        }
++    }
++
+     thread_local std::vector<std::vector<DiceNetworkBase>> by_depth;
+     if (static_cast<int>(by_depth.size()) <= node.depth)
+         by_depth.resize(node.depth + 1);
