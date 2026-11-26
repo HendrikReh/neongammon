@@ -1,0 +1,76 @@
+--- a/cpp/src/cube_eval.cpp
++++ b/cpp/src/cube_eval.cpp
+@@ -34,7 +34,9 @@
+ #include "bgbot/pubeval.h"
+ #include "bgbot/multipy.h"
+ #include <algorithm>
++#include <cstdio>
+ #include <cstdlib>
++#include <string>
+ #include <cstring>
+ #include <limits>
+ #include <memory>
+@@ -709,6 +711,30 @@
+     }
+ };
+
++// Disposable trace build only. Keep a complete candidate list so the analysis
++// can distinguish equal ordered batches from merely overlapping shortlists.
++#ifdef NG63_TRACE
++void trace_roll(bool reading, int path, int roll, const Board& board,
++                const EvalCtx& ctx, const std::vector<Board>& evaluated,
++                bool full_hit) {
++    static constexpr char hex[] = "0123456789abcdef";
++    std::string boards;
++    auto append = [&](const Board& b) {
++        for (int point : b) {
++            unsigned char v = static_cast<unsigned char>(point);
++            boards += hex[v >> 4];
++            boards += hex[v & 15];
++        }
++    };
++    append(board);
++    for (const auto& candidate : evaluated) append(candidate);
++    // One stdio call keeps each roll intact across parallel workers.
++    std::fprintf(stderr, "NG63 roll %d %d %d %llu %d %d %s\n",
++        reading, path, roll, static_cast<unsigned long long>(ctx.strategy->eval_identity()),
++        ctx.pinned_nn, full_hit, boards.c_str());
++}
++#endif
++
+ template<bool ShareBatches>
+ void cubeful_eval_recursive(
+     const Board& board,
+@@ -1027,6 +1053,10 @@
+                 auto* saved = batch_node ? &batch_node->rolls[r] : nullptr;
+                 const bool full = eval_candidates == &candidates;
+                 const bool hit = saved && ctx.batches->reading && full && saved->total == n_cand;
++#ifdef NG63_TRACE
++                trace_roll(ctx.batches->reading, roll_path, r, board, ctx, *eval_candidates,
++                           hit && !saved->subset && saved->count == n_eval);
++#endif
+                 if (hit && !saved->subset && saved->count == n_eval) {
+                     std::copy_n(saved->probs.begin(), n_eval, cand_probs.begin());
+                 } else {
+@@ -1757,6 +1787,21 @@
+     while (const auto* wrapped = dynamic_cast<const BearoffStrategy*>(model)) model = &wrapped->base();
+     const bool share_survivors = dynamic_cast<const BackgameAwarePairStrategy*>(model) ||
+                                  dynamic_cast<const GamePlanPairStrategy*>(model);
++#endif
++    // The control and no-sharing timings use the same extension. The switch
++    // sits outside both trees, so neither variant times the trace collector.
++    if (std::getenv("NG63_DISABLE_SHARING")) {
++        CubeDecision decision{};
++        cube_decision_nply_multi_impl<false>(board, &cube, 1, *base_, n_plies_, &decision,
++            move_filter_, parallel_threads_, cube_move_filter, false, nullptr, check_budget);
++        auto post_probs = cubeless_post_probs<false>(
++            flipped, flipped, n_plies_, parallel_thread_count(n_plies_), false,
++            *base_, bearoff_db_, move_prefilter_.get(), nullptr, check_budget);
++        pre_roll_probs = invert_probs(post_probs);
++        return decision;
++    }
++#ifdef NG63_TRACE
++    std::fprintf(stderr, "NG63 start\n");
+ #endif
+     CandidateBatchCache batches(n_plies_, share_survivors);
+     CubeDecision decision{};

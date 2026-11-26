@@ -277,6 +277,49 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 \
   "$ENGINE_PYTHON" -I scripts/experiments/cube_3ply/measure_phases.py "$profile_dir/native"
 ```
 
+### Candidate reuse on the published 3.2.1 wheel
+
+On 2026-11-26, the owned-money fixture returned **Double/Take** on the official CPython 3.12 arm64 wheel (SHA256 `42686dd524b052640e56074a99d063d332ff0c6da2372e4675bab3d72cb14b7e`). The M4 Pro ran macOS 27.0.1, Stage 11, four engine threads and single-thread BLAS. Each cell below is a median in milliseconds. Each of the two runs used 16 fresh processes per variant and 80 warm repeats per variant, with the four variants rotated through the process order. The host had background VM and intermittent desktop/compiler activity. [Release](https://github.com/HendrikReh/neongammon/releases/tag/v3.2.1)
+
+| Public call | First, run 1 | First, run 2 | Warm, run 1 | Warm, run 2 |
+|---|---:|---:|---:|---:|
+| Official wheel, `cube_action` | 9.353 | 9.351 | 5.929 | 5.854 |
+| Official wheel, `cube_decision` | 5.043 | 5.025 | 2.883 | 2.819 |
+| Local release source, normal sharing | 9.520 | 9.335 | 5.909 | 5.832 |
+| Same extension, sharing disabled | 9.859 | 9.775 | 6.178 | 6.164 |
+
+Whole-batch reuse saved **0.27–0.33 ms per warm rich call** (4.4–5.4% of the time with sharing disabled). All rich results matched exactly across timing variants and repeats. The decision-only fields and independent cubeless probabilities/equity also matched. Separate phase timers measured 4.737 ms cubeful and 4.348 ms cubeless on the first call, then 2.508 ms and 3.088 ms warm. The cubeless traversal accounted for 55.0% of warm native elapsed time.
+
+The trace captured every roll with two or more evaluated candidates in both trees, including the ordered list *after* filtering. The matcher compared the pre-move board, dice, evaluator identity, root pin and ordered candidate boards within the same public call. Each reported hit also passed the production path-slot check. Exact matches in other path slots count as additional opportunities. Rolls served by the tree cache, dances and forced moves never enter the candidate-batch denominator. The trace counts candidate probability rows before the engine groups them by NN for BLAS. Variation in worker-local tree-cache hits changes how many batches each repeat requests. The counts below pool 16 first calls and 80 warm calls in a separate tracing run.
+
+| Cubeless demand and overlap with the cubeful tree | First calls | Warm calls |
+|---|---:|---:|
+| Requested batches / rows | 7,392 / 236,864 | 28,119 / 897,741 |
+| Whole batches actually reused | 1,194 (16.15%) | 4,061 (14.44%) |
+| Rows in those hits | 16,808 (7.10%) | 57,051 (6.35%) |
+| Additional identical whole batches / rows | 6 / 88 | 156 / 2,288 |
+| Batches with only partial overlap / common rows | 6,192 / 92,880 | 20,500 / 307,500 |
+| Batches with zero overlap | 0 | 3,402 |
+
+Keep the current Accelerate policy on this workload. A broader lookup for identical roll batches could reach another **0.25% of warm candidate rows**. The larger partial overlap (34.25% of warm rows) needs different batch shapes for shortlist survivors and the remainder. Forcing the existing survivor-reuse path on Accelerate changed the owned-money gammon-win and gammon-loss probabilities. It also changed 9 of the 43 seed-42 cube results, with a maximum absolute field difference of `5.96e-8`. This fails the engine's exact probability parity requirement.
+
+On the verified seed-42 match fixture, normal and disabled sharing both matched the pristine **same-toolchain** build exactly on every field for 44 checker and 43 cube rows at 3-ply. The pristine build and official wheel agreed on all discrete fields. They matched exactly on 35/44 checker and 42/43 cube rows, with maximum absolute float differences of `7.75e-7` and `6.82e-13`. The local compiler was Apple Clang 21 (SDK 27.2) and the wheel records SDK 15.5. The official NeonDojo sidecar verifier independently matched scalar and batched results exactly on all 87 rows at **both 3- and 4-ply**.
+
+To reproduce, set `ENGINE_PYTHON` to the locked 3.2.1 interpreter and `FIXTURE_SCRIPT` to NeonDojo's `tools/open-sage/verify_game_batches.py`. Put CMake, Ninja and a Python interpreter with pybind11 on `PATH`. All diagnostic builds use a disposable export of tag `v3.2.1` under the supplied directory. The installed wheel supplies Python and model assets. [Build script](../scripts/experiments/cube_3ply/build_probes.sh) · [Native probes](../scripts/experiments/cube_3ply/candidate-probe.patch) · [Counting, timing and parity driver](../scripts/experiments/cube_3ply/measure_reuse.py)
+
+```sh
+export ENGINE_PYTHON
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1
+exp=scripts/experiments/cube_3ply
+out=build/ng63
+"$exp/build_probes.sh" "$out"
+"$ENGINE_PYTHON" -I "$exp/measure_reuse.py" timing "$out/ab"
+"$ENGINE_PYTHON" -I "$exp/measure_phases.py" "$out/phases"
+"$ENGINE_PYTHON" -I "$exp/measure_reuse.py" trace "$out/trace"
+"$ENGINE_PYTHON" -I "$exp/measure_reuse.py" parity "$out/ab" "$out/pristine" "$FIXTURE_SCRIPT" --subset "$out/subset"
+"$ENGINE_PYTHON" -I "$FIXTURE_SCRIPT"
+```
+
 ## Rollout and N-Ply Regression Benchmarks
 
 Saved-baseline regression scripts (each supports `--save`/`--compare` with a material band of `max(SE, 0.01)` for equities and `0.005` for probabilities; the cubeless rollout bench widens the prob band to each prob's own SE):
