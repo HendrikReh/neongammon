@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+  {{ super() }}
+  <script>
+    (() => {
+      // The manuals share an origin. Keep Material's other preferences scoped to each site.
+      const paletteKey = "__palette";
+      const sharedScope = new URL("/neon-manuals/", location);
+      const get = window.__md_get;
+      const set = window.__md_set;
+
+      window.__md_get = (key, storage, scope) => {
+        if (key !== paletteKey) return get(key, storage, scope);
+
+        // Use the current manual's saved palette on the first visit after the change.
+        return get(key, storage, sharedScope) ?? get(key, storage, scope);
+      };
+
+      window.__md_set = (key, value, storage, scope) =>
+        set(key, value, storage, key === paletteKey ? sharedScope : scope);
+    })();
+  </script>
+{% endblock %}
