@@ -1,0 +1,40 @@
+name: Source tests
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  source_tests:
+    name: macOS source build and pytest
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install source build and test dependencies
+        run: python -m pip install 'numpy>=1.24' 'pybind11>=2.12' cmake ninja pytest
+
+      - name: Build the Python extension
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DPYBIND11_FINDPYTHON=ON -DPython_EXECUTABLE="$(command -v python)" \
+            -Dpybind11_DIR="$(python -m pybind11 --cmakedir)"
+          cmake --build build --target bgbot_cpp --parallel 4
+
+      - name: Run source regression tests and mobile parity
+        env:
+          PYTHONPATH: ${{ github.workspace }}/build:${{ github.workspace }}/python
+        run: |
+          python -m pytest -q -rs --junitxml=build/source-tests.xml \
+            tests/test_encoding_golden.py \
+            tests/test_2ply_details.py \
+            tests/test_concurrency_safety.py \
+            tests/test_mobile_parity.py
+          # Every selected test must run on the fully provisioned runner.
+          test "$(xmllint --xpath 'count(//testcase/skipped)' build/source-tests.xml)" = 0
