@@ -115,6 +115,20 @@ def main():
                     assert all(error < 1e-5 for error in errors), (context, errors)
                     max_error = max(max_error, max(errors, default=0.0))
                     cases += 1
+        # Cold, high-branching contact position. Both operations must return
+        # the timeout error and allow a normal analysis on the same handle.
+        heavy = [0, -7, -1, 1, -1, 1, 1, 1, -1, 1, 1, -1, 1,
+                 -1, 1, 1, 1, 1, -1, 1, 1, -1, 1, -1, 1, 0]
+        for operation in (0, 1):
+            short = Request((C.c_int * 26)(*heavy), 1, 1, 2, 1, 0, 5, 5, 0, 0, 0, 1)
+            assert not lib.neongammon_mobile_analyze(handle, operation, C.byref(short))
+            assert lib.neongammon_mobile_last_error() == b"native budget exceeded"
+            recovered = lib.neongammon_mobile_analyze(handle, 1, C.byref(request))
+            assert recovered, lib.neongammon_mobile_last_error()
+            try:
+                assert json.loads(C.string_at(recovered)) == actual
+            finally:
+                lib.neongammon_mobile_free(recovered)
         request.ply = 3
         assert not lib.neongammon_mobile_analyze(handle, 0, C.byref(request))
         request.ply = 1; request.board[1] = 500

@@ -281,7 +281,8 @@ public:
     // At 2/3/4 ply, the two policies can share identical ordered candidate NN evaluations.
     CubeDecision cube_decision_with_cubeless_probs(
         const Board& board, const CubeInfo& cube, const Strategy* cube_move_filter,
-        std::array<float, NUM_OUTPUTS>& pre_roll_probs) const;
+        std::array<float, NUM_OUTPUTS>& pre_roll_probs,
+        const std::function<void()>& check_budget = {}) const;
 
     // Evaluate a post-move board at N-ply depth. Returns equity.
     double evaluate(const Board& board, bool pre_move_is_race) const override;

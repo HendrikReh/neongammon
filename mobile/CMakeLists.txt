@@ -6,3 +6,8 @@ set(BGBOT_BUILD_APPS OFF CACHE BOOL "" FORCE)
 include(${CMAKE_CURRENT_LIST_DIR}/../cpp/CMakeLists.txt)
 add_library(neongammon_mobile SHARED ../cpp/src/mobile.cpp)
 target_link_libraries(neongammon_mobile PRIVATE bgbot_lib)
+
+if(NEONGAMMON_MOBILE_REFERENCE_PYTHON)
+    add_executable(test_cube_budget test_cube_budget.cpp)
+    target_link_libraries(test_cube_budget PRIVATE bgbot_lib)
+endif()

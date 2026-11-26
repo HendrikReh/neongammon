@@ -524,6 +524,7 @@ struct EvalCtx {
     CandidateBatchCache* batches = nullptr;
     int pinned_nn = -1;   // root routing: the net every node uses (-1 = per node)
     CheckerSubtrees* checker = nullptr;
+    const std::function<void()>* check_budget = nullptr;
 };
 
 // Post-move probs of `board` under root routing: the pinned net when one is
@@ -920,6 +921,7 @@ void cubeful_eval_recursive(
         thread_local std::vector<std::array<float, NUM_OUTPUTS>> cand_probs;
         thread_local std::vector<int> live_idx;
 
+        if (ctx.check_budget) (*ctx.check_budget)();
         const auto& roll = ALL_ROLLS_21[r];
         const int child_path = ShareBatches ? 21 * roll_path + r + 1 : 0;
         const float w = static_cast<float>(roll.weight);
@@ -1296,7 +1298,8 @@ static void cubeful_equity_nply_multi_impl(
     bool deep_prefilter,
     const Board* root_board,
     CandidateBatchCache* batches,
-    CheckerSubtrees* checker = nullptr)
+    CheckerSubtrees* checker = nullptr,
+    const std::function<void()>& check_budget = {})
 {
     (void)filter;  // candidate selection inside the tree is single-pick
     if (n_cubes <= 0) return;
@@ -1324,6 +1327,7 @@ static void cubeful_equity_nply_multi_impl(
     EvalCtx ctx{&strategy, move_filter, n_plies, n_threads, deep_prefilter};
     ctx.pinned_nn = pinned;
     ctx.batches = batches;
+    ctx.check_budget = check_budget ? &check_budget : nullptr;
     ctx.checker = checker;
     const bool allow_parallel = n_threads > 1 && n_plies >= 2;
     float arCubeful[EVAL_MAX_CCI];
@@ -1480,7 +1484,7 @@ static void cube_decision_nply_multi_impl(
     int n_threads,
     const Strategy* move_filter,
     bool deep_prefilter,
-    CandidateBatchCache* batches)
+    CandidateBatchCache* batches, const std::function<void()>& check_budget = {})
 {
     (void)filter;  // candidate selection inside the tree is single-pick
     if (n_cubes <= 0) return;
@@ -1514,6 +1518,7 @@ static void cube_decision_nply_multi_impl(
     EvalCtx ctx{&strategy, move_filter, n_plies, n_threads, deep_prefilter};
     ctx.pinned_nn = pinned;
     ctx.batches = batches;
+    ctx.check_budget = check_budget ? &check_budget : nullptr;
     const bool allow_parallel = n_threads > 1 && n_plies >= 2;
     float arCubeful[EVAL_MAX_CCI];
     cubeful_eval_recursive<ShareBatches>(board, aciCubePos, n_states, ctx, n_plies, /*fTop=*/true,
@@ -1536,11 +1541,11 @@ void cube_decision_nply_multi(
     const MoveFilter& filter,
     int n_threads,
     const Strategy* move_filter,
-    bool deep_prefilter)
+    bool deep_prefilter, const std::function<void()>& check_budget)
 {
     cube_decision_nply_multi_impl<false>(
         board, cubes, n_cubes, strategy, n_plies, out, filter, n_threads,
-        move_filter, deep_prefilter, nullptr);
+        move_filter, deep_prefilter, nullptr, check_budget);
 }
 
 // ======================== Cube decision with per-roll details ========================
@@ -1589,7 +1594,7 @@ CubeDecision cube_decision_nply_with_details(
     const MoveFilter& filter,
     int n_threads,
     TwoPlyDetails& details,
-    const Strategy* move_filter)
+    const Strategy* move_filter, const std::function<void()>& check_budget)
 {
     (void)filter;  // candidate selection inside the tree is single-pick
     if (n_plies < 2) {
@@ -1613,6 +1618,7 @@ CubeDecision cube_decision_nply_with_details(
 
     n_threads = root_roll_threads(board, n_plies, n_threads);
     EvalCtx ctx{&strategy, move_filter, n_plies, n_threads, /*deep_prefilter=*/false};
+    ctx.check_budget = check_budget ? &check_budget : nullptr;
     ctx.pinned_nn = strategy.root_pin_for(board);
     const bool allow_parallel = (n_threads > 1 && n_plies >= 2);
     float arCubeful[EVAL_MAX_CCI];
@@ -1682,7 +1688,7 @@ template<bool ShareBatches>
 static std::array<float, NUM_OUTPUTS> cubeless_post_probs(
     const Board& board, const Board& pre_move_board, int plies, int n_threads,
     bool deep_prefilter, const Strategy& base, const BearoffDB* db,
-    const Strategy* move_prefilter, CandidateBatchCache* batches)
+    const Strategy* move_prefilter, CandidateBatchCache* batches, const std::function<void()>& check_budget = {})
 {
     // Exact-DB short-circuit and 1-ply base case mirror the recursion's.
     if (db && db->is_bearoff(board)) {
@@ -1712,7 +1718,7 @@ static std::array<float, NUM_OUTPUTS> cubeless_post_probs(
         flip(board), &dead, 1, base, plies, &cf_unused,
         MoveFilters::TINY, n_threads,
         move_prefilter,
-        /*fTop=*/false, &tree_probs, deep_prefilter, &pre_move_board, batches);
+        /*fTop=*/false, &tree_probs, deep_prefilter, &pre_move_board, batches, nullptr, check_budget);
     auto probs = invert_probs(tree_probs);
     clamp_probs_to_board(probs, board);
     return probs;
@@ -1728,14 +1734,14 @@ std::array<float, NUM_OUTPUTS> MultiPlyStrategy::cubeless_tree_probs(
 
 CubeDecision MultiPlyStrategy::cube_decision_with_cubeless_probs(
     const Board& board, const CubeInfo& cube, const Strategy* cube_move_filter,
-    std::array<float, NUM_OUTPUTS>& pre_roll_probs) const
+    std::array<float, NUM_OUTPUTS>& pre_roll_probs, const std::function<void()>& check_budget) const
 {
     const Board flipped = flip(board);
     if ((n_plies_ != 2 && n_plies_ != 3 && n_plies_ != 4) || full_depth_opponent_ || filter_strat_ ||
         (bearoff_db_ && bearoff_db_->is_bearoff(flipped)) ||
         check_game_over(flipped) != GameResult::NOT_OVER) {
         auto decision = cube_decision_nply(board, cube, *base_, n_plies_, move_filter_,
-                                           parallel_threads_, cube_move_filter);
+                                           parallel_threads_, cube_move_filter, check_budget);
         pre_roll_probs = invert_probs(evaluate_probs(flipped, flipped));
         return decision;
     }
@@ -1755,12 +1761,12 @@ CubeDecision MultiPlyStrategy::cube_decision_with_cubeless_probs(
     CandidateBatchCache batches(n_plies_, share_survivors);
     CubeDecision decision{};
     cube_decision_nply_multi_impl<true>(board, &cube, 1, *base_, n_plies_, &decision,
-        move_filter_, parallel_threads_, cube_move_filter, false, &batches);
+        move_filter_, parallel_threads_, cube_move_filter, false, &batches, check_budget);
 
     batches.reading = true;
     const auto post_probs = cubeless_post_probs<true>(
         flipped, flipped, n_plies_, parallel_thread_count(n_plies_), false,
-        *base_, bearoff_db_, move_prefilter_.get(), &batches);
+        *base_, bearoff_db_, move_prefilter_.get(), &batches, check_budget);
     pre_roll_probs = invert_probs(post_probs);
     return decision;
 }

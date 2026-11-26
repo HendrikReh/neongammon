@@ -25,6 +25,13 @@ struct ScoredMove {
     bool searched;   // false: still on its 1-ply values
 };
 
+// Search caches are per-thread. A failed or interrupted request ends their
+// lifetime just like a successfully scored one.
+struct ClearSearchCacheOnExit {
+    const MultiPlyStrategy& strategy;
+    ~ClearSearchCacheOnExit() { strategy.clear_cache(); }
+};
+
 struct CubeEvaluation {
     CubeDecision decision{};
     std::array<float, NUM_OUTPUTS> probs{};
@@ -81,6 +88,7 @@ std::vector<ScoredMove> score_checker_endpoints(const Board& before,
 CubeEvaluation evaluate_cube_leaf(const Board& board, const CubeInfo& cube, const Strategy& base);
 CubeEvaluation evaluate_cube_tree(const Board& board, const CubeInfo& cube,
     const std::shared_ptr<Strategy>& base, const BearoffDB* db,
-    int plies, MoveFilter filter, int threads, bool decision_only, TwoPlyDetails* details = nullptr);
+    int plies, MoveFilter filter, int threads, bool decision_only, TwoPlyDetails* details = nullptr,
+    const std::function<void()>& check_budget = {});
 
 } // namespace bgbot

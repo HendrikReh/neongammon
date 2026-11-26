@@ -15,7 +15,7 @@ typedef struct {
     int die1, die2, ply;
     int cube_value, cube_owner; // 0 centered, 1 player, 2 opponent
     int away1, away2, is_crawford, jacoby, beaver;
-    int budget_ms; // checked between candidates; never creates engine threads
+    int budget_ms; // checked between checker candidates and cube rolls on the calling thread
 } NeongammonMobileRequest;
 
 NeongammonMobileEngine* neongammon_mobile_create(const char* strategy_type,
