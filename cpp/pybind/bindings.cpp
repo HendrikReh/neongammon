@@ -277,17 +277,28 @@ static std::shared_ptr<Strategy> make_strategy_from_type(
         ". Valid types: 5nn, pair, backgame_pair, backgame_pair_phased");
 }
 
+static bool checker_root_is_filtered(int plies, const std::vector<int>& filtered_plies) {
+    return std::find(filtered_plies.begin(), filtered_plies.end(), plies) != filtered_plies.end();
+}
+
+static void validate_batch_move_filter(int plies, int max_moves, float threshold, bool filtered_root) {
+    if (plies >= 3 && !filtered_root &&
+        (max_moves != MoveFilters::TINY.max_moves || threshold != MoveFilters::TINY.threshold)) {
+        throw std::invalid_argument(std::to_string(plies) + "-ply batch search has no root move filter. "
+            "Use the default filter_max_moves=5 and filter_threshold=0.08.");
+    }
+}
+
 static AnalyzerSession make_checker_search(
         const Strategy& strategy_1ply, const MultiPlyStrategy& strategy_nply,
         int filter_max_moves, float filter_threshold, bool jacoby, bool beaver,
         float contact_x_1ply, float contact_x_pip_slope_1ply,
         float contact_x_nply, float contact_x_pip_slope_nply,
-        const std::vector<int>& filtered_plies) {
-    const int n_plies = strategy_nply.n_plies();
+        bool filtered_root) {
     return AnalyzerSession{
         strategy_1ply, strategy_nply, MoveFilter{filter_max_moves, filter_threshold}, jacoby, beaver,
         {contact_x_1ply, contact_x_pip_slope_1ply}, {contact_x_nply, contact_x_pip_slope_nply},
-        std::find(filtered_plies.begin(), filtered_plies.end(), n_plies) != filtered_plies.end()};
+        filtered_root};
 }
 
 static int batch_thread_budget(int requested) {
@@ -444,6 +455,10 @@ static py::list batch_checker_play_nply(
         float contact_x_nply,
         float contact_x_pip_slope_nply,
         const std::vector<int>& filtered_plies) {
+    if (!strategy_nply) throw std::invalid_argument("strategy_nply is None");
+    const int plies = strategy_nply->n_plies();
+    const bool filtered_root = checker_root_is_filtered(plies, filtered_plies);
+    validate_batch_move_filter(plies, filter_max_moves, filter_threshold, filtered_root);
     const int n = static_cast<int>(py::len(inputs));
     if (n == 0) return py::list();
     std::vector<CheckerPosition> parsed(n);
@@ -451,11 +466,10 @@ static py::list batch_checker_play_nply(
     const AnalyzerSession session = make_checker_search(
         strategy_1ply, *strategy_nply, filter_max_moves, filter_threshold, jacoby, beaver,
         contact_x_1ply, contact_x_pip_slope_1ply, contact_x_nply, contact_x_pip_slope_nply,
-        filtered_plies);
+        filtered_root);
     std::vector<std::vector<ScoredMove>> results(n);
     {
         py::gil_scoped_release release;
-        const int plies = strategy_nply->n_plies();
         const int threads = batch_thread_budget(n_threads);
         if (n > 1 && threads > 1 && session.can_share_checker_endpoints()) {
             results = session.score_unfiltered_checker_batch(parsed, threads);
@@ -669,6 +683,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
     m.attr("MONEY_CONTACT_CUBE_LIFE") = money_contact_life;
     m.attr("MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE") = money_contact_slope;
     m.attr("CUBEFUL_FILTERED_PLIES") = AnalyzerSession::filtered_plies;
+    m.def("_validate_batch_move_filter", &validate_batch_move_filter);
 
     // Register C++ RolloutCancelled as a Python exception
     py::register_exception<RolloutCancelled>(m, "RolloutCancelled");
@@ -3793,7 +3808,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
         const AnalyzerSession session = make_checker_search(
             strategy_1ply, *strategy_nply, filter_max_moves, filter_threshold, jacoby, beaver,
             contact_x_1ply, contact_x_pip_slope_1ply, contact_x_nply, contact_x_pip_slope_nply,
-            cubeful_filtered_plies);
+            checker_root_is_filtered(strategy_nply->n_plies(), cubeful_filtered_plies));
         std::vector<ScoredMove> moves;
         {
             py::gil_scoped_release release;
@@ -3843,6 +3858,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
        "cubeful_filtered_plies: depths at which only the 1-ply filter's survivors\n"
        "(and stale-top-two promotions) go through the cube-aware tree; at other\n"
        "depths every legal move does. Python passes CUBEFUL_FILTERED_PLIES.\n"
+       "At 3-ply and above custom filter_max_moves/filter_threshold require a filtered root.\n"
        "Returns list of dicts, each with 'moves' list sorted by equity desc,\n"
        "the same list BgBotAnalyzer.checker_play gives (no bearoff database).",
        py::arg("inputs"),
@@ -3888,6 +3904,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
        "cubeful_filtered_plies: depths at which only the 1-ply filter's survivors\n"
        "(and stale-top-two promotions) go through the cube-aware tree; at other\n"
        "depths every legal move does. Python passes CUBEFUL_FILTERED_PLIES.\n"
+       "At 3-ply and above custom filter_max_moves/filter_threshold require a filtered root.\n"
        "Returns list of dicts, each with 'moves' list sorted by equity desc,\n"
        "the same list BgBotAnalyzer.checker_play gives (no bearoff database).",
        py::arg("inputs"),
@@ -4696,6 +4713,7 @@ PYBIND11_MODULE(bgbot_cpp, m) {
             const std::shared_ptr<Strategy>& base, const BearoffDB* db, int plies,
             int threads, bool decision_only, int max_moves, float threshold) {
         validate_search_depth(plies);
+        validate_batch_move_filter(plies, max_moves, threshold, false);
         if (!base) throw std::invalid_argument("base strategy is None");
         auto strategy = with_bearoff_db(base, db);
         std::vector<CubeEvaluation> results(positions.size());
@@ -4728,7 +4746,8 @@ PYBIND11_MODULE(bgbot_cpp, m) {
         py::list out;
         for (const auto& r : results) out.append(cube_evaluation_dict(r, decision_only));
         return out;
-    }, py::arg("positions"), py::arg("base"), py::arg("bearoff_db"), py::arg("n_plies"),
+    }, "Recursive cube batch. At 3-ply and above use the default filter_max_moves and filter_threshold.",
+       py::arg("positions"), py::arg("base"), py::arg("bearoff_db"), py::arg("n_plies"),
        py::arg("n_threads") = 0, py::arg("decision_only") = false,
        py::arg("filter_max_moves") = 5, py::arg("filter_threshold") = 0.08f);
 
