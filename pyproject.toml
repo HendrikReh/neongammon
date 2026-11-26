@@ -111,7 +111,7 @@ build-verbosity = 1
 test-requires = ["pytest"]
 test-sources = ["tests"]
 test-command = """\
-python -I -m pytest -q tests/wheel_contents.py tests/test_simulation.py \
+python -I -m pytest -q tests/wheel_contents.py tests/test_lazy_imports.py tests/test_simulation.py \
 tests/test_batch.py tests/test_batch_checker_play.py tests/test_batch_cube_action_nply.py \
 tests/test_move_dice.py::test_high_branching_1_1_moves_above_2048_exact_parity"""
 
