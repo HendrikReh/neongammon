@@ -68,8 +68,8 @@ markdown_extensions:
   - pymdownx.details
 
 nav:
-  - Overview: README.md
   - NeonDojo manual: https://hendrikreh.github.io/neondojo/
+  - NeonGammon manual: README.md
   - Usage & API:
       - Engine: engine.md
       - Simulation: simulation.md
