@@ -72,3 +72,13 @@ def test_four_ply_batch_matches_scalar(decision_only):
     batch = ng.batch_cube_action_nply(positions, eval_level="4ply", n_threads=2,
                                       decision_only=decision_only)
     assert batch == [scalar(**position) for position in positions]
+
+
+def test_short_batches_preserve_order_across_contact_and_bearoff_groups():
+    analyzer = ng.BgBotAnalyzer(eval_level="3ply", parallel_threads=4)
+    models = ng.BatchModels.from_analyzer(analyzer)
+    rows = [POSITIONS[2], POSITIONS[0], POSITIONS[4], POSITIONS[3]]
+    expected = [analyzer.cube_action(**row) for row in rows]
+    for size in range(1, 5):
+        assert ng.batch_cube_action_nply(rows[:size], eval_level="3ply", n_threads=4,
+                                         models=models) == expected[:size]

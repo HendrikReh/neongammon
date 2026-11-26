@@ -239,11 +239,14 @@ C++ batch checker play: `bgbot_cpp.batch_checker_play(inputs, strategy_1ply, [st
 filter_max_moves, filter_threshold, n_threads)` via pybind11; takes `list[dict]` with
 `{board, die1, die2, cube_value, cube_owner}`, returns `list[dict]` each with `moves` list
 sorted by cubeful equity desc. Overloads for 1-ply and for N-ply (1-ply strategy +
-MultiPlyStrategy). The N-ply overloads call `AnalyzerSession::score_checker_position`
-in `bgbot_lib` for each position. `BgBotAnalyzer.checker_play` calls the same routine
+MultiPlyStrategy). The N-ply overloads use the checker search in `AnalyzerSession`.
+`BgBotAnalyzer.checker_play` calls the single-position routine
 through `bgbot_cpp.checker_play_nply`, passing its forced boards, cube cap and thread
-budget. Both return the same ranked moves with the bearoff database enabled or disabled. Rows may carry `max_cube_value` and `force_boards`. At the
-depths in
+budget. At 2-ply the batch distributes threads across rows first. At 3-ply it
+distributes legal moves from all rows over the same pool. At 4-ply it keeps
+each roll together to reuse subtrees across its moves. Both APIs return the
+same ranked moves with the bearoff database enabled or disabled. Rows may
+carry `max_cube_value` and `force_boards`. At the depths in
 `cubeful_filtered_plies` (the wrapper passes `CUBEFUL_FILTERED_PLIES`, i.e. 2-ply) only the
 filter's survivors and promotions go through the cube-aware tree, the rest keep 1-ply
 values; at other depths every move does. `tests/test_batch_checker_play_parity.py`.
@@ -298,7 +301,9 @@ cube_decisions = batch_cube_action_nply(
 The recursive batch returns `CubeActionResult` at 1–4 ply, or
 `CubeDecisionResult` with `decision_only=True`. Positions accept the same
 cube owner, match score, Crawford, Jacoby, beaver and maximum cube value
-as a scalar analysis. Each worker searches one position serially.
+as a scalar analysis. Short batches spend spare threads inside each cube
+search. At 3-ply and deeper, bearoff database rows run separately so a lone
+contact row gets the full thread budget.
 `batch_cube_action` continues to apply a Janowski conversion at the root.
 
 `checker.top_two_promote(board, moves, max_gap=0.010, **cube_context)`

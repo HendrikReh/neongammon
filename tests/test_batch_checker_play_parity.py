@@ -501,3 +501,14 @@ def test_post_move_analytics_translates_rollout_cancelled():
                     board, cube_owner="centered", progress_callback=cancel_midway,
                 )
 
+
+
+def test_deep_short_batches_with_a_high_branching_double():
+    # Turn four of the seed-42 five-point game. It can produce 133 distinct
+    # endpoints while the other rows are already in the bearoff database.
+    board = [0, -1, 0, 0, -1, 0, 5, 2, 2, 0, 0, 0, -3, 4, -1, 0, 0, -2, -2, -5, 0, 0, 0, 0, 2, 0]
+    assert len(possible_moves(board, 2, 2)) == 133
+    positions = [dict(board=board, die1=2, die2=2, away1=5, away2=5), FIXED[2], FIXED[3], FIXED[2]]
+    expected = _analyzer_moves("3ply", positions)
+    for size in range(1, 5):
+        assert _batch_moves("3ply", positions[:size], n_threads=4) == expected[:size]

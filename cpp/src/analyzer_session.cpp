@@ -6,6 +6,7 @@
 #include "bgbot/neural_net.h"
 #include "bgbot/pubeval.h"
 #include <algorithm>
+#include <numeric>
 
 namespace bgbot {
 
@@ -200,25 +201,65 @@ std::vector<ScoredMove> score_checker_endpoints(
     return out;
 }
 
+CubeInfo AnalyzerSession::opponent_cube(const CheckerPosition& pos) const {
+    const bool money = pos.match.is_money();
+    return {pos.cube_value, flip_owner(pos.owner), pos.match.flip(), -1.0f,
+            money && jacoby, money && beaver, pos.max_cube_value,
+            money ? static_cast<float>(tree.value) : -1.0f,
+            money ? static_cast<float>(tree.pip_slope) : 0.0f};
+}
+
+// Every 3-ply endpoint is independent. Queue endpoints across the whole batch
+// so idle lanes can start the next roll while a long double is still running.
+// Keep the root for model routing and write each score into its original row.
+std::vector<std::vector<ScoredMove>> AnalyzerSession::score_unfiltered_checker_batch(
+        const std::vector<CheckerPosition>& positions, int threads) const {
+    std::vector<std::vector<ScoredMove>> results(positions.size());
+    std::vector<CubeInfo> cubes;
+    std::vector<std::pair<size_t, size_t>> work;
+    for (size_t i = 0; i < positions.size(); ++i) {
+        const auto& pos = positions[i];
+        cubes.push_back(opponent_cube(pos));
+        const auto endpoints = possible_boards(pos.board, pos.die1, pos.die2);
+        results[i].resize(endpoints.size());
+        for (size_t j = 0; j < endpoints.size(); ++j) {
+            results[i][j].board = endpoints[j];
+        }
+    }
+    // Start wide rolls first; shorter rolls can fill lanes as they finish.
+    std::vector<size_t> order(positions.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        return results[a].size() > results[b].size();
+    });
+    for (size_t row : order)
+        for (size_t move = 0; move < results[row].size(); ++move)
+            work.emplace_back(row, move);
+    const int count = static_cast<int>(work.size());
+    const int lanes = std::min(count, threads);
+    if (lanes > 0) {
+        multipy_cooperative_for(count, lanes, [&](int k) {
+            const auto [row, move] = work[k];
+            auto& m = results[row][move];
+            const auto score = cubeful_probs_and_equity_nply(
+                flip(m.board), cubes[row], strategy_1ply, strategy_nply.n_plies(),
+                MoveFilters::TINY, threads / lanes, nullptr, &positions[row].board);
+            apply_cube_tree(m, score);
+        });
+    }
+    for (auto& moves : results)
+        std::sort(moves.begin(), moves.end(), compare_scored_moves_by_cubeful);
+    return results;
+}
+
 // The ranked move list of one position. `candidate_threads` > 1 spreads the
-// cube-tree calls of the searched moves over the shared pool (single-position
-// analysis); batches pass 1 and parallelise across positions instead.
+// cube-tree calls of the searched moves over the shared pool. Batch callers
+// can also reserve a share of their thread budget for this position.
 std::vector<ScoredMove> AnalyzerSession::score_checker_position(
         const CheckerPosition& pos, int candidate_threads,
         const std::function<void()>& check_budget) const {
     const int n_plies = strategy_nply.n_plies();
-    const bool money = pos.match.is_money();
-
-    CubeOwner opp_owner;
-    switch (pos.owner) {
-        case CubeOwner::PLAYER:   opp_owner = CubeOwner::OPPONENT; break;
-        case CubeOwner::OPPONENT: opp_owner = CubeOwner::PLAYER;   break;
-        default:                  opp_owner = CubeOwner::CENTERED; break;
-    }
-    const CubeInfo opp_ci{pos.cube_value, opp_owner, pos.match.flip(), -1.0f,
-                          money && jacoby, money && beaver, pos.max_cube_value,
-                          money ? static_cast<float>(tree.value) : -1.0f,
-                          money ? static_cast<float>(tree.pip_slope) : 0.0f};
+    const CubeInfo opp_ci = opponent_cube(pos);
 
     auto cube_tree = [&](ScoredMove& m) {
         if (check_budget) check_budget();

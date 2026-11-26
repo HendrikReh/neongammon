@@ -286,19 +286,32 @@ static AnalyzerSession make_checker_search(
         std::find(filtered_plies.begin(), filtered_plies.end(), n_plies) != filtered_plies.end()};
 }
 
+static int batch_thread_budget(int requested) {
+    return requested > 0 ? requested : std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
+}
+
 template <typename Fn>
 static void run_parallel_for(int n, int n_threads, Fn&& fn) {
     if (n <= 0) return;
-    if (n_threads <= 0) {
-        n_threads = static_cast<int>(std::thread::hardware_concurrency());
-        if (n_threads <= 0) n_threads = 1;
-    }
-    n_threads = std::min(n_threads, n);
+    n_threads = std::min(batch_thread_budget(n_threads), n);
     if (n <= 1 || n_threads <= 1) {
         for (int i = 0; i < n; ++i) fn(i);
         return;
     }
     multipy_cooperative_for(n, n_threads, std::forward<Fn>(fn));
+}
+
+// Spend the budget on rows or on the candidates/rolls of a row. Deep
+// checker work is highly skewed (one double can have over 100 endpoints).
+// For row-parallel batches, surplus lanes go to the individual searches.
+template <typename Fn>
+static void run_search_batch(int rows, int threads, bool within_row, Fn&& evaluate) {
+    if (rows <= 0) return;
+    const int budget = batch_thread_budget(threads);
+    const int outer = within_row ? 1 : std::min(rows, budget);
+    const int inner = budget / outer;
+    const int spare = budget % outer;
+    run_parallel_for(rows, outer, [&](int i) { evaluate(i, inner + (i < spare)); });
 }
 
 static py::dict cube_evaluation_dict(const CubeEvaluation& evaluation, bool decision_only) {
@@ -412,7 +425,7 @@ static py::list batch_checker_play_1ply(
 }
 
 // N-ply batch checker play: score_checker_position per position, the
-// positions spread cooperatively over n_threads workers (one thread per position).
+// thread budget shared between positions and their candidate searches.
 static py::list batch_checker_play_nply(
         py::list inputs,
         const Strategy& strategy_1ply,
@@ -438,9 +451,16 @@ static py::list batch_checker_play_nply(
     std::vector<std::vector<ScoredMove>> results(n);
     {
         py::gil_scoped_release release;
-        run_parallel_for(n, n_threads, [&](int i) {
-            results[i] = session.score_checker_position(parsed[i], 1);
-        });
+        const int plies = strategy_nply->n_plies();
+        const int threads = batch_thread_budget(n_threads);
+        if (n > 1 && threads > 1 && session.can_share_checker_endpoints()) {
+            results = session.score_unfiltered_checker_batch(parsed, threads);
+        } else {
+            // Keep 4-ply candidates together for their shared subtree cache.
+            run_search_batch(n, threads, plies >= 3, [&](int i, int inner) {
+                results[i] = session.score_checker_position(parsed[i], inner);
+            });
+        }
         strategy_nply->clear_cache();
     }
     py::list out;
@@ -4675,12 +4695,29 @@ PYBIND11_MODULE(bgbot_cpp, m) {
         std::vector<CubeEvaluation> results(positions.size());
         {
             py::gil_scoped_release release;
-            run_parallel_for(static_cast<int>(positions.size()), threads, [&](int i) {
+            const int rows = static_cast<int>(positions.size());
+            auto evaluate = [&](int i, int inner) {
                 const auto& [board, ci] = positions[i];
                 results[i] = plies == 1 ? evaluate_cube_leaf(board, ci, *strategy)
                     : evaluate_cube_tree(board, ci, strategy, db, plies,
-                                         {max_moves, threshold}, 1, decision_only);
-            });
+                                         {max_moves, threshold}, inner, decision_only);
+            };
+            if (plies >= 3 && rows > 1 && db && db->is_loaded()) {
+                // A cheap bearoff row should not take a lane away from a long
+                // contact search. Share the budget among comparable rows.
+                std::array<std::vector<int>, 2> groups;
+                for (int i = 0; i < rows; ++i)
+                    groups[db->is_bearoff(positions[i].first)].push_back(i);
+                for (size_t g = 0; g < groups.size(); ++g) {
+                    const auto& group = groups[g];
+                    // Even a bearoff cube has to search its cubeful dice tree.
+                    const bool short_bearoff = g == 1 && static_cast<int>(group.size()) <= batch_thread_budget(threads);
+                    run_search_batch(static_cast<int>(group.size()), threads, short_bearoff,
+                        [&](int i, int inner) { evaluate(group[i], inner); });
+                }
+            } else {
+                run_search_batch(rows, threads, false, evaluate);
+            }
         }
         py::list out;
         for (const auto& r : results) out.append(cube_evaluation_dict(r, decision_only));
