@@ -25,6 +25,7 @@ struct NeongammonMobileEngine {
 };
 namespace {
 thread_local std::string last_error;
+
 template<typename T, size_t N> void array(std::ostringstream& s, const std::array<T,N>& a) {
     s << '[';
     for(size_t i=0;i<N;++i) { if(i) s << ','; s << a[i]; }
@@ -98,8 +99,8 @@ extern "C" char* neongammon_mobile_analyze(NeongammonMobileEngine* e, int operat
                 AnalyzerSession session(*e->strategy, *e->checker_2ply, filter, ci.jacoby, ci.beaver,
                     AnalyzerSession::contact_life(1, ci.match), life,
                     std::find(depths.begin(), depths.end(), r.ply) != depths.end());
+                const ClearSearchCacheOnExit cleanup{*e->checker_2ply};
                 moves = session.score_checker_position(pos, 1, check_budget);
-                e->checker_2ply->clear_cache();
             }
             s << "{\"moves\":[";
             for(size_t i=0;i<moves.size();++i) {
@@ -114,7 +115,7 @@ extern "C" char* neongammon_mobile_analyze(NeongammonMobileEngine* e, int operat
             ci.contact_x_pip_slope = static_cast<float>(life.pip_slope);
             const auto result = r.ply == 1
                 ? evaluate_cube_leaf(board, ci, *e->strategy)
-                : evaluate_cube_tree(board, ci, e->strategy, &e->db, r.ply, filter, 1, false);
+                : evaluate_cube_tree(board, ci, e->strategy, &e->db, r.ply, filter, 1, false, nullptr, check_budget);
             const auto& p = result.probs;
             const auto& cd = result.decision;
             const char* action=!cd.should_double ? "No Double" : cd.is_beaver ? "Double/Beaver" : cd.should_take ? "Double/Take" : "Double/Pass";

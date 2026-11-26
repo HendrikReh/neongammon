@@ -19,6 +19,13 @@ Timings below were measured on an M4 Pro Mac mini (10P+4E cores).
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-11-26
+
+- Deep native checker batches share the thread budget across candidate moves.
+  Short cube batches give spare threads to the individual searches.
+- The mobile C API checks the deadline between rolls of the cube search.
+  Interrupted checker and cube analyses clear their search caches.
+
 ## [3.2.0] - 2026-11-25
 
 - Simulation and the public cube eligibility helper now apply the engine’s
@@ -946,7 +953,8 @@ The fork's first release.
   module before copying it, because `cp` over a loaded `.so` makes macOS kill
   the next import ([#12](https://github.com/HendrikReh/neongammon/pull/12)).
 
-[Unreleased]: https://github.com/HendrikReh/neongammon/compare/v3.2.0...HEAD
+[Unreleased]: https://github.com/HendrikReh/neongammon/compare/v3.2.1...HEAD
+[3.2.1]: https://github.com/HendrikReh/neongammon/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/HendrikReh/neongammon/compare/v3.1.2...v3.2.0
 [3.1.2]: https://github.com/HendrikReh/neongammon/compare/v3.1.1...v3.1.2
 [3.1.1]: https://github.com/HendrikReh/neongammon/compare/v3.1.0...v3.1.1

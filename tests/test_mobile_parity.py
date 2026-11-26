@@ -17,6 +17,7 @@ def test_mobile_scoring_matches_desktop():
         f"-Dpybind11_DIR={pybind11.get_cmake_dir()}",
     ], check=True)
     subprocess.run(["cmake", "--build", str(build), "--parallel", "4"], check=True)
+    subprocess.run([str(build / "test_cube_budget")], check=True)
     # Keep previously imported extensions from other tests out of the reference.
     subprocess.run([sys.executable, str(root / "mobile/test_parity.py"), "--build", str(build)],
                    check=True)

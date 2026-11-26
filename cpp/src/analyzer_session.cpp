@@ -55,25 +55,26 @@ CubeEvaluation evaluate_cube_leaf(const Board& board, const CubeInfo& ci,
 CubeEvaluation evaluate_cube_tree(const Board& board, const CubeInfo& ci,
         const std::shared_ptr<Strategy>& base, const BearoffDB* db,
         int plies, MoveFilter filter, int threads, bool decision_only,
-        TwoPlyDetails* details) {
+        TwoPlyDetails* details, const std::function<void()>& check_budget) {
+    if (check_budget) check_budget();
     static PubEval pubeval;
     CubeEvaluation out;
     if (details) {
         out.decision = cube_decision_nply_with_details(
-            board, ci, *base, plies, filter, threads, *details, &pubeval);
+            board, ci, *base, plies, filter, threads, *details, &pubeval, check_budget);
     } else if (decision_only) {
-        out.decision = cube_decision_nply(board, ci, *base, plies, filter, threads, &pubeval);
+        out.decision = cube_decision_nply(board, ci, *base, plies, filter, threads, &pubeval, check_budget);
     }
     if (!decision_only) {
         MultiPlyStrategy multipy(base, plies, filter, false, threads > 1, threads);
+        const ClearSearchCacheOnExit cleanup{multipy};
         if (db && db->is_loaded()) multipy.set_bearoff_db(db);
         if (details) {
             const Board flipped = flip(board);
             out.probs = invert_probs(multipy.evaluate_probs(flipped, flipped));
         } else {
-            out.decision = multipy.cube_decision_with_cubeless_probs(board, ci, &pubeval, out.probs);
+            out.decision = multipy.cube_decision_with_cubeless_probs(board, ci, &pubeval, out.probs, check_budget);
         }
-        multipy.clear_cache();
     }
     return out;
 }

@@ -994,13 +994,13 @@ CubeDecision cube_decision_nply(
     int n_plies,
     const MoveFilter& filter,
     int n_threads,
-    const Strategy* move_filter)
+    const Strategy* move_filter, const std::function<void()>& check_budget)
 {
     // The multi entry with n=1 applies the identical 1-ply path, money/match
     // unpack and post-Crawford auto-double logic.
     CubeDecision out{};
     cube_decision_nply_multi(board, &cube, 1, strategy, n_plies, &out,
-                             filter, n_threads, move_filter);
+                             filter, n_threads, move_filter, false, check_budget);
     return out;
 }
 

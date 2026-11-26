@@ -470,7 +470,8 @@ void cube_decision_nply_multi(
     const MoveFilter& filter = MoveFilters::TINY,
     int n_threads = 1,
     const Strategy* move_filter = nullptr,
-    bool deep_prefilter = false);
+    bool deep_prefilter = false,
+    const std::function<void()>& check_budget = {});
 
 // Compute full cube decision at N-ply depth.
 // `board` is pre-roll from the player's perspective.
@@ -484,7 +485,8 @@ CubeDecision cube_decision_nply(
     int n_plies,
     const MoveFilter& filter = MoveFilters::TINY,
     int n_threads = 1,
-    const Strategy* move_filter = nullptr);
+    const Strategy* move_filter = nullptr,
+    const std::function<void()>& check_budget = {});
 
 // Compute full cube decision at N-ply depth, with per-roll details for the
 // first two turns (player + opponent) under the No Double scenario.
@@ -499,7 +501,8 @@ CubeDecision cube_decision_nply_with_details(
     const MoveFilter& filter,
     int n_threads,
     TwoPlyDetails& details,
-    const Strategy* move_filter = nullptr);
+    const Strategy* move_filter = nullptr,
+    const std::function<void()>& check_budget = {});
 
 // Compute cube decision from cubeless pre-roll probabilities (Janowski conversion).
 // This is the simplest form of cubeful evaluation from any source of cubeless probs
