@@ -9,9 +9,9 @@
 [![Python](https://img.shields.io/badge/python-3.10%20%E2%80%93%203.14-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![License: MPL-2.0](https://img.shields.io/github/license/HendrikReh/neongammon)](LICENSE)
 
-A neural-network backgammon engine with a C++17 core and Python interface, forked from [markbgsage/bgsage](https://github.com/markbgsage/bgsage) (the Open Sage bot engine) and focused on Apple Silicon.
+NeonGammon is a neural-network backgammon engine for Apple Silicon Macs, forked from [Open Sage](https://github.com/markbgsage/bgsage). Its Python interface exposes a C++17 core for comparing checker plays, evaluating cube decisions, measuring roll luck, and simulating games and matches with configurable policies and calibrated opponent presets.
 
-Ask NeonGammon what the best checker play is, whether to double/take/pass, how lucky a roll was, or simulate full games and matches with configurable policies and calibrated opponent difficulty presets.
+You can use NeonGammon directly from Python or through [NeonDojo](https://github.com/HendrikReh/neondojo), its companion study app. In NeonDojo, you can play against NeonGammon, review its analysis of your imported matches, and practice the positions where you made mistakes.
 
 > **Apple Silicon fork.** NeonGammon ([HendrikReh/neongammon](https://github.com/HendrikReh/neongammon), formerly `HendrikReh/bgsage`) targets **macOS on Apple Silicon (arm64) only**. Batched neural-network evaluation runs through Apple's Accelerate framework on the CPU's matrix unit (SME on M4, AMX on M1–M3), and supervised training runs on the Apple GPU via [MLX](https://github.com/ml-explore/mlx). Upstream's Windows, Linux, and NVIDIA/CUDA code has been removed; the sole non-macOS target is the Linux x86-64 image used by `scripts/modal_rollout.py` for cloud rollouts.
 
