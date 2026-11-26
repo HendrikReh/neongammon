@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Profile the owned-money-cube fixture in a timing build of the 3.2.0 extension."""
+"""Profile the owned-money-cube fixture in a timing build of the installed 3.2.x extension."""
 from dataclasses import asdict
 import json
 from pathlib import Path
@@ -13,8 +13,8 @@ def sample(extension):
         sys.path.insert(0, str(Path(extension).resolve()))
     import bgbot_cpp
     from importlib.metadata import version
-    if version("neongammon") != "3.2.0":
-        raise ValueError("Use the installed NeonGammon 3.2.0 wheel")
+    if version("neongammon") not in {"3.2.0", "3.2.1"}:
+        raise ValueError("Use the official 3.2.0 or 3.2.1 wheel and its matching timing build")
     if extension and Path(bgbot_cpp.__file__).resolve().parent != Path(extension).resolve():
         raise ValueError("The timing extension did not load")
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
