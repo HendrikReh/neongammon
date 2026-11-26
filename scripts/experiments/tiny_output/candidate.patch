@@ -1,0 +1,21 @@
+--- a/cpp/src/neural_net.cpp
++++ b/cpp/src/neural_net.cpp
+@@ -1124,6 +1124,18 @@
+     // Output layer: output_weights_ is [NN_OUTPUTS x (nh+1)] row-major with the
+     // bias in the last column, so it is W_o with leading dimension nh+1.
+     const int hid_stride = nh + 1;
++    if (count <= 2) {
++        for (int b = 0; b < count; ++b) {
++            const float* row = hidden.data() + b * nh;
++            auto& result = outputs[b];
++            for (int o = 0; o < NN_OUTPUTS; ++o) {
++                const float* weights = output_weights_.data() + o * hid_stride;
++                result[o] = simd_dot(row, weights, nh) + weights[nh];
++            }
++            sigmoid_inplace_neon(result.data(), result.size());
++        }
++        return;
++    }
+     for (int b = 0; b < count; ++b) {
+         for (int o = 0; o < NN_OUTPUTS; ++o) {
+             out[b * NN_OUTPUTS + o] = output_weights_[o * hid_stride + nh];

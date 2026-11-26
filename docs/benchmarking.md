@@ -441,6 +441,85 @@ done
 "$ENGINE_PYTHON" -IB "$exp/measure.py" "$out" "$FIXTURE_SCRIPT" --controls-only
 ```
 
+### NEON output layer for groups of one or two
+
+On 2026-11-26, a four-thread Stage 11 analysis of the seed-42 five-point game
+used groups of one or two boards in approximately 19% of calls to
+`NeuralNetwork::forward_group` at each depth. The proposed NEON output kernel
+changed public analysis results. Production keeps the Accelerate output matrix
+multiply and the sigmoid lookup table.
+
+| Search | Decisions | One board | Two boards | Three or more | Share with one or two |
+|---|---:|---:|---:|---:|---:|
+| 3-ply checker | 44 | 40,737 | 22,273 | 259,796 | 19.52% |
+| 3-ply rich cube | 43 | 2,083 | 1,364 | 18,870 | 15.45% |
+| 4-ply checker | 44 | 612,700 | 472,609 | 4,509,701 | 19.40% |
+| 4-ply rich cube | 43 | 37,291 | 22,842 | 315,307 | 16.02% |
+
+A separate instrumented baseline counted positive-sized group calls across
+search workers and reset the counters between checker and cube batches. The
+timed builds omit instrumentation. For each affected row the candidate
+computes five output dot products with the engine's NEON `simd_dot`, adds the
+output biases, then runs `sigmoid_inplace_neon` on the five logits (four
+Cephes lanes and one scalar tail). The dot-only control keeps the baseline
+lookup sigmoid, including its saturation at ±8. All three extensions share
+the Accelerate hidden layer and the baseline output path for larger groups.
+
+Every sample compares the complete returned dataclasses. With the proposed
+kernel, 33 of 44 checker rows and 29 of 43 cube rows differed at 3-ply. At
+4-ply, 36 checker rows and 31 cube rows differed. Every best checker board and
+optimal cube action matched. The ordered list of remaining moves differed in
+one 3-ply position and two 4-ply positions. The maximum absolute checker equity
+difference for the same move was 0.0000801 at 3-ply and 0.000194 at 4-ply.
+Across no-double, double/take and double/pass equities the maxima were
+0.0000134 and 0.000411. Even with the original output sigmoid, the NEON dot
+products alone changed 24 checker and 7 cube rows at 3-ply, and 25 checker and
+10 cube rows at 4-ply.
+
+| Full game | Accelerate, seconds | NEON, seconds | Accelerate, decisions/s | NEON, decisions/s |
+|---|---:|---:|---:|---:|
+| 3-ply, run 1 | 1.9601 | 1.9605 | 44.386 | 44.377 |
+| 3-ply, run 2 | 1.9648 | 1.9631 | 44.279 | 44.318 |
+| 4-ply, run 1 | 36.8554 | 36.8133 | 2.361 | 2.363 |
+| 4-ply, run 2 | 36.8860 | 36.7207 | 2.359 | 2.369 |
+
+Each cell uses the median of two fresh processes per build. Run 1 used
+baseline, candidate, candidate, baseline order. Run 2 reversed that order and
+the depth order. NEON throughput changed by −0.02% and +0.09% at 3-ply,
+and by +0.11% and +0.45% at 4-ply. These sub-percent differences describe
+this single game. Model and analyzer construction took a separate median of
+18.2 ms across the 16 timed processes.
+
+The baseline and candidate were built from `34558d2` in the same release build
+tree with Apple Clang 21.0.0, SDK 27.2 and Accelerate. The M4 Pro (64 GB) ran
+macOS 27.0.1 and the locked CPython 3.12.13 wheel environment for NeonGammon
+3.2.1, with Stage 11 weights, the bearoff database and single-thread BLAS.
+Each process received the same 44 checker rows with forced played boards and
+43 rich cube rows, in chunks of four at four search threads. The timer starts
+after model and analyzer construction with fresh search caches, and covers
+one full pass through the public Python batch calls. Process launch, model
+loading, sidecar transport and database writes are outside the timed region.
+Desktop services continued to run.
+
+Set `ENGINE_PYTHON` to the locked NeonGammon 3.2.1 interpreter and
+`FIXTURE_SCRIPT` to NeonDojo's `tools/open-sage/verify_game_batches.py`.
+Put CMake, Ninja and a Python interpreter with pybind11 on the build path.
+[Build script](../scripts/experiments/tiny_output/build.sh) ·
+[NEON candidate](../scripts/experiments/tiny_output/candidate.patch) ·
+[Dot-only control](../scripts/experiments/tiny_output/dot_only.patch) ·
+[Counter patch](../scripts/experiments/tiny_output/trace.patch) ·
+[Measurement driver](../scripts/experiments/tiny_output/measure.py)
+
+```sh
+exp=scripts/experiments/tiny_output
+out=build/tiny-output-ab
+"$exp/build.sh" "$out"
+"$ENGINE_PYTHON" -IB "$exp/measure.py" "$out" "$FIXTURE_SCRIPT" trace
+"$ENGINE_PYTHON" -IB "$exp/measure.py" "$out" "$FIXTURE_SCRIPT" compare --candidate dot_only --pairs 1
+"$ENGINE_PYTHON" -IB "$exp/measure.py" "$out" "$FIXTURE_SCRIPT" compare --depths 4 3 --pairs 2
+"$ENGINE_PYTHON" -IB "$exp/measure.py" "$out" "$FIXTURE_SCRIPT" compare --depths 3 4 --pairs 2 --reverse
+```
+
 ## Rollout and N-Ply Regression Benchmarks
 
 Saved-baseline regression scripts (each supports `--save`/`--compare` with a material band of `max(SE, 0.01)` for equities and `0.005` for probabilities; the cubeless rollout bench widens the prob band to each prob's own SE):
