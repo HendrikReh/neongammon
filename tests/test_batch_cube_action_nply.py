@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
-from dataclasses import asdict, fields
+from dataclasses import asdict, fields, replace
 
 import pytest
+import bgbot_cpp
 import neongammon as ng
 
 
@@ -43,6 +44,55 @@ def test_recursive_batch_validates_cube_limit_and_level_before_empty_return():
     with pytest.raises(ValueError):
         ng.batch_cube_action_nply([], eval_level="rollout")
     assert ng.batch_cube_action_nply([]) == []
+
+
+@pytest.mark.parametrize("plies", [-1, 0])
+@pytest.mark.parametrize("empty", [False, True])
+def test_raw_checker_endpoints_reject_nonpositive_depth(plies, empty):
+    base = ng.BatchModels().base()
+    endpoints = [] if empty else ng.possible_moves(ng.STARTING_BOARD, 3, 1)[:1]
+    with pytest.raises(ValueError, match="n_plies"):
+        bgbot_cpp.score_checker_endpoints(ng.STARTING_BOARD, endpoints, bgbot_cpp.CubeInfo(),
+                                          base, plies)
+
+
+@pytest.mark.parametrize("plies", [-1, 0])
+@pytest.mark.parametrize("empty", [False, True])
+def test_raw_cube_batch_rejects_nonpositive_depth(plies, empty):
+    base = ng.BatchModels().base()
+    rows = [] if empty else [(ng.STARTING_BOARD, bgbot_cpp.CubeInfo())]
+    with pytest.raises(ValueError, match="n_plies"):
+        bgbot_cpp.batch_cube_action_nply(rows, base, None, plies, n_threads=1)
+
+
+def test_raw_search_bindings_accept_one_ply():
+    base = ng.BatchModels().base()
+    cube = bgbot_cpp.CubeInfo(away1=3, away2=5)
+    endpoint = ng.possible_moves(ng.STARTING_BOARD, 3, 1)[0]
+    move, = bgbot_cpp.score_checker_endpoints(ng.STARTING_BOARD, [endpoint], cube, base, 1)
+    assert move["board"] == endpoint
+    assert move["eval_level"] == "1-ply"
+    result, = bgbot_cpp.batch_cube_action_nply([(ng.STARTING_BOARD, cube)], base, None, 1)
+    scalar = ng.BgBotAnalyzer(eval_level="1ply").cube_action(ng.STARTING_BOARD, away1=3, away2=5)
+    assert result["equity_nd"] == pytest.approx(scalar.equity_nd)
+
+
+@pytest.mark.parametrize("board", [ng.STARTING_BOARD, BEAROFF], ids=["contact", "race"])
+def test_top_two_rejects_reversed_ranking(board):
+    shallow = ng.BgBotAnalyzer(eval_level="2ply", parallel_threads=1)
+    first, second = shallow.checker_play(board, 3, 1).moves[:2]
+    assert first.equity > second.equity
+    with pytest.raises(ValueError, match="equity"):
+        shallow.top_two_promote(board, [second, first])
+
+
+def test_top_two_promotes_tied_leaders_at_zero_gap():
+    shallow = ng.BgBotAnalyzer(eval_level="2ply", parallel_threads=1)
+    first, second = shallow.checker_play(ng.STARTING_BOARD, 3, 1).moves[:2]
+    tied = [first, replace(second, equity=first.equity, equity_diff=0)]
+    promoted, level = shallow.top_two_promote(ng.STARTING_BOARD, tied, max_gap=0)
+    assert level == "3-ply"
+    assert {tuple(move.board) for move in promoted} == {tuple(move.board) for move in tied}
 
 
 def test_public_top_two_matches_full_three_ply_at_same_root():

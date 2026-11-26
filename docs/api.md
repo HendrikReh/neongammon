@@ -307,11 +307,16 @@ contact row gets the full thread budget.
 `batch_cube_action` continues to apply a Janowski conversion at the root.
 
 `checker.top_two_promote(board, moves, max_gap=0.010, **cube_context)`
-returns the ranking and its depth label. For a close 2-ply contact decision
-it searches both leaders at 3-ply and returns those two moves. Races, forced
-moves and wider gaps retain the original list. The public `flip_owner`,
+returns the ranking and its depth label. Supply the two leading moves in
+descending equity order. Ties are valid, and a reversed pair raises
+`ValueError`. For a close 2-ply contact decision it searches both leaders
+at 3-ply and returns those two moves. Races, forced moves and wider gaps
+retain the original list. The public `flip_owner`,
 `contact_cube_life` and `contact_cube_slope` functions expose the engine's
 perspective and money cube-life conventions.
+
+The raw `bgbot_cpp.score_checker_endpoints` and `bgbot_cpp.batch_cube_action_nply`
+bindings require `n_plies >= 1`, including for empty inputs.
 
 ### 4. Game Plan Classification
 

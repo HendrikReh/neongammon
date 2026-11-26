@@ -1639,15 +1639,20 @@ class BgBotAnalyzer:
     ) -> tuple[list[MoveAnalysis], str]:
         """Re-rank two close 2-ply contact moves at 3-ply, using the original root.
 
+        The first two moves must be ordered by descending equity. Ties are allowed.
         Returns the input ranking and "2-ply" for races, forced moves and gaps
         above max_gap. A promotion returns just the two searched candidates.
         """
         if self._eval_level != "2ply" or not self._cubeful:
             raise ValueError("top_two_promote requires a cubeful 2-ply analyzer")
         _validate_cube_limit(cube_value, max_cube_value)
-        if len(moves) < 2 or bgbot_cpp.is_race(board):
+        if len(moves) < 2:
             return moves, "2-ply"
         first, second = moves[:2]
+        if first.equity < second.equity:
+            raise ValueError("the two leading moves must be ranked by descending equity")
+        if bgbot_cpp.is_race(board):
+            return moves, "2-ply"
         if any(move.eval_level != "2-ply" for move in (first, second)):
             raise ValueError("both leading moves must have 2-ply evaluations")
         if first.equity - second.equity > max_gap:
