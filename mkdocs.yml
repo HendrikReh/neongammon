@@ -69,6 +69,7 @@ markdown_extensions:
 
 nav:
   - Overview: README.md
+  - NeonDojo manual: https://hendrikreh.github.io/neondojo/
   - Usage & API:
       - Engine: engine.md
       - Simulation: simulation.md
