@@ -1,4 +1,4 @@
-<img src="neondojo-logo.svg" alt="NeonDojo logo: a torii gate whose pillars are backgammon points, in front of a checker as the rising sun" width="128" height="128">
+<img src="docs/assets/neondojo-logo.svg" alt="NeonDojo logo: a torii gate whose pillars are backgammon points, in front of a checker as the rising sun" width="128" height="128">
 
 # NeonGammon
 

@@ -23,6 +23,8 @@ validation:
 
 theme:
   name: material
+  logo: assets/neondojo-logo.svg
+  favicon: assets/neondojo-logo.svg
   features:
     - navigation.sections
     - navigation.top
