@@ -124,7 +124,7 @@ The guides below are also published as a searchable site at **[hendrikreh.github
 NeonGammon is released under the **Mozilla Public License 2.0** — see [LICENSE](LICENSE).
 Files that came from upstream keep their original copyright notices (Mark Higgins).
 
-Copyright © 2026 Hendrik Reh for his original contributions to the NeonGammon fork.
+Copyright © 2026 Hendrik Reh for his original contributions to NeonGammon, a fork of Open Sage.
 
 The MPL-2.0 license covers everything in this repository, including the **trained model weights** in
 `models/` and the bearoff database in `data/`. Those aren't source code, so to be
