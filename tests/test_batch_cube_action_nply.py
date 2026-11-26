@@ -132,3 +132,73 @@ def test_short_batches_preserve_order_across_contact_and_bearoff_groups():
     for size in range(1, 5):
         assert ng.batch_cube_action_nply(rows[:size], eval_level="3ply", n_threads=4,
                                          models=models) == expected[:size]
+
+
+@pytest.mark.parametrize("level", ["3ply", "4ply"])
+@pytest.mark.parametrize("kwargs", [{"filter_max_moves": 3}, {"filter_threshold": 0.2}])
+@pytest.mark.parametrize("empty", [False, True])
+@pytest.mark.parametrize("batch,mode", [
+    (ng.batch_checker_play, {}), (ng.batch_cube_action_nply, {}),
+    (ng.batch_cube_action_nply, {"decision_only": True}),
+], ids=["checker", "cube", "decision-only"])
+def test_deep_batches_reject_ineffective_move_filters(level, kwargs, empty, batch, mode):
+    rows = [] if empty else [dict(board=BEAROFF, die1=1, die2=2)]
+    with pytest.raises(ValueError, match=next(iter(kwargs))):
+        batch(rows, eval_level=level, n_threads=1, **mode, **kwargs)
+
+
+@pytest.mark.parametrize("plies", [3, 4])
+def test_native_deep_batches_reject_ineffective_move_filters(plies):
+    models = ng.BatchModels()
+    with pytest.raises(ValueError, match="filter_threshold"):
+        bgbot_cpp.batch_checker_play([], models.base(), models.multipy(plies),
+                                     filter_threshold=0.3, cubeful_filtered_plies=[2])
+    with pytest.raises(ValueError, match="filter_max_moves"):
+        bgbot_cpp.batch_cube_action_nply([], models.base(), None, plies, filter_max_moves=10)
+
+
+@pytest.mark.parametrize("plies", [2, 3, 4])
+def test_checker_filters_control_initial_survivors_at_filtered_depths(plies):
+    row = dict(board=BEAROFF, die1=1, die2=2, cube_value=1)
+    models = ng.BatchModels()
+
+    def searched_count(max_moves, threshold):
+        if plies == 2:
+            result, = ng.batch_checker_play([row], "2ply", models=models, n_threads=2,
+                                            filter_max_moves=max_moves, filter_threshold=threshold)
+            return sum(move.eval_level == "2-ply" for move in result.moves)
+        # Raw callers can opt into a filtered checker root at deeper levels.
+        result, = bgbot_cpp.batch_checker_play(
+            [dict(row, cube_owner=bgbot_cpp.CubeOwner.CENTERED)], models.base(),
+            models.multipy(plies), filter_max_moves=max_moves, filter_threshold=threshold,
+            cubeful_filtered_plies=[plies], n_threads=2)
+        return sum(move["eval_level"] == f"{plies}-ply" for move in result["moves"])
+
+    legal = len(ng.possible_moves(BEAROFF, 1, 2))
+    assert searched_count(legal, 1.0) == legal
+    assert 2 <= searched_count(1, 1.0) < legal
+    assert 2 <= searched_count(legal, 0.0) < legal
+
+
+@pytest.mark.parametrize("level", ["3ply", "4ply"])
+def test_explicit_default_deep_batch_filters_match_omitted(level):
+    rows = [dict(board=BEAROFF, die1=1, die2=2)]
+    models = ng.BatchModels()
+    for batch in (ng.batch_checker_play, ng.batch_cube_action_nply):
+        expected = batch(rows, level, models=models, n_threads=2)
+        for threshold in (0.08, bgbot_cpp.MOVE_FILTER_TINY.threshold):
+            assert batch(rows, level, models=models, n_threads=2, filter_max_moves=5,
+                         filter_threshold=threshold) == expected
+
+
+@pytest.mark.parametrize("batch,level", [
+    (ng.batch_checker_play, "1ply"),
+    (ng.batch_cube_action_nply, "1ply"),
+    (ng.batch_cube_action_nply, "2ply"),
+])
+def test_shallow_batches_accept_legacy_filter_settings(batch, level):
+    rows = [dict(board=BEAROFF, die1=1, die2=2)]
+    models = ng.BatchModels()
+    expected = batch(rows, level, models=models, n_threads=1)
+    assert batch(rows, level, models=models, n_threads=1, filter_max_moves=1,
+                 filter_threshold=0.01) == expected

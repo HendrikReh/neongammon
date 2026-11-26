@@ -507,9 +507,13 @@ def batch_cube_action_nply(
     Each entry accepts the board and cube context of BgBotAnalyzer.cube_action,
     including max_cube_value and optional jacoby/beaver overrides. The optional
     contact_x and contact_x_pip_slope fields override the money contact defaults.
-    With decision_only=True the cubeless search is skipped.
+    With decision_only=True the cubeless search is skipped. Neither search uses
+    a root checker filter. At 3- and 4-ply, changing filter_max_moves (5) or
+    filter_threshold (0.08) raises ValueError in either mode. At 1- and
+    2-ply these settings are accepted and ignored.
     """
     ply = _check_level(eval_level)
+    bgbot_cpp._validate_batch_move_filter(ply, filter_max_moves, filter_threshold, False)
     models = _resolve_models(weights, models, bearoff_db)
     if not positions:
         return []
@@ -582,8 +586,12 @@ def batch_checker_play(
         weights: Weight configuration (defaults to production model).
         n_threads: Thread budget shared across positions and candidate searches
             (0 = auto-detect all cores).
-        filter_max_moves: Max moves for N-ply move filter.
-        filter_threshold: Equity threshold for N-ply move filter.
+        filter_max_moves: Cap on initial 2-ply root candidates (default 5).
+        filter_threshold: 1-ply cubeful equity window for the same candidates
+            (default 0.08). Forced moves and promotions can add candidates.
+            At 3- and 4-ply every root move is searched. Changing either
+            filter setting at those depths raises ValueError. At 1-ply
+            the settings are accepted and ignored.
         jacoby: If True, gammons/backgammons don't count when cube is
             centered (money games only). Ignored for match play positions.
         beaver: If True, opponent can beaver after being doubled
@@ -604,6 +612,8 @@ def batch_checker_play(
         at 3-ply and deeper every move is.
     """
     n_plies = _check_level(eval_level)
+    bgbot_cpp._validate_batch_move_filter(n_plies, filter_max_moves, filter_threshold,
+                                         n_plies in CUBEFUL_FILTERED_PLIES)
     models = _resolve_models(weights, models, bearoff_db)
     if not positions:
         return []

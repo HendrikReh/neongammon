@@ -251,6 +251,17 @@ carry `max_cube_value` and `force_boards`. At the depths in
 filter's survivors and promotions go through the cube-aware tree, the rest keep 1-ply
 values; at other depths every move does. `tests/test_batch_checker_play_parity.py`.
 
+For `batch_checker_play`, `filter_max_moves` and `filter_threshold` are
+unused at 1-ply and control the initial 2-ply shortlist. Its defaults
+keep up to five moves less than 0.08 cubeful equity behind the 1-ply
+leader. Forced boards and promotions can expand that shortlist. At 3- and
+4-ply the public API evaluates every
+legal root move and raises `ValueError` for a non-default width or window.
+Raw `bgbot_cpp.batch_checker_play` callers can enable a shortlist at those
+depths by including the requested depth in `cubeful_filtered_plies`. The
+width and window then apply to that root alone. Inside each candidate's
+recursive search the engine selects one checker reply per roll.
+
 The standalone mobile C ABI uses the same checker scoring and cube evaluation
 at 1-ply and 2-ply. A 2-ply checker response labels moves retained at 1-ply
 with `"eval_level": "1-ply"`. Run `python -m pytest -q tests/test_mobile_parity.py`
@@ -304,6 +315,14 @@ cube owner, match score, Crawford, Jacoby, beaver and maximum cube value
 as a scalar analysis. Short batches spend spare threads inside each cube
 search. At 3-ply and deeper, bearoff database rows run separately so a lone
 contact row gets the full thread budget.
+`batch_cube_action_nply` has no root checker shortlist. The recursive cube
+search and the accompanying cubeless probability calculation each choose
+one checker reply per roll. At 3- and 4-ply both the Python and raw batch
+APIs require the default `filter_max_moves=5` and `filter_threshold=0.08`
+in full and decision-only mode. Omitting them or passing them explicitly
+gives the same results. A non-default value raises `ValueError` even for
+an empty batch. At 1- and 2-ply the recursive cube batch still accepts
+these settings for compatibility and ignores their values.
 `batch_cube_action` continues to apply a Janowski conversion at the root.
 
 `checker.top_two_promote(board, moves, max_gap=0.010, **cube_context)`
