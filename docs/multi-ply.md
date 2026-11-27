@@ -286,7 +286,7 @@ for each pair i:
         else (match):
             rDT = expanded_equities[2i + 1]        // MWC space, no scaling
 
-        if beaver enabled and rDT < 0:
+        if beaver enabled and 4 * current cube is within the cap and rDT < 0:
             rDT = 2 * rDT                          // Double/Beaver = 2 * Double/Take
 
         if money:
@@ -474,7 +474,7 @@ E_ND = results[0]
 E_DT = 2 * results[1]     // scale from doubled-cube to original cube
 E_DP = 1.0
 
-if beaver enabled and E_DT < 0:
+if beaver enabled and 4 * current cube is within the cap and E_DT < 0:
     E_DT = 2 * E_DT       // Double/Beaver equity
     is_beaver = true
 
@@ -500,9 +500,11 @@ should_double = min(dt_mwc, dp_mwc) > nd_mwc
 should_take = dt_mwc ≤ dp_mwc
 ```
 
-Special case: **post-Crawford automatic double** — when the trailing player (away > 1)
-faces an opponent at 1-away, they should always double (losing costs the match
-regardless of cube value, but winning scores more points).
+When the post-Crawford trailer faces a 1-away opponent, doubling is preferred
+when the two choices have equal match-winning probability within float32
+rounding. Playing on takes precedence when it gives a higher match-winning
+probability, for example when a gammon wins the match and a pass would give
+the trailer only one point.
 
 ### Cubeful Equity (Single Value)
 
@@ -1244,7 +1246,9 @@ each worker), and `full_depth_opponent` parallelizes opponent candidates at
 ## 12. Match Play
 
 Match play operates in **Match Winning Chance (MWC)** space internally, using the
-Kazaross-XG2 Match Equity Table (MET).
+Kazaross-XG2 Match Equity Table (MET). The table supports current scores up to
+25-away for each player, including later games in longer matches once both
+players need 25 points or fewer.
 
 ### Key MET Functions
 
@@ -1360,7 +1364,9 @@ because `owner ≠ CENTERED`. No explicit deactivation needed.
 ### Beaver Rule
 
 After being doubled, the opponent can immediately redouble (beaver) while retaining
-cube ownership. Applied when DT equity < 0 from the doubler's perspective.
+cube ownership. The engine considers a beaver when DT equity is negative from
+the doubler's perspective and the redoubled cube fits within the cap. When
+accepting a double reaches the cap, the take is valued at dead-cube equity.
 
 ```
 DB equity = 2 * DT equity

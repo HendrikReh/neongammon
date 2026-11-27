@@ -11,6 +11,9 @@ enum class CubeOwner;
 
 constexpr int MAX_MATCH_LENGTH = 25;
 
+// Reject scores above the MET range. Terminal outcome scores may be nonpositive.
+void validate_met_away_scores(int away1, int away2);
+
 // Match state from the perspective of the player on roll.
 // away1/away2 = 0 means money game (no match).
 struct MatchInfo {
@@ -45,6 +48,7 @@ extern const std::array<float, MAX_MATCH_LENGTH> MET_POST_CRAWFORD;
 
 // Core MET lookup: returns MWC for the player needing away1 points.
 // away1 <= 0 → 1.0 (player won); away2 <= 0 → 0.0 (opponent won).
+// Nonterminal away scores above MAX_MATCH_LENGTH are unsupported.
 // is_post_crawford: true only when the Crawford game has already been played
 // and someone is still 1-away. The pre-Crawford table (MET_PRE) has correct
 // values for 1-away positions before Crawford occurs.

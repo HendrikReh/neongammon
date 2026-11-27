@@ -22,8 +22,9 @@ namespace bgbot {
 // Positions are indexed using the combinatorial number system (stars-and-bars),
 // giving O(1) bidirectional mapping between checker layouts and indices.
 //
-// Two-sided cubeless probabilities are computed exactly by combining two
-// one-sided distributions. Cubeful equity uses existing Janowski interpolation.
+// Two-sided cubeless probabilities combine two one-sided distributions, with
+// exact gammon-saving play when the opponent is guaranteed to finish next roll.
+// Cubeful equity uses existing Janowski interpolation.
 class BearoffDB {
 public:
     static constexpr int POINTS = 6;
@@ -76,12 +77,12 @@ public:
 
     // Get gammon distribution for a one-sided position (all 15 checkers on board).
     // Returns nullptr if the position has fewer than 15 checkers on board.
-    // gammon_dist[k] = P(0 checkers borne off after k rolls of optimal play).
+    // gammon_dist[k] = P(0 checkers borne off after k rolls of play minimizing mean finish time).
     const std::array<uint16_t, MAX_ROLLS>* get_gammon_distribution(unsigned int index) const;
 
     // --- Two-sided lookups (combine one-sided distributions) ---
 
-    // Compute exact cubeless probabilities for a full board position.
+    // Compute cubeless probabilities for a full board position.
     // Returns [P(win), P(gw), P(bw), P(gl), P(bl)] where P(bw)=P(bl)=0.
     // The board must be a valid bearoff position (is_bearoff() == true).
     //

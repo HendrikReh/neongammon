@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import bgbot_cpp
 
+from ._primitives import _normalize_cube_context
 from .cubeful import _CubefulAnalyzer
 from .luck import roll_luck as _roll_luck
 from .rollout import RolloutCancelled, _RolloutAnalyzer
@@ -32,7 +33,6 @@ from .strategies import (
     _OnePlyAnalyzer,
     _cube_limit_kwargs,
     _janowski_1ply_equity,
-    _normalize_cube_context,
     contact_cube_life,
     contact_cube_slope,
     flip_owner,
@@ -51,6 +51,13 @@ from .weights import WeightConfig, WeightConfigPair
 
 if TYPE_CHECKING:
     from .batch import BatchModels
+
+
+def _normalize_analyzer_cube_context(
+    cube_value: int, away1: int, away2: int, jacoby: bool, beaver: bool, max_cube_value: int,
+) -> tuple[bool, bool]:
+    bgbot_cpp._validate_met_away_scores(away1, away2)
+    return _normalize_cube_context(cube_value, away1, away2, jacoby, beaver, max_cube_value)
 
 
 def _dict_to_move_analysis(d: dict, include_game_plans: bool = False) -> MoveAnalysis:
@@ -418,7 +425,7 @@ class BgBotAnalyzer:
                 ignored. Used by the app's expert re-evaluation so the move a
                 player actually made is always scored at the expert level.
         """
-        jacoby, beaver = _normalize_cube_context(
+        jacoby, beaver = _normalize_analyzer_cube_context(
             cube_value, away1, away2, jacoby, beaver, max_cube_value
         )
         raw = self._analyzer.checker_play_analytics(
@@ -448,7 +455,7 @@ class BgBotAnalyzer:
         """
         if self._eval_level != "2ply" or not self._cubeful:
             raise ValueError("top_two_promote requires a cubeful 2-ply analyzer")
-        jacoby, beaver = _normalize_cube_context(
+        jacoby, beaver = _normalize_analyzer_cube_context(
             cube_value, away1, away2, jacoby, beaver, max_cube_value
         )
         if len(moves) < 2:
@@ -521,7 +528,7 @@ class BgBotAnalyzer:
                 rollout eval levels — N-ply and 1-ply paths return synchronously
                 and don't emit progress.
         """
-        jacoby, beaver = _normalize_cube_context(
+        jacoby, beaver = _normalize_analyzer_cube_context(
             cube_value, away1, away2, jacoby, beaver, max_cube_value
         )
 
@@ -644,7 +651,7 @@ class BgBotAnalyzer:
                 opponent_rolls); the headline equities match the plain
                 2-ply call.
         """
-        jacoby, beaver = _normalize_cube_context(
+        jacoby, beaver = _normalize_analyzer_cube_context(
             cube_value, away1, away2, jacoby, beaver, max_cube_value
         )
         raw = self._analyzer.cube_action_analytics(
@@ -698,7 +705,7 @@ class BgBotAnalyzer:
         rollout levels it is ``cube_action`` with those fields dropped.
         Arguments as in :meth:`cube_action`.
         """
-        jacoby, beaver = _normalize_cube_context(
+        jacoby, beaver = _normalize_analyzer_cube_context(
             cube_value, away1, away2, jacoby, beaver, max_cube_value
         )
         kw = dict(away1=away1, away2=away2, is_crawford=is_crawford, jacoby=jacoby,

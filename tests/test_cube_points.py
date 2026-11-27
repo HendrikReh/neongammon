@@ -149,6 +149,14 @@ class TestMoneyGame(unittest.TestCase):
 class TestPostCrawford(unittest.TestCase):
     """Spot-check post-Crawford scores route through the MET correctly."""
 
+    def test_dead_cube_take_and_cash_points(self):
+        # The post-Crawford leader needs only a 2.394% chance to take.
+        # The same threshold is a 97.606% cash point for the trailer.
+        leader = cube_action_points(GAMMONLESS, "centered", 1, 1, 3)
+        trailer = cube_action_points(GAMMONLESS, "centered", 1, 3, 1)
+        self.assertAlmostEqual(leader.take.dead, 0.02394, places=6)
+        self.assertAlmostEqual(trailer.cash.dead, 0.97606, places=6)
+
     def test_post_crawford_does_not_crash(self):
         """Post-Crawford (player 1-away) with centered cube — shouldn't raise.
 

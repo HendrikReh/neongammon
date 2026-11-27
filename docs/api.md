@@ -21,6 +21,10 @@ The library provides both **Python** and **C++** interfaces across seven categor
 of functionality. All Python functions default to the production model (`stage11`); pass
 `weights=WeightConfig.from_model("stage9")` to use the other bundled model.
 
+NeonGammon match analysis supports away scores of up to 25 for each player.
+Python analysis raises `ValueError` when either player needs more points. A game
+in a longer match is supported once both players need 25 points or fewer.
+
 ### 1. Checker Play Analytics
 
 Given a board position, two dice, and cube information, return all legal moves
@@ -419,6 +423,12 @@ Match play gammonless take points, dead cube take points, and gammon prices.
 
 All take points are gammonless (assume zero gammon/backgammon probability). For money
 games: take point = 0.22, dead cube take point = 0.25, gammon price = 0.5 (both players).
+
+These functions accept the current game's away scores and an optional keyword
+argument `is_crawford`. The default is `False`, so an existing 1-away score
+means post-Crawford. Set `is_crawford=True` for the Crawford game itself.
+A score that first reaches 1-away as a result of a pre-Crawford game uses the
+MWC with Crawford still to play.
 
 ### 7. Luck (Per-Roll Dice Fortune)
 

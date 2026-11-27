@@ -12,7 +12,7 @@ from dataclasses import asdict
 
 import pytest
 
-from neongammon import BgBotAnalyzer
+from neongammon import BgBotAnalyzer, STARTING_BOARD, batch_cube_action_nply
 from neongammon.simulation import GameConfig, simulate_game
 
 from .batch_positions import random_positions
@@ -51,6 +51,34 @@ def test_cube_decision_equals_cube_action_at_four_ply():
     for board, kw in ((BOARDS[0], CONTEXTS[0]), (SNAKE, CONTEXTS[0]), (BOARDS[1], CONTEXTS[4])):
         full, lean = asdict(a.cube_action(board, **kw)), asdict(a.cube_decision(board, **kw))
         assert {k: lean[k] for k in FIELDS} == {k: full[k] for k in FIELDS}
+
+
+def test_last_legal_take_has_dead_cube_equity():
+    analyzer = BgBotAnalyzer(eval_level="1ply", parallel_threads=1)
+    for beaver in (False, True):
+        cube = analyzer.cube_action(
+            STARTING_BOARD, max_cube_value=2, jacoby=False, beaver=beaver,
+        )
+        assert cube.equity_dt == pytest.approx(2 * cube.cubeless_equity)
+        assert not cube.is_beaver
+
+
+@pytest.mark.parametrize("level", ["1ply", "2ply", "3ply"])
+def test_cube_cap_disallows_beavers_in_scalar_and_batch(level):
+    analyzer = BgBotAnalyzer(eval_level=level, parallel_threads=1)
+    capped = dict(board=STARTING_BOARD, max_cube_value=2, jacoby=False)
+    # Include a clearly losing race so deeper searches also exercise the
+    # beaver branch. The opponent is already within one roll of bearing off.
+    losing_race = dict(capped, board=[0, 15] + [0] * 22 + [-1, 0])
+    assert analyzer.cube_decision(losing_race["board"], jacoby=False, beaver=True).is_beaver
+    expected = [analyzer.cube_decision(**position, beaver=False)
+                for position in (capped, losing_race)]
+    assert [analyzer.cube_decision(**position, beaver=True)
+            for position in (capped, losing_race)] == expected
+    assert batch_cube_action_nply(
+        [capped, losing_race], eval_level=level, n_threads=2,
+        beaver=True, decision_only=True,
+    ) == expected
 
 
 class _CubeActionOnly:

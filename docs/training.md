@@ -95,9 +95,14 @@ sidecar (equity, SEs, seconds). It replaces the parent repo's
 `rollout_backgame_positions.py` for this fork. Defaults are the S11 piles'
 convention: `--model stage9`, 1,296 trials, no truncation, 3-ply checker play
 throughout (`ultra_late_threshold=9999`), VR, PubEval 20/15 prefilter,
-bearoff DB. Resumable (boards already in the output are skipped); `--limit N`
-caps a run and `--max-usd` stops it at an estimated compute cost; `--local`
-runs the same code in-process on the Mac.
+and the bearoff DB. Resume checks every label against its sidecar entry and
+requires the same rollout settings, model weights, bearoff data, and engine
+identity. Local runs identify the loaded native extension. Modal runs identify
+the uploaded C++ source. If a file predates these checks or is missing a paired
+row, use a new `--out` path or restore a verified data and metadata pair.
+
+`--limit N` caps a run, `--max-usd` stops it at an estimated compute cost,
+and `--local` runs it in-process on the Mac.
 
 ```bash
 build/venv/bin/pip install modal && build/venv/bin/modal setup   # once

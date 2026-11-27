@@ -16,10 +16,10 @@ Stage 9 play, 1,296 trials, no truncation, 3-ply checker play throughout
 (``ultra_late_threshold=9999``), VR on, PubEval 20/15 prefilter, bearoff DB.
 Every knob is a flag.
 
-Fully resumable: boards already in the output file are skipped, results are
-appended as they arrive, so an interrupted run loses only the boards in
-flight. ``--max-usd`` stops the run once the estimated compute cost of this
-run reaches the limit (the estimate counts rollout time only — container
+Resume skips boards whose data and provenance records both match. Results are
+appended as they arrive. Incomplete pairs and incompatible settings stop the
+run before it appends further labels. ``--max-usd`` stops the run once the
+estimated compute cost reaches the limit (the estimate counts rollout time only — container
 start-up and idle time are extra; Modal's dashboard has the real bill).
 
 The engine is built inside the Modal image from ``cpp/`` with the inherited
@@ -42,12 +42,17 @@ Usage (from the repo root, with ``pip install modal`` and ``modal setup`` done):
 """
 
 import argparse
+import fcntl
+import hashlib
 import json
 import os
 import signal
 import sys
 import time
+from contextlib import contextmanager
+from itertools import zip_longest
 from pathlib import Path
+from typing import TextIO
 
 import modal
 
@@ -61,6 +66,7 @@ USD_PER_CORE_SEC = 0.0000131
 USD_PER_GIB_SEC = 0.00000222
 
 REMOTE_ROOT = "/root/neongammon"
+ROLLOUT_OPTIONS = dict(enable_vr=True, ultra_late_threshold=9999)
 
 # --------------------------------------------------------------------------
 # Engine-side code (runs locally with --local, and inside the containers)
@@ -90,8 +96,7 @@ def make_rollout(root: str, model: str, n_trials: int, checker_ply: int,
         decision_ply=checker_ply,
         n_threads=n_threads,
         seed=seed,
-        enable_vr=True,
-        ultra_late_threshold=9999,
+        **ROLLOUT_OPTIONS,
     )
     pubeval = bgbot_cpp.PubEval()
     strat.set_move_filter(pubeval)
@@ -99,9 +104,10 @@ def make_rollout(root: str, model: str, n_trials: int, checker_ply: int,
     db_path = bearoff_db_path()
     if db_path:
         db = bgbot_cpp.BearoffDB()
-        if db.load(db_path):
-            bgbot_cpp.rollout_set_bearoff_db(strat, db)
-            keep.append(db)
+        if not db.load(db_path):
+            raise ValueError(f"Could not load bearoff database {db_path}")
+        bgbot_cpp.rollout_set_bearoff_db(strat, db)
+        keep.append(db)
     return strat, keep
 
 
@@ -194,15 +200,81 @@ def _load_boards(path: Path) -> list[list[int]]:
     return boards
 
 
-def _done_keys(path: Path) -> set[tuple[int, ...]]:
+def _sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _provenance(config: dict, threads: int, local: bool) -> str:
+    _engine_paths(str(_PROJECT_ROOT))
+    from neongammon.weights import WeightConfig, bearoff_db_path
+
+    weights = WeightConfig.from_model(config["model"])
+    weights.validate()
+    files = {path: _sha256_file(path) for path in dict.fromkeys(weights.weight_paths_list)}
+    db = bearoff_db_path()
+    if local:
+        import bgbot_cpp
+
+        engine = _sha256_file(bgbot_cpp.__file__)
+    else:
+        # Modal builds this uploaded C++ tree in its Linux x86-64 image.
+        cpp = _PROJECT_ROOT / "cpp"
+        engine = {
+            path.relative_to(cpp).as_posix(): _sha256_file(path)
+            for path in sorted(cpp.rglob("*"))
+            if path.is_file() and "move_array_probe" not in path.relative_to(cpp).parts
+        }
+    manifest = dict(
+        version=1, config=config, options=ROLLOUT_OPTIONS, threads=threads,
+        runner="local" if local else "modal", engine=engine,
+        strategy=weights.strategy_type, hidden_sizes=weights.hidden_sizes_list,
+        weights=[files[path] for path in weights.weight_paths_list],
+        bearoff=_sha256_file(db) if db else None,
+    )
+    return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
+
+
+def _done_keys(output: TextIO, metadata: TextIO, provenance: str) -> set[tuple[int, ...]]:
+    output.seek(0)
+    metadata.seek(0)
     done = set()
-    if path.exists():
-        with open(path) as f:
-            for line in f:
-                parts = line.split()
-                if len(parts) >= 31:
-                    done.add(tuple(int(x) for x in parts[:26]))
+    for number, (row, entry) in enumerate(zip_longest(output, metadata, fillvalue=""), 1):
+        if not row.endswith("\n") or not entry.endswith("\n"):
+            raise ValueError(f"incomplete label/metadata pair at row {number}")
+        try:
+            saved = json.loads(entry)
+            fields = row.split()
+            board = tuple(int(x) for x in fields[:26])
+        except ValueError as error:
+            raise ValueError(f"invalid rollout data at row {number}") from error
+        if not isinstance(saved, dict) or saved.get("provenance") != provenance:
+            raise ValueError(f"rollout provenance differs or is missing at row {number}")
+        row_digest = hashlib.sha256(row[:-1].encode()).hexdigest()
+        if (len(fields) != 31 or list(board) != saved.get("board")
+                or saved.get("label_sha256") != row_digest or board in done):
+            raise ValueError(f"label/metadata mismatch at row {number}")
+        done.add(board)
     return done
+
+
+@contextmanager
+def _locked_output(out: Path, provenance: str, parser: argparse.ArgumentParser):
+    meta = out.with_name(out.name + ".meta.jsonl")
+    with out.open("a+", encoding="utf-8") as labels:
+        # Serialize validation and appends for each output path.
+        fcntl.flock(labels, fcntl.LOCK_EX)
+        with meta.open("a+", encoding="utf-8") as metadata:
+            try:
+                done = _done_keys(labels, metadata, provenance)
+            except ValueError as error:
+                parser.error(
+                    f"{out}: {error}. Use --out with a new file, or restore a verified matching pair."
+                )
+            yield labels, metadata, done
 
 
 def _default_out(positions: Path) -> Path:
@@ -246,57 +318,59 @@ def main() -> None:
     positions = args.positions if args.positions.is_absolute() else Path.cwd() / args.positions
     out = args.out or _default_out(positions)
     out.parent.mkdir(parents=True, exist_ok=True)
-    meta = out.with_name(out.name + ".meta.jsonl")
-
-    done = _done_keys(out)
-    seen: set[tuple[int, ...]] = set()
-    pending = []
-    for b in _load_boards(positions):
-        k = tuple(b)
-        if k in done or k in seen:
-            continue
-        seen.add(k)
-        pending.append(b)
-    if args.limit:
-        pending = pending[: args.limit]
-    print(f"{len(done)} boards already in {out}; {len(pending)} to roll out", flush=True)
-    if not pending:
-        return
-
     config = dict(model=args.model, n_trials=args.n_trials, checker_ply=args.checker_ply,
                   truncation_depth=args.truncation_depth, seed=args.seed)
-    usd_per_sec = args.cpu * USD_PER_CORE_SEC + (args.memory / 1024) * USD_PER_GIB_SEC
+    default_threads = (os.cpu_count() or 1) if args.local else int(round(2 * args.cpu))
+    threads = args.threads or default_threads
+    provenance = _provenance(config, threads, args.local)
+    with _locked_output(out, provenance, ap) as (labels, metadata, done):
+        seen = set(done)
 
-    n_ok = n_fail = 0
-    busy_secs = 0.0
-    t_start = time.time()
+        pending = []
+        for b in _load_boards(positions):
+            k = tuple(b)
+            if k in seen:
+                continue
+            seen.add(k)
+            pending.append(b)
+        if args.limit:
+            pending = pending[: args.limit]
+        print(f"{len(done)} boards already in {out}; {len(pending)} to roll out", flush=True)
+        if not pending:
+            return
 
-    def record(res: dict, fo, fm) -> None:
-        nonlocal n_ok, busy_secs
-        fo.write(_format_row(res) + "\n")
-        fo.flush()
-        fm.write(json.dumps({k: res[k] for k in ("board", "equity", "se", "prob_se", "secs")}
-                            | config) + "\n")
-        fm.flush()
-        n_ok += 1
-        busy_secs += res["secs"]
+        usd_per_sec = args.cpu * USD_PER_CORE_SEC + (args.memory / 1024) * USD_PER_GIB_SEC
 
-    def progress() -> str:
-        wall = time.time() - t_start
-        est = busy_secs * usd_per_sec
-        per = est / n_ok if n_ok else 0.0
-        return (f"{n_ok}/{len(pending)} done, {n_fail} failed, {wall / 60:.1f} min wall, "
-                f"{busy_secs / max(n_ok, 1):.1f} s/board, est ${est:.2f} "
-                f"(${per:.4f}/board)")
+        n_ok = n_fail = 0
+        busy_secs = 0.0
+        t_start = time.time()
 
-    with open(out, "a") as fo, open(meta, "a") as fm:
+        def record(res: dict) -> None:
+            nonlocal n_ok, busy_secs
+            row = _format_row(res)
+            entry = {k: res[k] for k in ("board", "equity", "se", "prob_se", "secs")}
+            entry.update(config, provenance=provenance, label_sha256=hashlib.sha256(row.encode()).hexdigest())
+            labels.write(row + "\n")
+            labels.flush()
+            metadata.write(json.dumps(entry) + "\n")
+            metadata.flush()
+            n_ok += 1
+            busy_secs += res["secs"]
+
+        def progress() -> str:
+            wall = time.time() - t_start
+            est = busy_secs * usd_per_sec
+            per = est / n_ok if n_ok else 0.0
+            return (f"{n_ok}/{len(pending)} done, {n_fail} failed, {wall / 60:.1f} min wall, "
+                    f"{busy_secs / max(n_ok, 1):.1f} s/board, est ${est:.2f} "
+                    f"(${per:.4f}/board)")
+
         if args.local:
-            threads = args.threads or os.cpu_count() or 1
             strat, _keep = make_rollout(
                 str(_PROJECT_ROOT), args.model, args.n_trials, args.checker_ply,
                 args.truncation_depth, threads, args.seed)
             for b in pending:
-                record(rollout_one(strat, b), fo, fm)
+                record(rollout_one(strat, b))
                 print(progress(), flush=True)
             return
 
@@ -307,7 +381,6 @@ def main() -> None:
             raise KeyboardInterrupt
         signal.signal(signal.SIGTERM, _term)
 
-        threads = args.threads or int(round(2 * args.cpu))
         roller_cls = Roller.with_options(cpu=args.cpu, memory=args.memory,
                                          timeout=args.timeout, max_containers=args.containers)
         with modal.enable_output(), app.run():
@@ -326,7 +399,7 @@ def main() -> None:
                     print(f"input failed ({args.chunk} board(s)): {item!r}", flush=True)
                     continue
                 for res in (item if args.chunk > 1 else [item]):
-                    record(res, fo, fm)
+                    record(res)
                 if time.time() - last > 30 or n_ok == len(pending):
                     print(progress(), flush=True)
                     last = time.time()
@@ -334,7 +407,7 @@ def main() -> None:
                     print(f"--max-usd {args.max_usd} reached; stopping (re-run to resume)",
                           flush=True)
                     break
-    print(progress(), flush=True)
+        print(progress(), flush=True)
 
 
 if __name__ == "__main__":

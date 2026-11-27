@@ -85,6 +85,12 @@ inline bool can_double(const CubeInfo& ci) {
     return ci.owner == CubeOwner::CENTERED || ci.owner == CubeOwner::PLAYER;
 }
 
+// A beaver would quadruple the cube in force before the offer.
+inline bool can_beaver_after_double(const CubeInfo& ci) {
+    return ci.is_money() && ci.beaver
+        && (ci.max_cube_value == 0 || ci.cube_value <= ci.max_cube_value / 4);
+}
+
 // True when the cube can never be turned again.
 // Used to skip all cubeful overhead (Janowski, cubeful VR, cube checks).
 // Typical use: max_cube_value=1 makes the entire game cubeless.

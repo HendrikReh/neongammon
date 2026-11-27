@@ -24,7 +24,8 @@ Run with:
 import bgbot_cpp as B
 import pytest
 
-from neongammon import BgBotAnalyzer
+from neongammon import BgBotAnalyzer, batch_cube_action_nply
+from neongammon.simulation import GameConfig, simulate_game
 
 C, P, O = B.CubeOwner.CENTERED, B.CubeOwner.PLAYER, B.CubeOwner.OPPONENT
 
@@ -145,3 +146,36 @@ def test_no_double_equals_double_take_for_the_post_crawford_trailer(eval_level, 
     assert r.should_take
     # Before the fix the gap was 0.097 (3-away) and 0.18 (4-away) at 2-ply.
     assert r.equity_nd == pytest.approx(min(r.equity_dt, r.equity_dp), abs=0.01)
+
+
+# Every roll bears off for two points. A double would let the opponent escape
+# for one point, leaving the trailer short of the match.
+CERTAIN_GAMMON = [0, 1] + [0] * 22 + [-15, 0]
+
+
+@pytest.mark.parametrize("level", ["1ply", "2ply", "3ply"])
+def test_post_crawford_trailer_plays_on_for_the_match_winning_gammon(level):
+    position = dict(board=CERTAIN_GAMMON, away1=2, away2=1)
+    analyzer = BgBotAnalyzer(eval_level=level, parallel_threads=1)
+    results = (
+        analyzer.cube_action(**position),
+        analyzer.cube_decision(**position),
+        *batch_cube_action_nply([position], eval_level=level, n_threads=2),
+    )
+    for decision in results:
+        assert decision.equity_nd == pytest.approx(3.0)
+        assert decision.equity_dp == pytest.approx(1.0)
+        assert not decision.should_double
+        assert decision.optimal_equity == pytest.approx(decision.equity_nd)
+
+
+def test_post_crawford_simulation_plays_for_the_match_winning_gammon():
+    analyzer = BgBotAnalyzer(eval_level="1ply", parallel_threads=1)
+    game = simulate_game(
+        seed=42,
+        config=GameConfig(
+            start_board=tuple(CERTAIN_GAMMON), match_length=3, score1=1, score2=2,
+        ),
+        players=(analyzer, analyzer),
+    )
+    assert game["points"] == 2

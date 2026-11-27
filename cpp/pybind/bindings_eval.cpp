@@ -166,6 +166,7 @@ CheckerPosition checker_position_from_dict(const py::dict& inp) {
     if (inp.contains("away1")) {
         p.match.away1 = inp["away1"].cast<int>();
         p.match.away2 = inp["away2"].cast<int>();
+        validate_met_away_scores(p.match.away1, p.match.away2);
         if (inp.contains("is_crawford"))
             p.match.is_crawford = inp["is_crawford"].cast<bool>();
     }
@@ -290,6 +291,7 @@ py::list batch_evaluate_positions_impl(
         if (py::len(pos) >= 6) {
             inputs[i].match.away1 = pos[3].cast<int>();
             inputs[i].match.away2 = pos[4].cast<int>();
+            validate_met_away_scores(inputs[i].match.away1, inputs[i].match.away2);
             inputs[i].match.is_crawford = pos[5].cast<bool>();
         }
     }
@@ -393,6 +395,7 @@ py::list batch_evaluate_post_move_impl(
         if (plen >= 5) {
             inputs[i].match.away1 = pos[3].cast<int>();
             inputs[i].match.away2 = pos[4].cast<int>();
+            validate_met_away_scores(inputs[i].match.away1, inputs[i].match.away2);
             if (plen >= 6)
                 inputs[i].match.is_crawford = pos[5].cast<bool>();
             if (plen >= 7)
@@ -469,6 +472,7 @@ void bind_eval(py::module_& m) {
         .def(py::init<>())
         .def(py::init([](int value, CubeOwner owner, int away1, int away2, bool crawford,
                          bool jacoby, bool beaver, int max_cube, float contact_x, float slope) {
+            validate_met_away_scores(away1, away2);
             return CubeInfo{value, owner, {away1, away2, crawford}, -1.0f, jacoby, beaver,
                             max_cube, contact_x, slope};
         }), py::arg("cube_value") = 1, py::arg("owner") = CubeOwner::CENTERED,
@@ -492,10 +496,17 @@ void bind_eval(py::module_& m) {
        py::arg("probs"));
 
     // --- Match equity utilities ---
+    m.def("_validate_met_away_scores", &validate_met_away_scores);
+
     m.def("get_met", [](int away1, int away2, bool is_crawford) {
         return get_met(away1, away2, is_crawford);
     }, "MET lookup: MWC for player needing away1 points vs opponent needing away2.",
        py::arg("away1"), py::arg("away2"), py::arg("is_crawford") = false);
+
+    m.def("_get_met_after", &get_met_after,
+          "MWC after scoring points from the given current match state.",
+          py::arg("away1"), py::arg("away2"), py::arg("points"),
+          py::arg("player_wins"), py::arg("is_crawford"));
 
     m.def("can_double_match", [](int away1, int away2, int cube_value,
                                   CubeOwner owner, bool is_crawford, int max_cube_value) {

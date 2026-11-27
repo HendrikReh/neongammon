@@ -2,7 +2,8 @@
 // Copyright (C) 2026 Mark Higgins
 #include "bgbot/match_equity.h"
 #include "bgbot/cube.h"  // for CubeOwner
-#include <algorithm>
+#include <stdexcept>
+#include <string>
 
 namespace bgbot {
 
@@ -83,37 +84,43 @@ const std::array<float, MAX_MATCH_LENGTH> MET_POST_CRAWFORD = {{
 // MET lookup functions
 // ---------------------------------------------------------------------------
 
+void validate_met_away_scores(int away1, int away2) {
+    if (away1 > MAX_MATCH_LENGTH || away2 > MAX_MATCH_LENGTH) {
+        throw std::invalid_argument(
+            "Match equity requires each away score to be at most " +
+            std::to_string(MAX_MATCH_LENGTH));
+    }
+}
+
 float get_met(int away1, int away2, bool is_post_crawford) {
     // Terminal conditions
     if (away1 <= 0) return 1.0f;  // Player already won
     if (away2 <= 0) return 0.0f;  // Opponent already won
 
-    // Clamp to table size
-    int a1 = std::min(away1, MAX_MATCH_LENGTH);
-    int a2 = std::min(away2, MAX_MATCH_LENGTH);
+    validate_met_away_scores(away1, away2);
 
     // Post-Crawford routing:
     // Only use the post-Crawford table when Crawford has already occurred
     // (is_post_crawford=true) AND someone is at 1-away.
     // The pre-Crawford table (MET_PRE) already has correct values for 1-away
     // positions — those values account for the upcoming Crawford game.
-    if (is_post_crawford && (a1 == 1 || a2 == 1)) {
-        if (a1 == 1) {
+    if (is_post_crawford && (away1 == 1 || away2 == 1)) {
+        if (away1 == 1) {
             // Player is 1-away (the leader). Opponent is the trailer.
-            // MET_POST_CRAWFORD[a2-1] = trailer's MWC
-            return 1.0f - MET_POST_CRAWFORD[a2 - 1];
+            return 1.0f - MET_POST_CRAWFORD[away2 - 1];
         } else {
             // Opponent is 1-away (the leader). Player is the trailer.
-            return MET_POST_CRAWFORD[a1 - 1];
+            return MET_POST_CRAWFORD[away1 - 1];
         }
     }
 
     // Pre-Crawford lookup (0-indexed)
-    return MET_PRE[a1 - 1][a2 - 1];
+    return MET_PRE[away1 - 1][away2 - 1];
 }
 
 float get_met_after(int away1, int away2, int nPoints,
                     bool player_wins, bool is_crawford) {
+    validate_met_away_scores(away1, away2);
     int new_away1 = player_wins ? away1 - nPoints : away1;
     int new_away2 = player_wins ? away2 : away2 - nPoints;
     // Determine if the resulting position is post-Crawford.

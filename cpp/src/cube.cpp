@@ -187,6 +187,7 @@ void get_match_points(
     float& player_cp,             // out: player's cash point
     float& opp_cp)                // out: opponent's cash point
 {
+    validate_met_away_scores(away1, away2);
     // 0-indexed away values (GNUbg convention)
     int idx0 = away1 - 1;
     int idx1 = away2 - 1;
@@ -549,7 +550,7 @@ CubeDecision decision_from_raw_equities(
         const float actual_dt = dt_is_basis_scaled ? dt_raw : (2.0f * dt_raw);
         result.equity_dp = 1.0f;
 
-        if (cube.beaver && actual_dt < 0.0f) {
+        if (can_beaver_after_double(cube) && actual_dt < 0.0f) {
             result.equity_dt = 2.0f * actual_dt;  // DB equity
             result.is_beaver = true;
         } else {
@@ -587,18 +588,14 @@ CubeDecision decision_from_raw_equities(
         const int cv = cube.cube_value;
         const bool craw = cube.match.is_crawford;
         const float dp_m = dp_mwc(away1, away2, cv, craw);
-        // Post-Crawford automatic double: the trailing player (away1 > 1,
-        // opponent at 1-away) should always double — losing costs the match
-        // regardless of cube value, while winning scores more points.
-        const bool auto_double = (!craw && away1 > 1 && away2 == 1);
-
+        const float best_mwc = std::min(dt_raw, dp_m);
+        // Prefer doubling on a post-Crawford tie. The leader can also pass,
+        // so playing on may be strictly better (e.g. a match-winning gammon).
+        const bool trailer = !craw && away1 > 1 && away2 == 1;
+        constexpr float tie_tolerance = std::numeric_limits<float>::epsilon();
         result.should_take = (dt_raw <= dp_m);
-        if (auto_double) {
-            result.should_double = true;
-        } else {
-            const float best_mwc = std::min(dt_raw, dp_m);
-            result.should_double = (best_mwc > nd_raw);
-        }
+        result.should_double = best_mwc > nd_raw
+            || (trailer && nd_raw - best_mwc <= tie_tolerance);
         result.optimal_equity = result.should_double
             ? std::min(result.equity_dt, result.equity_dp)
             : result.equity_nd;
@@ -716,7 +713,10 @@ CubeDecision cube_decision_1ply(
 
     if (cube.is_money()) {
         const float nd_raw = cl2cf_money(probs, cube.owner, cube_x, cube.jacoby_active());
-        const float dt_raw = cl2cf_money(probs, CubeOwner::OPPONENT, cube_x, false);
+        CubeInfo taken = cube;
+        taken.cube_value = 2 * cube.cube_value;
+        taken.owner = CubeOwner::OPPONENT;
+        const float dt_raw = cl2cf(probs, taken, cube_x);
         return decision_from_raw_equities(cube, nd_raw, dt_raw, /*dt_is_basis_scaled=*/false);
     }
 
