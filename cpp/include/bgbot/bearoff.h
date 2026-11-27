@@ -172,6 +172,10 @@ public:
     // the same database adds nothing and shares that identity.
     uint64_t eval_identity() const override;
     int root_pin_for(const Board& root) const override { return base_->root_pin_for(root); }
+    void set_root_pinned(std::vector<int> indices) override {
+        base_->set_root_pinned(std::move(indices));
+    }
+    const std::vector<int>& root_pinned() const override { return base_->root_pinned(); }
 
     double evaluate(const Board& board, bool pre_move_is_race) const override;
 

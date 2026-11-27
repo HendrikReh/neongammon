@@ -374,6 +374,17 @@ void MultiPlyStrategy::set_bearoff_db(const BearoffDB* db) {
     }
 }
 
+int MultiPlyStrategy::rollout_cubeless_move(
+    const std::vector<Board>& candidates, const Board& pre_move_board) const
+{
+    // With a dead cube the tree picks by cubeless equity.
+    CubeInfo cube;
+    cube.max_cube_value = 1;
+    int pick = 0;
+    best_move_index_cubeful_multi(candidates, pre_move_board, &cube, 1, 0.0f, &pick);
+    return pick;
+}
+
 void MultiPlyStrategy::clear_cache() const {
     get_cache().clear();
     // The cubeful evaluation engine's per-thread cache backs the delegated

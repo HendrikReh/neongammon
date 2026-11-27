@@ -509,6 +509,16 @@ results = batch_evaluate(positions, eval_level="1ply", weights=weights)
 results = batch_post_move_evaluate(positions, eval_level="1ply", weights=weights)
 ```
 
+Backgame-aware models can supply a `routing` table on `WeightConfigPair`.
+The table assigns network slots to contact pairs and optional specialist
+routes. The search checks snake, containment, massive backgames, backgame
+category, early containment, and the side-specific backgame gate in that
+order before choosing the normal contact-pair slot. Slot zero uses the
+pure-race encoder. The other slots use the extended-contact encoder. A
+specialist can pin contact evaluation below the root via `root_pins`.
+The Stage 9–11 registry entries provide concrete examples in
+[`weights.py`](../python/neongammon/weights.py).
+
 ### Return Types
 
 | Type | Used by | Key fields |

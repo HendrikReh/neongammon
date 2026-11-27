@@ -247,9 +247,7 @@ void RolloutStrategy::clear_internal_caches() const {
     // Clear thread-local PosCache (shared by all MultiPlyStrategy instances
     // on this thread). This prevents state accumulation across independent
     // positions that could lead to memory corruption with deep decision plies.
-    if (auto* mps = dynamic_cast<MultiPlyStrategy*>(checker_strat_.get())) {
-        mps->clear_cache();
-    }
+    if (checker_strat_) checker_strat_->clear_cache();
     // Other strategies share the same thread_local cache, but clearing
     // it separately is a no-op since clear_cache() memsets the shared cache.
 
@@ -261,16 +259,6 @@ void RolloutStrategy::clear_internal_caches() const {
     // Clear this thread's cubeful evaluation cache (pool threads clear
     // their own at the start of each parallel rollout dispatch).
     clear_cubeful_eval_cache();
-}
-
-// Helper: propagate bearoff DB to a Strategy that may be MultiPly or Rollout.
-static void propagate_bearoff_db(Strategy* strat, const BearoffDB* db) {
-    if (!strat) return;
-    if (auto* mps = dynamic_cast<MultiPlyStrategy*>(strat)) {
-        mps->set_bearoff_db(db);
-    } else if (auto* rs = dynamic_cast<RolloutStrategy*>(strat)) {
-        rs->set_bearoff_db(db);
-    }
 }
 
 void RolloutStrategy::set_bearoff_db(const BearoffDB* db) {
@@ -285,9 +273,9 @@ void RolloutStrategy::set_bearoff_db(const BearoffDB* db) {
     }
     // Propagate to all internal strategies so N-ply evaluations use exact
     // bearoff probs at their 1-ply leaf nodes.
-    propagate_bearoff_db(checker_strat_.get(), db);
-    propagate_bearoff_db(checker_late_strat_.get(), db);
-    propagate_bearoff_db(truncation_strat_.get(), db);
+    if (checker_strat_) checker_strat_->set_bearoff_db(db);
+    if (checker_late_strat_) checker_late_strat_->set_bearoff_db(db);
+    if (truncation_strat_) truncation_strat_->set_bearoff_db(db);
     if (cube_inner_rollout_) cube_inner_rollout_->set_bearoff_db(db);
     if (cube_late_inner_rollout_) cube_late_inner_rollout_->set_bearoff_db(db);
 }
@@ -295,15 +283,9 @@ void RolloutStrategy::set_bearoff_db(const BearoffDB* db) {
 void RolloutStrategy::set_move_filter(std::shared_ptr<Strategy> filter) {
     std::lock_guard<std::recursive_mutex> lock(rollout_mutex_);
     move_filter_ = filter;
-    // Propagate to MultiPlyStrategy instances used for checker play
-    auto propagate = [&](Strategy* strat) {
-        if (auto* mps = dynamic_cast<MultiPlyStrategy*>(strat)) {
-            mps->set_move_prefilter(filter);
-        }
-    };
-    propagate(checker_strat_.get());
-    propagate(checker_late_strat_.get());
-    propagate(truncation_strat_.get());
+    if (checker_strat_) checker_strat_->set_move_prefilter(filter);
+    if (checker_late_strat_) checker_late_strat_->set_move_prefilter(filter);
+    if (truncation_strat_) truncation_strat_->set_move_prefilter(filter);
 }
 
 // ======================== Cancellation ========================
@@ -583,27 +565,6 @@ static const CubeInfo& dead_cube_info()
         return c;
     }();
     return dead;
-}
-
-// Cubeless N-ply move selection for trial moves. When the strategy is a
-// MultiPlyStrategy, route through best_move_index_cubeful_multi with a
-// single dead cube — with the cube dead, its 1-ply filter scores by plain
-// cubeless equity and its rescore runs the batched cubeful evaluation
-// engine (cube_eval.cpp) as a cubeless N-ply tree. Other strategies
-// (1-ply base, child truncated-rollout evaluators) keep their own
-// best_move_index.
-static int cubeless_best_move_index(const Strategy& strat,
-                                    const std::vector<Board>& candidates,
-                                    const Board& pre_move_board)
-{
-    if (dynamic_cast<const MultiPlyStrategy*>(&strat)) {
-        int pick = 0;
-        strat.best_move_index_cubeful_multi(candidates, pre_move_board,
-                                            &dead_cube_info(), 1,
-                                            0.0f, &pick);
-        return pick;
-    }
-    return strat.best_move_index(candidates, pre_move_board);
 }
 
 // ======================== VR Helper ========================
@@ -901,8 +862,7 @@ void RolloutStrategy::prefill_move0_cache(
         } else {
             // Matches the trial loop's cubeless fallback exactly so the
             // cache value is byte-identical to per-trial recomputation.
-            chosen = candidates[cubeless_best_move_index(
-                current_strat, candidates, start_board)];
+            chosen = candidates[current_strat.rollout_cubeless_move(candidates, start_board)];
         }
 
         cache.chosen[roll_idx] = chosen;
@@ -1804,8 +1764,7 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
                         }
                         try {
                             if (n_active == 0) {
-                                chosen = candidates[cubeless_best_move_index(
-                                    current_strat, candidates, board)];
+                                chosen = candidates[current_strat.rollout_cubeless_move(candidates, board)];
                             } else {
                                 std::array<int, 4> picks{0, 0, 0, 0};
                                 current_strat.best_move_index_cubeful_multi(
@@ -1845,8 +1804,7 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
                     }
                 }
                 if (n_active == 0) {
-                    chosen = candidates[cubeless_best_move_index(
-                        current_strat, candidates, board)];
+                    chosen = candidates[current_strat.rollout_cubeless_move(candidates, board)];
                 } else {
                     std::array<int, 2> picks{0, 0};
                     current_strat.best_move_index_cubeful_multi(
@@ -1875,8 +1833,7 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
                         } else if (candidates.size() == 1) {
                             chosen = candidates[0];
                         } else {
-                            chosen = candidates[cubeless_best_move_index(
-                                current_strat, candidates, board)];
+                            chosen = candidates[current_strat.rollout_cubeless_move(candidates, board)];
                         }
                     } catch (...) {
                         move0_cache->state[actual_idx].store(-1, std::memory_order_release);
@@ -1913,8 +1870,7 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
                         chosen = candidates[base_->best_move_index(candidates, board)];
                     }
                 } else {
-                    chosen = candidates[cubeless_best_move_index(
-                        current_strat, candidates, board)];
+                    chosen = candidates[current_strat.rollout_cubeless_move(candidates, board)];
                 }
             }
         }
@@ -2623,8 +2579,7 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision(
                         // the cache value is byte-identical to per-trial
                         // recomputation (the trial-side CAS fallback uses the
                         // same dead-cube selection).
-                        chosen = candidates[cubeless_best_move_index(
-                            *m0_strat, candidates, pre_roll_board)];
+                        chosen = candidates[m0_strat->rollout_cubeless_move(candidates, pre_roll_board)];
                     }
                     move0_cache.chosen[r] = chosen;
                     move0_cache.state[r].store(2, std::memory_order_release);
@@ -2840,8 +2795,7 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision_bat
                 } else if (m0_strat == base_.get()) {
                     chosen = candidates[base_->best_move_index(candidates, pre_roll_board)];
                 } else {
-                    chosen = candidates[cubeless_best_move_index(
-                        *m0_strat, candidates, pre_roll_board)];
+                    chosen = candidates[m0_strat->rollout_cubeless_move(candidates, pre_roll_board)];
                 }
                 move0_cache.chosen[r] = chosen;
                 move0_cache.state[r].store(2, std::memory_order_release);

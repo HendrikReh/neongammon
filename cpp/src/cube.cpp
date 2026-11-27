@@ -208,16 +208,6 @@ static bool is_dead_cube(const CubeInfo& cube) {
 //   p < opponent's TG: opponent too good to double
 //   opponent's TG < p < player's TG: in doubling window
 //   p > player's TG: player too good to double
-// Automatic redouble detection (GNUbg's GetCubePrimeValue).
-// When the doubler (away_i) is close enough that losing at cv or 2*cv costs
-// the same, they always take a recube — making the effective cube 2*cv.
-// Uses 1-indexed away values (GNUbg uses 0-indexed).
-static int get_cube_prime_value(int away_i, int away_j, int cv) {
-    if ((away_i - 1) < 2 * cv && (away_j - 1) >= 2 * cv)
-        return 2 * cv;
-    return cv;
-}
-
 // Compute live-cube cash points for both players simultaneously using
 // GNUbg's recursive GetPoints algorithm.
 //

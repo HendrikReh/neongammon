@@ -7,6 +7,8 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <memory>
+#include <stdexcept>
 #include <vector>
 
 namespace bgbot {
@@ -157,6 +159,13 @@ public:
     // -1 to let each node pick its own net. Only region-specialist nets pin
     // a tree; see BackgameAwarePairStrategy::set_root_pinned for why.
     virtual int root_pin_for(const Board& /*root*/) const { return -1; }
+    virtual void set_root_pinned(std::vector<int>) {
+        throw std::runtime_error("wrapped strategy has no root routing");
+    }
+    virtual const std::vector<int>& root_pinned() const {
+        static const std::vector<int> empty;
+        return empty;
+    }
     virtual std::array<float, NUM_OUTPUTS> evaluate_pinned_probs(
         const Board& board, bool race, int /*pinned*/) const {
         return evaluate_probs(board, race);
@@ -175,6 +184,16 @@ public:
 
     // A single network may serve the entire 21-roll variance-reduction fan.
     virtual RolloutVRNetwork rollout_vr_network(const Board&) const { return {}; }
+
+    // Rollout components can have their own caches, exact bearoff table, and
+    // cheap move prefilter. Base evaluators without these controls ignore them.
+    virtual void clear_cache() const {}
+    virtual void set_bearoff_db(const BearoffDB*) {}
+    virtual void set_move_prefilter(std::shared_ptr<Strategy>) {}
+    virtual int rollout_cubeless_move(const std::vector<Board>& candidates,
+                                      const Board& pre_move_board) const {
+        return best_move_index(candidates, pre_move_board);
+    }
 
     // Evaluate a post-move board position. Higher = better for player 1.
     // The board is from player 1's perspective.

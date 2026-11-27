@@ -286,7 +286,7 @@ public:
     // Bearoff DB: when set, positions in the DB are evaluated exactly.
     // Input positions that are bearoff get immediate results (no simulation).
     // Truncation evaluations also use the DB when applicable.
-    void set_bearoff_db(const BearoffDB* db);
+    void set_bearoff_db(const BearoffDB* db) override;
     const BearoffDB* bearoff_db() const { return bearoff_db_; }
 
     // Set a cheap filter strategy (e.g. PubEval) for pre-filtering candidates

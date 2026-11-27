@@ -18,8 +18,7 @@ namespace {
 std::shared_ptr<Strategy> with_bearoff_db(std::shared_ptr<Strategy> strategy,
                                                  const BearoffDB* db) {
     if (!db || !db->is_loaded()) return strategy;
-    const auto* wrapped = dynamic_cast<const BearoffStrategy*>(strategy.get());
-    if (wrapped && &wrapped->db() == db) return strategy;
+    if (strategy->bearoff_layer().db == db) return strategy;
     return std::make_shared<BearoffStrategy>(std::move(strategy), db);
 }
 
@@ -1582,12 +1581,12 @@ void bind_eval(py::module_& m) {
         // A caller may supply the ready-to-use wrapper without a separate DB.
         // The cubeless evaluator also needs that DB for its root shortcut.
         const Strategy* layer = base_strat.get();
-        while (const auto* wrapped = dynamic_cast<const BearoffStrategy*>(layer)) {
-            if (wrapped->db().is_loaded()) {
-                bearoff_db = &wrapped->db();
+        for (auto wrap = layer->bearoff_layer(); wrap.base; wrap = layer->bearoff_layer()) {
+            if (wrap.db && wrap.db->is_loaded()) {
+                bearoff_db = wrap.db;
                 break;
             }
-            layer = &wrapped->base();
+            layer = wrap.base;
         }
         CubeInfo ci{cube_value, owner, {away1, away2, is_crawford}, cube_x_override, jacoby, beaver, max_cube_value, contact_x, contact_x_pip_slope};
         MoveFilter filter{filter_max_moves, filter_threshold};

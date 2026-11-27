@@ -1355,16 +1355,8 @@ void bind_core(py::module_& m) {
              py::keep_alive<1, 3>())  // BearoffStrategy keeps db alive
         // Root-routing controls, forwarded to the wrapped pair strategy (the
         // analyzer hands out its 1-ply strategy wrapped in this class).
-        .def("set_root_pinned", [](BearoffStrategy& self, std::vector<int> nn_indices) {
-            auto* bg = dynamic_cast<BackgameAwarePairStrategy*>(
-                const_cast<Strategy*>(&self.base()));
-            if (!bg) throw std::runtime_error("wrapped strategy has no root routing");
-            bg->set_root_pinned(std::move(nn_indices));
-        }, py::arg("nn_indices"))
-        .def("root_pinned", [](const BearoffStrategy& self) {
-            auto* bg = dynamic_cast<const BackgameAwarePairStrategy*>(&self.base());
-            return bg ? bg->root_pinned() : std::vector<int>{};
-        })
+        .def("set_root_pinned", &BearoffStrategy::set_root_pinned, py::arg("nn_indices"))
+        .def("root_pinned", [](const BearoffStrategy& self) { return self.root_pinned(); })
         .def("root_pin_for", [](const BearoffStrategy& self, const std::vector<int>& root) {
             return self.root_pin_for(list_to_board(root));
         }, py::arg("root"));
@@ -1510,6 +1502,18 @@ void bind_core(py::module_& m) {
         return result;
     }, "Return list of 17 pair names (purerace, race_race, race_att, ...)");
 
+    py::class_<RoutingManifest>(m, "RoutingManifest")
+        .def(py::init<>())
+        .def_readwrite("contact_pairs", &RoutingManifest::contact_pairs)
+        .def_readwrite("backgame_categories", &RoutingManifest::backgame_categories)
+        .def_readwrite("side_backgame", &RoutingManifest::side_backgame)
+        .def_readwrite("blend_extra", &RoutingManifest::blend_extra)
+        .def_readwrite("snake", &RoutingManifest::snake)
+        .def_readwrite("containment", &RoutingManifest::containment)
+        .def_readwrite("massive", &RoutingManifest::massive)
+        .def_readwrite("early_containment", &RoutingManifest::early_containment)
+        .def_readwrite("root_pins", &RoutingManifest::root_pins);
+
     py::class_<BackgameAwarePairStrategy, Strategy, std::shared_ptr<BackgameAwarePairStrategy>>(m, "BackgameAwarePairStrategy")
         .def(py::init<const std::vector<std::string>&, const std::vector<int>&, bool>(),
              py::arg("weight_paths"), py::arg("hidden_sizes"),
@@ -1520,6 +1524,8 @@ void bind_core(py::module_& m) {
              "phase_containment=True the Stage 11 phased layout (trio + early-"
              "containment NN at 20 + containment NN at 21; 23 NNs add the snake "
              "NN at 22)")
+        .def(py::init<const std::vector<std::string>&, const std::vector<int>&, RoutingManifest>(),
+             py::arg("weight_paths"), py::arg("hidden_sizes"), py::arg("routing"))
         .def("evaluate_board", [](BackgameAwarePairStrategy& self,
                                    const std::vector<int>& board,
                                    const std::vector<int>& pre_move_board) {
@@ -1542,6 +1548,8 @@ void bind_core(py::module_& m) {
         }, "Return the NN index the strategy uses for a board position "
            "(17/18 = backgame; 21/22 = blended backgame on hybrid models).",
            py::arg("board"));
+
+    m.attr("RoutedStrategy") = m.attr("BackgameAwarePairStrategy");
 
     // --- Stage 9 scoring ---
     m.def("score_benchmarks_stage9", [](const ScenarioSet& ss,
@@ -1583,14 +1591,20 @@ void bind_core(py::module_& m) {
        py::arg("parallel_threads") = 0);
 
     m.def("create_strategy", [](const std::string& strategy_type,
-                                               const std::vector<std::string>& weight_paths,
-                                               const std::vector<int>& hidden_sizes) {
+                                 const std::vector<std::string>& weight_paths,
+                                 const std::vector<int>& hidden_sizes,
+                                 const RoutingManifest* routing) -> std::shared_ptr<Strategy> {
         py::gil_scoped_release release;
+        if (routing) {
+            if (strategy_type != "backgame_pair" && strategy_type != "backgame_pair_phased") {
+                throw std::invalid_argument("Routing manifests require a backgame-pair strategy");
+            }
+            return std::make_shared<RoutedStrategy>(weight_paths, hidden_sizes, *routing);
+        }
         return make_strategy_from_type(strategy_type, weight_paths, hidden_sizes);
-    }, "Create a base Strategy by type (5nn, pair, backgame_pair)",
-       py::arg("strategy_type"),
-       py::arg("weight_paths"),
-       py::arg("hidden_sizes"));
+    }, "Create a base Strategy with optional explicit backgame-pair routing.",
+       py::arg("strategy_type"), py::arg("weight_paths"), py::arg("hidden_sizes"),
+       py::arg("routing") = nullptr);
 
     m.def("create_multipy", [](const std::string& strategy_type,
                                               const std::vector<std::string>& weight_paths,

@@ -44,6 +44,14 @@ MODELS: dict[str, dict[str, Any]] = {
         "pattern": "sl_s9_{plan}.weights.best",   # standard NNs are Stage 9's
         "overrides": {"purerace": "sl_s5_purerace.weights.best"},
         "plans": "backgame_pair_phased",
+        "routing": {
+            "backgame_categories": (17, 18, 19),
+            "early_containment": 20,
+            "containment": 21,
+            "snake": 22,
+            "massive": 23,
+            "root_pins": (22,),
+        },
         "canonical_map": [0,1,2,3,4,5,6,7,8,9,10,12,12,13,14,12,12],
         "extra_backgame": ["sl_s11_bg_deep.weights.best",
                            "sl_s11_bg_middle.weights.best",
@@ -68,6 +76,7 @@ MODELS: dict[str, dict[str, Any]] = {
         "hidden": (100,) + (400,) * 20,   # 19 base + 2 extra backgame NNs = 21
         "pattern": "sl_s9_{plan}.weights.best",   # all 19 base NNs are Stage 9's
         "plans": "backgame_pair",
+        "routing": {"side_backgame": (17, 18), "blend_extra": (19, 20)},
         "canonical_map": [0,1,2,3,4,5,6,7,8,9,10,12,12,13,14,12,12,17,18],
         # v3 = the pasko nets retrained on the S10-gated benchmark/train sets and
         # warm-restarted twice (see CLAUDE.md Stage 10). Gated-benchmark 1-ply ER:
@@ -79,6 +88,7 @@ MODELS: dict[str, dict[str, Any]] = {
         "hidden": (100,) + (400,) * 18,  # 1 purerace + 18 contact (incl 2 backgame)
         "pattern": "sl_s9_{plan}.weights.best",
         "plans": "backgame_pair",  # uses _BACKGAME_PAIR_PLANS (19 NNs)
+        "routing": {"side_backgame": (17, 18)},
         # NN sharing: same as S8 for standard pairs + 2 backgame NNs
         "canonical_map": [0,1,2,3,4,5,6,7,8,9,10,12,12,13,14,12,12,17,18],
     },
@@ -384,6 +394,7 @@ class WeightConfigPair:
     paths: list[str]         # 17 or 19 weight file paths
     hiddens: list[int]       # 17 or 19 hidden sizes
     strategy_type: str = "pair"  # "pair" or "backgame_pair"
+    routing: dict[str, int | tuple[int, ...]] | None = None
 
     @property
     def weight_args(self) -> tuple[list[str], list[int]]:
@@ -460,7 +471,9 @@ class WeightConfigPair:
         strategy_type = ("backgame_pair"
                          if plans_type == "backgame_pair_categorized"
                          else plans_type)
-        return cls(paths=paths, hiddens=hidden, strategy_type=strategy_type)
+        routing = cfg.get("routing")
+        return cls(paths=paths, hiddens=hidden, strategy_type=strategy_type,
+                   routing=dict(routing) if routing is not None else None)
 
     def validate(self) -> None:
         """Check that all weight files exist."""

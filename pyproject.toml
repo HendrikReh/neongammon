@@ -126,6 +126,7 @@ test-command = """\
 python -I -m pytest -q tests/wheel_contents.py tests/test_lazy_imports.py tests/test_simulation.py \
 tests/test_batch.py tests/test_batch_checker_play.py tests/test_batch_cube_action_nply.py \
 tests/test_luck.py tests/test_text_export.py tests/test_game_pr_stats.py \
+tests/test_routing_manifest.py tests/test_weight_format.py \
 tests/test_move_dice.py::test_high_branching_1_1_moves_above_2048_exact_parity"""
 
 [tool.cibuildwheel.macos]
