@@ -123,18 +123,38 @@ public:
     int checkers_on_board(unsigned int index) const;
 
 private:
-    // Pre-computed binomial coefficients for position indexing.
-    // binom_[n][k] = C(n, k) for n=0..21, k=0..6.
+    // Pre-computed compile-time binomial coefficients for position indexing.
+    // binom_table_[n][k] = C(n, k) for n=0..21, k=0..6.
     static constexpr int MAX_N = 22;  // CHECKERS + POINTS + 1
     static constexpr int MAX_K = 7;   // POINTS + 1
-    static unsigned int binom_table_[MAX_N][MAX_K];
-    static bool binom_initialized_;
-    static void init_binom();
+    static constexpr unsigned int binom_table_[MAX_N][MAX_K] = {
+        {1,  0,   0,    0,    0,     0,     0},
+        {1,  1,   0,    0,    0,     0,     0},
+        {1,  2,   1,    0,    0,     0,     0},
+        {1,  3,   3,    1,    0,     0,     0},
+        {1,  4,   6,    4,    1,     0,     0},
+        {1,  5,  10,   10,    5,     1,     0},
+        {1,  6,  15,   20,   15,     6,     1},
+        {1,  7,  21,   35,   35,    21,     7},
+        {1,  8,  28,   56,   70,    56,    28},
+        {1,  9,  36,   84,  126,   126,    84},
+        {1, 10,  45,  120,  210,   252,   210},
+        {1, 11,  55,  165,  330,   462,   462},
+        {1, 12,  66,  220,  495,   792,   924},
+        {1, 13,  78,  286,  715,  1287,  1716},
+        {1, 14,  91,  364, 1001,  2002,  3003},
+        {1, 15, 105,  455, 1365,  3003,  5005},
+        {1, 16, 120,  560, 1820,  4368,  8008},
+        {1, 17, 136,  680, 2380,  6188, 12376},
+        {1, 18, 153,  816, 3060,  8568, 18564},
+        {1, 19, 171,  969, 3876, 11628, 27132},
+        {1, 20, 190, 1140, 4845, 15504, 38760},
+        {1, 21, 210, 1330, 5985, 20349, 54264},
+    };
 
-    static unsigned int binom(int n, int k) {
+    static constexpr unsigned int binom(int n, int k) {
         if (k < 0 || k > n || n < 0) return 0;
         if (n >= MAX_N || k >= MAX_K) return 0;
-        if (!binom_initialized_) init_binom();
         return binom_table_[n][k];
     }
 

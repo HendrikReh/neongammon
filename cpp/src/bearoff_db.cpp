@@ -43,21 +43,6 @@ float one_roll_gammon_loss(const Board& board) {
 
 } // namespace
 
-// --- Binomial coefficient table ---
-
-unsigned int BearoffDB::binom_table_[MAX_N][MAX_K] = {};
-bool BearoffDB::binom_initialized_ = false;
-
-void BearoffDB::init_binom() {
-    for (int n = 0; n < MAX_N; ++n) {
-        binom_table_[n][0] = 1;
-        for (int k = 1; k < MAX_K && k <= n; ++k) {
-            binom_table_[n][k] = binom_table_[n-1][k-1] + binom_table_[n-1][k];
-        }
-    }
-    binom_initialized_ = true;
-}
-
 // --- Position indexing ---
 //
 // Uses the combinatorial number system (stars-and-bars). Choosing POINTS=6
@@ -67,8 +52,6 @@ void BearoffDB::init_binom() {
 //   Rank = C(p[0], 6) + C(p[1], 5) + ... + C(p[5], 1).
 
 unsigned int BearoffDB::position_index(const int checkers[POINTS]) {
-    if (!binom_initialized_) init_binom();
-
     unsigned int index = 0;
     int pos = POINTS - 1;
     for (int i = 0; i < POINTS; ++i) {
@@ -86,8 +69,6 @@ unsigned int BearoffDB::position_index(const int checkers[POINTS]) {
 }
 
 void BearoffDB::index_to_position(unsigned int index, int checkers[POINTS]) {
-    if (!binom_initialized_) init_binom();
-
     int positions[POINTS];
     unsigned int remaining = index;
 
@@ -172,14 +153,11 @@ std::array<float, NUM_OUTPUTS> BearoffDB::lookup_probs(
     constexpr float SCALE = 1.0f / 65535.0f;
 
     float opp_cdf[MAX_ROLLS];
-    float player_cdf[MAX_ROLLS];
     {
-        float cum_o = 0.0f, cum_p = 0.0f;
+        float cum_o = 0.0f;
         for (int k = 0; k < MAX_ROLLS; ++k) {
             cum_o += o_dist[k] * SCALE;
             opp_cdf[k] = cum_o;
-            cum_p += p_dist[k] * SCALE;
-            player_cdf[k] = cum_p;
         }
     }
 
@@ -291,8 +269,6 @@ int total_checkers(const int checkers[BearoffDB::POINTS]) {
 } // namespace
 
 void BearoffDB::generate() {
-    if (!binom_initialized_) init_binom();
-
     struct PosOrder {
         unsigned int index;
         int pips;
@@ -546,7 +522,6 @@ bool BearoffDB::load(const std::string& path) {
                 n_gammon * MAX_ROLLS * sizeof(uint16_t));
     }
 
-    if (!binom_initialized_) init_binom();
     loaded_ = in.good();
     identity_ = loaded_ ? next_identity() : 0;
     return loaded_;

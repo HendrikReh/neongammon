@@ -733,6 +733,7 @@ void bind_eval(py::module_& m) {
                                     bool beaver, int max_cube_value,
                                     const BearoffDB* bearoff_db,
                                     bool incl_2ply_details) {
+        validate_search_depth(n_plies);
         if (incl_2ply_details && n_plies < 2) {
             throw std::invalid_argument(
                 "incl_2ply_details requires n_plies >= 2 (analysis depth not deep enough)");
@@ -1063,6 +1064,7 @@ void bind_eval(py::module_& m) {
                                      float contact_x,
             float contact_x_pip_slope) {
         Board board = list_to_board(board_vec);
+        validate_search_depth(n_plies);
         validate_met_away_scores(away1, away2);
         MoveFilter filter{filter_max_moves, filter_threshold};
         require_non_null(strategy, "strategy");
@@ -1101,6 +1103,7 @@ void bind_eval(py::module_& m) {
                                     bool jacoby, bool beaver,
                                     const BearoffDB* bearoff_db, int max_cube_value) {
         Board board = list_to_board(board_vec);
+        validate_search_depth(n_plies);
         validate_met_away_scores(away1, away2);
         MoveFilter filter{filter_max_moves, filter_threshold};
         require_non_null(strategy, "strategy");
@@ -1148,6 +1151,7 @@ void bind_eval(py::module_& m) {
              float contact_x,
             float contact_x_pip_slope) {
         Board board = list_to_board(board_vec);
+        validate_search_depth(n_plies);
         validate_met_away_scores(away1, away2);
         MoveFilter filter{filter_max_moves, filter_threshold};
         require_non_null(strategy, "strategy");
@@ -1300,6 +1304,7 @@ void bind_eval(py::module_& m) {
                                             bool incl_2ply_details,
                                             std::shared_ptr<Strategy> strategy,
                                             bool decision_only) {
+        validate_search_depth(n_plies);
         if (incl_2ply_details && n_plies < 2) {
             throw std::invalid_argument(
                 "incl_2ply_details requires n_plies >= 2");

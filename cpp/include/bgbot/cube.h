@@ -102,9 +102,60 @@ inline bool cube_is_dead(const CubeInfo& ci) {
     // and is_match is derived from cube_active (rollout.cpp), so a match
     // position starts being treated with money conventions -- and it made a 2T
     // checker play on a match-dead cube 20x slower (0.59s -> 11.9s). The
-    // match-aware rule lives in is_dead_cube() in cube.cpp, which is what the
-    // Janowski conversion consults; see that function.
+    // match-aware rule lives in is_dead_cube_for_eval() below, which the
+    // Janowski conversion and cube-efficiency skip both consult.
     return ci.max_cube_value > 0 && ci.cube_value >= ci.max_cube_value;
+}
+
+// True when no useful cube action is possible for either player in the current
+// game (structural cap, Crawford, DMP, or any match-dead cube where no side
+// with cube access can gain by doubling).
+inline bool is_dead_cube_for_eval(const CubeInfo& cube) {
+    if (cube_is_dead(cube)) return true;          // structural cap
+    if (cube.is_money()) return false;
+    if (cube.match.is_crawford) return true;
+    // A cube can only be turned again by a player who BOTH may double it
+    // (ownership) AND gains by doing so -- a player whose win at the current
+    // cube value already takes the match gains nothing. Ownership matters:
+    // with an owned cube only the owner can turn it, so the owner's away score
+    // alone decides. Requiring BOTH away scores to be covered is correct only
+    // for a CENTERED cube, and left e.g. 3-away/2-away with the cube on 2 owned
+    // by the trailer looking live.
+    const bool player_can_turn =
+        (cube.owner == CubeOwner::CENTERED || cube.owner == CubeOwner::PLAYER)
+        && cube.match.away1 > cube.cube_value;
+    const bool opponent_can_turn =
+        (cube.owner == CubeOwner::CENTERED || cube.owner == CubeOwner::OPPONENT)
+        && cube.match.away2 > cube.cube_value;
+    return !player_can_turn && !opponent_can_turn;
+}
+
+// True when post-Crawford automatic-double valuation applies (leader is 1-away,
+// trailer is >1-away and may still turn the cube, and doubling fits max_cube_value).
+inline bool is_post_crawford_auto_double(const CubeInfo& cube) {
+    const MatchInfo& m = cube.match;
+    if (cube.is_money() || m.is_crawford) return false;
+    const bool player_trails = (m.away2 == 1 && m.away1 > 1);
+    const bool opponent_trails = (m.away1 == 1 && m.away2 > 1);
+    if (!player_trails && !opponent_trails) return false;
+
+    const int cv = cube.cube_value;
+    const int trailer_away = player_trails ? m.away1 : m.away2;
+    const CubeOwner trailer_owns =
+        player_trails ? CubeOwner::PLAYER : CubeOwner::OPPONENT;
+    if (cube.owner != CubeOwner::CENTERED && cube.owner != trailer_owns)
+        return false;
+    if (trailer_away <= cv) return false;
+    if (cube.max_cube_value > 0 && 2 * cv > cube.max_cube_value) return false;
+    return true;
+}
+
+// True when cl2cf_raw() / cl2cf() actually consults its `cube_x` parameter.
+// False for structurally dead cubes, match-dead cubes, Crawford, DMP, and
+// post-Crawford auto-double cubes (where cl2cf_match short-circuits before
+// Janowski interpolation).
+inline bool cube_uses_efficiency(const CubeInfo& cube) {
+    return !is_dead_cube_for_eval(cube) && !is_post_crawford_auto_double(cube);
 }
 
 // Compute W (average win value) and L (average loss value) from cubeless probs.

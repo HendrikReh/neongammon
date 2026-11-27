@@ -145,7 +145,8 @@ class BgBotAnalyzer:
         checker: TrialEvalConfig for checker play during rollout trials.
         checker_late: TrialEvalConfig for late-game checker play.
         cube: TrialEvalConfig for cube decisions during rollout trials.
-        cube_late: TrialEvalConfig for late-game cube decisions.
+        cube_late: Deprecated no-op (accepted for compatibility; cube decisions
+            use ``cube`` throughout the trial).
         prefilter_threshold: Two-stage checker_play filter for rollout levels.
             When > 0, stage 1 culls candidates with > prefilter_threshold
             1-ply equity error from best (no count cap), then stage 2 applies
@@ -345,7 +346,6 @@ class BgBotAnalyzer:
                 late_ply=1,
                 late_threshold=1,
                 cube=bgbot_cpp.TrialEvalConfig(ply=2),
-                cube_late=bgbot_cpp.TrialEvalConfig(ply=2),
                 ultra_late_threshold=9999,
                 cubeful_trial_moves=self._cubeful_trial_moves,
                 cubeful_late_threshold=self._cubeful_late_threshold,

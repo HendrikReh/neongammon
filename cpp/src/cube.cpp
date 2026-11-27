@@ -127,26 +127,9 @@ float cl2cf_money(const std::array<float, NUM_OUTPUTS>& probs,
 // ---------------------------------------------------------------------------
 
 // Check if the cube is "dead" — no useful cube actions possible.
-// This happens when the cube value is enough for both players to win the match
-// on any win, or during Crawford game.
+// Delegates to the shared cube.h helper so cl2cf_match and cube_eval.cpp stay in sync.
 static bool is_dead_cube(const CubeInfo& cube) {
-    if (cube_is_dead(cube)) return true;          // structural cap
-    if (cube.is_money()) return false;
-    if (cube.match.is_crawford) return true;
-    // A cube can only be turned again by a player who BOTH may double it
-    // (ownership) AND gains by doing so -- a player whose win at the current
-    // cube value already takes the match gains nothing. Ownership matters:
-    // with an owned cube only the owner can turn it, so the owner's away score
-    // alone decides. Requiring BOTH away scores to be covered is correct only
-    // for a CENTERED cube, and left e.g. 3-away/2-away with the cube on 2 owned
-    // by the trailer looking live.
-    const bool player_can_turn =
-        (cube.owner == CubeOwner::CENTERED || cube.owner == CubeOwner::PLAYER)
-        && cube.match.away1 > cube.cube_value;
-    const bool opponent_can_turn =
-        (cube.owner == CubeOwner::CENTERED || cube.owner == CubeOwner::OPPONENT)
-        && cube.match.away2 > cube.cube_value;
-    return !player_can_turn && !opponent_can_turn;
+    return is_dead_cube_for_eval(cube);
 }
 
 // Compute MWC-space take point and cash point for match play.
@@ -429,20 +412,11 @@ static bool post_crawford_auto_double_mwc(
     const CubeInfo& cube,
     float& mwc)
 {
-    const MatchInfo& m = cube.match;
-    if (cube.is_money() || m.is_crawford) return false;
-    const bool player_trails = (m.away2 == 1 && m.away1 > 1);
-    const bool opponent_trails = (m.away1 == 1 && m.away2 > 1);
-    if (!player_trails && !opponent_trails) return false;
+    if (!is_post_crawford_auto_double(cube)) return false;
 
+    const MatchInfo& m = cube.match;
+    const bool player_trails = (m.away2 == 1 && m.away1 > 1);
     const int cv = cube.cube_value;
-    const int trailer_away = player_trails ? m.away1 : m.away2;
-    const CubeOwner trailer_owns =
-        player_trails ? CubeOwner::PLAYER : CubeOwner::OPPONENT;
-    if (cube.owner != CubeOwner::CENTERED && cube.owner != trailer_owns)
-        return false;
-    if (trailer_away <= cv) return false;  // any trailer win already takes the match
-    if (cube.max_cube_value > 0 && 2 * cv > cube.max_cube_value) return false;
 
     const float play_on = cubeless_mwc(probs, m.away1, m.away2, cv, false);
     const float take = cubeless_mwc(probs, m.away1, m.away2, 2 * cv, false);

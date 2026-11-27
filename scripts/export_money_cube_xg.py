@@ -58,7 +58,7 @@ for _p in (_SCRIPT_DIR, _PROJECT_ROOT / "build", _PROJECT_ROOT / "python"):
 import benchmark_money as bm  # noqa: E402
 import export_folder_benchmark_xg as fx  # noqa: E402
 from neongammon import xg_file as xf  # noqa: E402
-from export_pasko_benchmark_xg import _templates, write_xg  # noqa: E402
+from xg_export_common import _templates, write_xg  # noqa: E402
 
 DEFAULT_OUT_DIR = _PROJECT_ROOT / "data" / "money_cube_xg"
 DEFAULT_TEMPLATE = DEFAULT_OUT_DIR / "template.xg"

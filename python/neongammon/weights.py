@@ -32,7 +32,7 @@ MODELS: dict[str, dict[str, Any]] = {
         #   22 bg_snake   a far-side prime trapping a straggler (root-routed)
         #   23 bg_massive the benchmark's massive family (per-node routed)
         # Routing: snake -> containment -> massive -> trio (by category) ->
-        # P3 -> standard pair NN; see select_nn_idx() in neural_net.cpp. The
+        # P3 -> standard pair NN; see select_nn_idx() in neural_net_routing.cpp. The
         # intermediate layouts this grew through (the 20-NN trio, 22-NN
         # "stage11p", 23-NN "stage11s", 24-NN "stage11m") are history in
         # CLAUDE.md; the strategy still accepts 22 or 23 paths for A/B work.

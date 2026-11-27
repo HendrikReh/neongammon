@@ -366,7 +366,7 @@ def cmd_complete(args) -> None:
     """One-decision games with every Neongammon checker pick XG left below its full
     level as the played move, so XG analyses exactly those at full depth."""
     from neongammon.weights import PRODUCTION_MODEL
-    from export_pasko_benchmark_xg import _templates, derive_half_moves, write_xg
+    from xg_export_common import _templates, derive_half_moves, write_xg
 
     model = args.model or PRODUCTION_MODEL
     tpl = _templates(args.template)

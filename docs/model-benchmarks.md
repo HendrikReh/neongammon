@@ -286,7 +286,7 @@ the lack of opponent-awareness in the single-plan strategy.
 
 Top-100 worst 1-ply scenarios from 207,484 total (contact + crashed).
 Higher ER = harder positions. Lower ER = better strategy.
-Script: `scripts/run_top100_safe.py`
+Script: `scripts/archive/historical/run_top100_safe.py`
 
 Settings key: `Nt` = N trials, `trunc=D` = truncation depth (half-moves),
 `dp=P` = decision ply for move selection, `late=P@M` = switch to ply P after
@@ -328,7 +328,7 @@ generating 90+ legal moves — increased to 8MB.
 ## XG Roller-Style Truncated Rollout Benchmark (Stage 6)
 
 Top-100 worst 1-ply scenarios from 207,484 total (contact + crashed).
-Script: `scripts/run_top100_safe.py --model stage6`
+Script: `scripts/archive/historical/run_top100_safe.py --model stage6`
 
 Benchmark run: 2026-03-23, 16 threads (RTX 4070S / Windows), Stage 6 model.
 
@@ -423,7 +423,7 @@ Benchmark run: 2026-03-23, RTX 4070S / Windows, Stage 5 production model.
 **Reproducing:**
 
 ```bash
-python neongammon/scripts/rollout_cube_bench.py
+python neongammon/scripts/archive/historical/rollout_cube_bench.py
 ```
 
 Edit the `configs` list in the script to select which configurations to run. Each

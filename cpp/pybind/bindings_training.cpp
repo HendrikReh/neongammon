@@ -45,6 +45,7 @@ void bind_training(py::module_& m) {
         if (ss && !ss->scenarios.empty()) {
             config.benchmark_scenarios = &ss->scenarios;
         }
+        py::gil_scoped_release release;
         return td_train(config);
     }, "Run TD(0) self-play training",
        py::arg("n_games") = 5000,

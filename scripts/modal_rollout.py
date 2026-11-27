@@ -47,6 +47,7 @@ import hashlib
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 from contextlib import contextmanager
@@ -54,7 +55,10 @@ from itertools import zip_longest
 from pathlib import Path
 from typing import TextIO
 
-import modal
+try:
+    import modal
+except ImportError:
+    modal = None
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _SCRIPT_DIR.parent
@@ -79,6 +83,27 @@ def _engine_paths(root: str) -> None:
             sys.path.insert(0, p)
 
 
+def _normalize_routing(routing: dict | None) -> dict | None:
+    if routing is None:
+        return None
+    return {
+        k: list(v) if isinstance(v, (tuple, list)) else v
+        for k, v in sorted(routing.items())
+    }
+
+
+def _build_strategy(bgbot_cpp, w):
+    from neongammon.weights import WeightConfigPair
+
+    args = (w.strategy_type, w.weight_paths_list, w.hidden_sizes_list)
+    if isinstance(w, WeightConfigPair) and w.routing is not None:
+        routing = bgbot_cpp.RoutingManifest()
+        for name, value in w.routing.items():
+            setattr(routing, name, value)
+        return bgbot_cpp.create_strategy(*args, routing=routing)
+    return bgbot_cpp.create_strategy(*args)
+
+
 def make_rollout(root: str, model: str, n_trials: int, checker_ply: int,
                  truncation_depth: int, n_threads: int, seed: int):
     """Build the rollout strategy. Returns (strategy, keepalive objects)."""
@@ -89,8 +114,9 @@ def make_rollout(root: str, model: str, n_trials: int, checker_ply: int,
     bgbot_cpp.init_escape_tables()
     w = WeightConfig.from_model(model)
     w.validate()
-    strat = bgbot_cpp.create_rollout(
-        w.strategy_type, w.weight_paths_list, w.hidden_sizes_list,
+    base = _build_strategy(bgbot_cpp, w)
+    strat = bgbot_cpp.create_rollout_from_base(
+        base,
         n_trials=n_trials,
         truncation_depth=truncation_depth,
         decision_ply=checker_ply,
@@ -134,54 +160,58 @@ def _weights_ignore(p: Path) -> bool:
     return not (p.name.startswith("sl_") and p.name.endswith(".weights.best"))
 
 
-image = (
-    modal.Image.debian_slim(python_version="3.12")
-    .apt_install("build-essential", "cmake", "ninja-build")
-    .pip_install("numpy", "pybind11")
-    .add_local_dir(_PROJECT_ROOT / "cpp", f"{REMOTE_ROOT}/cpp", copy=True,
-                   ignore=["move_array_probe"])
-    .run_commands(
-        f"mkdir -p {REMOTE_ROOT}/build",
-        f"cmake -S {REMOTE_ROOT}/cpp -B /tmp/bgbuild -G Ninja -DCMAKE_BUILD_TYPE=Release"
-        " -DBGBOT_BUILD_APPS=OFF -Dpybind11_DIR=$(python -m pybind11 --cmakedir)",
-        "ninja -C /tmp/bgbuild bgbot_cpp",
-        f"cp /tmp/bgbuild/bgbot_cpp*.so {REMOTE_ROOT}/build/",
+image = None
+app = None
+Roller = None
+
+if modal is not None:
+    image = (
+        modal.Image.debian_slim(python_version="3.12")
+        .apt_install("build-essential", "cmake", "ninja-build")
+        .pip_install("numpy", "pybind11")
+        .add_local_dir(_PROJECT_ROOT / "cpp", f"{REMOTE_ROOT}/cpp", copy=True,
+                       ignore=["move_array_probe"])
+        .run_commands(
+            f"mkdir -p {REMOTE_ROOT}/build",
+            f"cmake -S {REMOTE_ROOT}/cpp -B /tmp/bgbuild -G Ninja -DCMAKE_BUILD_TYPE=Release"
+            " -DBGBOT_BUILD_APPS=OFF -Dpybind11_DIR=$(python -m pybind11 --cmakedir)",
+            "ninja -C /tmp/bgbuild bgbot_cpp",
+            f"cp /tmp/bgbuild/bgbot_cpp*.so {REMOTE_ROOT}/build/",
+        )
+        .add_local_dir(_PROJECT_ROOT / "python" / "neongammon", f"{REMOTE_ROOT}/python/neongammon",
+                       ignore=["**/__pycache__"])
+        .add_local_dir(_PROJECT_ROOT / "models", f"{REMOTE_ROOT}/models",
+                       ignore=_weights_ignore)
+        .add_local_file(_PROJECT_ROOT / "data" / "bearoff_1sided.db",
+                        f"{REMOTE_ROOT}/data/bearoff_1sided.db")
     )
-    .add_local_dir(_PROJECT_ROOT / "python" / "neongammon", f"{REMOTE_ROOT}/python/neongammon",
-                   ignore=["**/__pycache__"])
-    .add_local_dir(_PROJECT_ROOT / "models", f"{REMOTE_ROOT}/models",
-                   ignore=_weights_ignore)
-    .add_local_file(_PROJECT_ROOT / "data" / "bearoff_1sided.db",
-                    f"{REMOTE_ROOT}/data/bearoff_1sided.db")
-)
 
-app = modal.App("neongammon-rollout", image=image)
+    app = modal.App("neongammon-rollout", image=image)
 
+    @app.cls(cpu=8.0, memory=4096, timeout=3 * 3600, retries=1, max_containers=50)
+    class Roller:
+        model: str = modal.parameter(default="stage9")
+        n_trials: int = modal.parameter(default=1296)
+        checker_ply: int = modal.parameter(default=3)
+        truncation_depth: int = modal.parameter(default=0)
+        threads: int = modal.parameter(default=16)
+        seed: int = modal.parameter(default=42)
 
-@app.cls(cpu=8.0, memory=4096, timeout=3 * 3600, retries=1, max_containers=50)
-class Roller:
-    model: str = modal.parameter(default="stage9")
-    n_trials: int = modal.parameter(default=1296)
-    checker_ply: int = modal.parameter(default=3)
-    truncation_depth: int = modal.parameter(default=0)
-    threads: int = modal.parameter(default=16)
-    seed: int = modal.parameter(default=42)
+        @modal.enter()
+        def load(self):
+            self.strat, self._keep = make_rollout(
+                REMOTE_ROOT, self.model, self.n_trials, self.checker_ply,
+                self.truncation_depth, self.threads, self.seed)
 
-    @modal.enter()
-    def load(self):
-        self.strat, self._keep = make_rollout(
-            REMOTE_ROOT, self.model, self.n_trials, self.checker_ply,
-            self.truncation_depth, self.threads, self.seed)
+        @modal.method()
+        def rollout(self, board: list[int]) -> dict:
+            return rollout_one(self.strat, board)
 
-    @modal.method()
-    def rollout(self, board: list[int]) -> dict:
-        return rollout_one(self.strat, board)
-
-    @modal.method()
-    def rollout_many(self, boards: list[list[int]]) -> list[dict]:
-        # One input per chunk: for sub-second boards (races) the per-input
-        # overhead would otherwise rival the rollout itself.
-        return [rollout_one(self.strat, b) for b in boards]
+        @modal.method()
+        def rollout_many(self, boards: list[list[int]]) -> list[dict]:
+            # One input per chunk: for sub-second boards (races) the per-input
+            # overhead would otherwise rival the rollout itself.
+            return [rollout_one(self.strat, b) for b in boards]
 
 
 # --------------------------------------------------------------------------
@@ -208,6 +238,34 @@ def _sha256_file(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+def _cpp_source_files(root: Path) -> list[Path]:
+    """Return sorted C++ source files under cpp/, preferring git-tracked files."""
+    cpp = root / "cpp"
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--", "cpp"],
+            check=True,
+            capture_output=True,
+        )
+        tracked = [
+            root / rel.decode("utf-8")
+            for rel in proc.stdout.split(b"\0")
+            if rel
+        ]
+        files = [
+            path for path in tracked
+            if path.is_file() and "move_array_probe" not in path.relative_to(cpp).parts
+        ]
+        if files:
+            return sorted(files)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return sorted(
+        path for path in cpp.rglob("*")
+        if path.is_file() and "move_array_probe" not in path.relative_to(cpp).parts
+    )
+
+
 def _provenance(config: dict, threads: int, local: bool) -> str:
     _engine_paths(str(_PROJECT_ROOT))
     from neongammon.weights import WeightConfig, bearoff_db_path
@@ -225,13 +283,13 @@ def _provenance(config: dict, threads: int, local: bool) -> str:
         cpp = _PROJECT_ROOT / "cpp"
         engine = {
             path.relative_to(cpp).as_posix(): _sha256_file(path)
-            for path in sorted(cpp.rglob("*"))
-            if path.is_file() and "move_array_probe" not in path.relative_to(cpp).parts
+            for path in _cpp_source_files(_PROJECT_ROOT)
         }
     manifest = dict(
         version=1, config=config, options=ROLLOUT_OPTIONS, threads=threads,
         runner="local" if local else "modal", engine=engine,
         strategy=weights.strategy_type, hidden_sizes=weights.hidden_sizes_list,
+        routing=_normalize_routing(getattr(weights, "routing", None)),
         weights=[files[path] for path in weights.weight_paths_list],
         bearoff=_sha256_file(db) if db else None,
     )
@@ -287,6 +345,56 @@ def _default_out(positions: Path) -> Path:
 def _format_row(res: dict) -> str:
     return (" ".join(str(x) for x in res["board"]) + " "
             + " ".join(f"{p:.4f}" for p in res["probs"]))
+
+
+def _consume_remote_stream(
+    stream,
+    pending_count: int,
+    chunk_size: int,
+    record,
+    progress,
+    *,
+    max_usd: float,
+    usd_per_sec: float,
+    get_counts,
+) -> tuple[int, int, bool]:
+    """Consume a Modal map() stream, recording results and counting failures.
+
+    Returns ``(failed_boards, failed_chunks, stopped_early)``. When the stream
+    runs to completion (``not stopped_early``), ``failed_boards`` is the exact
+    count of pending boards that did not produce a result (avoiding tail-chunk
+    overcounting when ``pending_count % chunk_size != 0``).
+    """
+    failed_chunks = 0
+    stopped_early = False
+    last = 0.0
+    for item in stream:
+        if isinstance(item, BaseException):
+            failed_chunks += 1
+            if chunk_size > 1:
+                print(f"chunk failed (up to {chunk_size} board(s)): {item!r}", flush=True)
+            else:
+                print(f"input failed (1 board): {item!r}", flush=True)
+            continue
+        for res in (item if chunk_size > 1 else [item]):
+            record(res)
+        n_ok, busy_secs = get_counts()
+        if time.time() - last > 30 or n_ok == pending_count:
+            print(progress(), flush=True)
+            last = time.time()
+        if max_usd and busy_secs * usd_per_sec >= max_usd:
+            print(f"--max-usd {max_usd} reached; stopping (re-run to resume)",
+                  flush=True)
+            stopped_early = True
+            break
+    n_ok, _ = get_counts()
+    if failed_chunks == 0:
+        n_fail = 0
+    elif not stopped_early:
+        n_fail = max(0, pending_count - n_ok)
+    else:
+        n_fail = min(failed_chunks * chunk_size, max(0, pending_count - n_ok))
+    return n_fail, failed_chunks, stopped_early
 
 
 def main() -> None:
@@ -374,6 +482,11 @@ def main() -> None:
                 print(progress(), flush=True)
             return
 
+        if modal is None or app is None or Roller is None:
+            raise SystemExit(
+                "modal is required for remote rollouts; install modal or pass --local"
+            )
+
         # A plain SIGTERM would kill the client without leaving app.run(), and
         # Modal keeps the ephemeral app's containers running (and billing)
         # until it notices; turn it into a KeyboardInterrupt so the app stops.
@@ -385,7 +498,6 @@ def main() -> None:
                                          timeout=args.timeout, max_containers=args.containers)
         with modal.enable_output(), app.run():
             roller = roller_cls(threads=threads, **config)
-            last = 0.0
             if args.chunk > 1:
                 chunks = [pending[i:i + args.chunk] for i in range(0, len(pending), args.chunk)]
                 stream = roller.rollout_many.map(chunks, order_outputs=False,
@@ -393,21 +505,19 @@ def main() -> None:
             else:
                 stream = roller.rollout.map(pending, order_outputs=False,
                                             return_exceptions=True)
-            for item in stream:
-                if isinstance(item, BaseException):
-                    n_fail += args.chunk
-                    print(f"input failed ({args.chunk} board(s)): {item!r}", flush=True)
-                    continue
-                for res in (item if args.chunk > 1 else [item]):
-                    record(res)
-                if time.time() - last > 30 or n_ok == len(pending):
-                    print(progress(), flush=True)
-                    last = time.time()
-                if args.max_usd and busy_secs * usd_per_sec >= args.max_usd:
-                    print(f"--max-usd {args.max_usd} reached; stopping (re-run to resume)",
-                          flush=True)
-                    break
+            n_fail, failed_chunks, _ = _consume_remote_stream(
+                stream,
+                len(pending),
+                args.chunk,
+                record,
+                progress,
+                max_usd=args.max_usd,
+                usd_per_sec=usd_per_sec,
+                get_counts=lambda: (n_ok, busy_secs),
+            )
         print(progress(), flush=True)
+        if n_fail > 0 or failed_chunks > 0:
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

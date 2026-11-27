@@ -10,7 +10,7 @@ the 1296-trial rollouts (same recipe as the Stage 9 back-game NNs).
 
 Starts from the TD weights (td_pasko.weights.best) and writes sl_pasko.weights /
 sl_pasko.weights.best. Score the result with:
-    python scripts/score_pasko_benchmark.py --pasko-weights models/sl_pasko.weights.best
+    python scripts/archive/pasko/score_pasko_benchmark.py --pasko-weights models/sl_pasko.weights.best
 
 Run after the training rollout has finished (positions still missing from
 pasko-train-rollout are simply not trained on):
@@ -161,7 +161,8 @@ def main():
     print(f'=== Done: {total_steps:,} steps in {total_time/60:.1f} min ===')
     print(f'Best benchmark ER: {best_er:.2f}  (PR {best_er/2:.2f})')
     print(f'Best weights: {best_path}')
-    print(f'\nScore it: python scripts/score_pasko_benchmark.py --pasko-weights models/{args.out}.weights.best')
+    print(f'\nScore it: python scripts/archive/pasko/score_pasko_benchmark.py '
+          f'--pasko-weights models/{args.out}.weights.best')
 
 
 if __name__ == '__main__':

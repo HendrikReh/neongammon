@@ -127,7 +127,7 @@ for _p in (_SCRIPT_DIR, _PROJECT_ROOT / "build", _PROJECT_ROOT / "python"):
 
 from neongammon import possible_moves, xg_file as xf  # noqa: E402
 from benchmark_money import BLUNDER_THRESHOLD, PR_MULTIPLIER, _scored  # noqa: E402
-from export_pasko_benchmark_xg import (  # noqa: E402
+from xg_export_common import (  # noqa: E402
     _build_move_rec, _templates, derive_half_moves, write_xg,
 )
 from score_backgame_pr import cube_subdecisions, load_reference, rollout_file  # noqa: E402

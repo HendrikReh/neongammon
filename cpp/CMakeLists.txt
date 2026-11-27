@@ -23,7 +23,7 @@ set(BGBOT_CPU_ROOT "${CMAKE_CURRENT_LIST_DIR}")
 # Optimization flags. Apple Silicon (arm64) is the supported target; the
 # x86-64 branch exists only for the Modal rollout image
 # (scripts/modal_rollout.py), which builds this engine on Linux x86-64
-# containers and uses the AVX2 kernels in neural_net.cpp.
+# containers and uses the AVX2 kernels in neural_net_kernels.cpp.
 if(APPLE AND CMAKE_OSX_ARCHITECTURES)
     set(BGBOT_TARGET_ARCH "${CMAKE_OSX_ARCHITECTURES}")
 else()
@@ -48,7 +48,9 @@ add_library(bgbot_lib STATIC
     ${BGBOT_CPU_ROOT}/src/benchmark.cpp
     ${BGBOT_CPU_ROOT}/src/encoding.cpp
     ${BGBOT_CPU_ROOT}/src/game_plan.cpp
-    ${BGBOT_CPU_ROOT}/src/neural_net.cpp
+    ${BGBOT_CPU_ROOT}/src/neural_net_kernels.cpp
+    ${BGBOT_CPU_ROOT}/src/neural_net_io.cpp
+    ${BGBOT_CPU_ROOT}/src/neural_net_routing.cpp
     ${BGBOT_CPU_ROOT}/src/training.cpp
     ${BGBOT_CPU_ROOT}/src/multipy.cpp
     ${BGBOT_CPU_ROOT}/src/rollout_dice.cpp

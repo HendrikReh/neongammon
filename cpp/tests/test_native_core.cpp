@@ -377,6 +377,104 @@ void test_two_ply_details_weighted_average() {
     }
 }
 
+void test_cube_nply_multi_bounds() {
+    const Board board = make_starting_board();
+    auto pubeval = std::make_shared<PubEval>();
+
+    std::vector<CubeInfo> too_many_eq(65);
+    std::vector<float> eq_out(65, 0.0f);
+    bool threw_eq = false;
+    try {
+        cubeful_equity_nply_multi(board, too_many_eq.data(), 65, *pubeval, 1, eq_out.data());
+    } catch (const std::invalid_argument&) {
+        threw_eq = true;
+    }
+    require(threw_eq, "cubeful_equity_nply_multi must throw when n_cubes > EVAL_MAX_CCI");
+
+    std::vector<CubeInfo> too_many_cd(33);
+    std::vector<CubeDecision> cd_out(33);
+    bool threw_cd = false;
+    try {
+        cube_decision_nply_multi(board, too_many_cd.data(), 33, *pubeval, 1, cd_out.data());
+    } catch (const std::invalid_argument&) {
+        threw_cd = true;
+    }
+    require(threw_cd, "cube_decision_nply_multi must throw when n_cubes > EVAL_MAX_CCI / 2");
+}
+
+void test_dead_cube_efficiency_skip_predicates_and_eval() {
+    // Live money & live match use efficiency.
+    CubeInfo money_live{1, CubeOwner::CENTERED, {0, 0, false}, -1.0f, true, true};
+    require(cube_uses_efficiency(money_live), "live money cube uses efficiency");
+
+    CubeInfo match_live{1, CubeOwner::CENTERED, {5, 5, false}};
+    require(cube_uses_efficiency(match_live), "5a-5a centered cube uses efficiency");
+
+    // Structural cap, Crawford, DMP, match-dead, and post-Crawford auto-double skip efficiency.
+    CubeInfo capped{1, CubeOwner::CENTERED, {0, 0, false}, -1.0f, false, false, 1};
+    require(!cube_uses_efficiency(capped), "max_cube_value=1 skips efficiency");
+
+    CubeInfo crawford{1, CubeOwner::CENTERED, {3, 1, true}};
+    require(!cube_uses_efficiency(crawford), "Crawford skips efficiency");
+
+    CubeInfo dmp{1, CubeOwner::CENTERED, {1, 1, false}};
+    require(!cube_uses_efficiency(dmp), "DMP skips efficiency");
+
+    CubeInfo match_dead_centered{2, CubeOwner::CENTERED, {2, 2, false}};
+    require(!cube_uses_efficiency(match_dead_centered), "2a-2a cube=2 skips efficiency");
+
+    CubeInfo match_dead_owned{2, CubeOwner::OPPONENT, {3, 2, false}};
+    require(!cube_uses_efficiency(match_dead_owned), "3a-2a cube=2 owned by 2-away skips efficiency");
+
+    CubeInfo post_crawford{1, CubeOwner::CENTERED, {3, 1, false}};
+    require(is_post_crawford_auto_double(post_crawford), "3a-1a post-Crawford is auto-double");
+    require(!cube_uses_efficiency(post_crawford), "post-Crawford auto-double skips efficiency");
+
+    // 2-ply evaluation across dead/auto-double/override cubes stays finite and consistent.
+    const Board board = make_starting_board();
+    auto pubeval = std::make_shared<PubEval>();
+    for (const CubeInfo& ci : {crawford, dmp, match_dead_centered, match_dead_owned, post_crawford}) {
+        const float eq = cubeful_equity_nply(board, ci, *pubeval, 2);
+        require(std::isfinite(eq), "2-ply dead/auto-double match equity must be finite");
+    }
+    CubeInfo override_ci = money_live;
+    override_ci.cube_x_override = 0.0f;
+    const float eq_override_zero = cubeful_equity_nply(board, override_ci, *pubeval, 2);
+    require(std::isfinite(eq_override_zero), "2-ply cube_x_override equity must be finite");
+}
+
+void test_bearoff_concurrent_indexing(const std::string& db_path) {
+    auto db = std::make_unique<BearoffDB>();
+    require(db->load(db_path), "failed to load bearoff DB for concurrency test");
+
+    Board b{};
+    b[1] = 2; b[2] = 3; b[3] = 1;
+    b[24] = -2; b[23] = -2; b[22] = -2;
+    const auto ref = db->lookup_probs(b, false);
+
+    std::atomic<bool> ok{true};
+    std::vector<std::thread> workers;
+    for (int t = 0; t < 4; ++t) {
+        workers.emplace_back([&, t]() {
+            for (int iter = 0; iter < 500; ++iter) {
+                const unsigned int idx = static_cast<unsigned int>((t * 997 + iter * 31) % BearoffDB::N_POSITIONS);
+                int checkers[BearoffDB::POINTS];
+                BearoffDB::index_to_position(idx, checkers);
+                if (BearoffDB::position_index(checkers) != idx) {
+                    ok.store(false, std::memory_order_relaxed);
+                    return;
+                }
+                if (db->lookup_probs(b, false) != ref) {
+                    ok.store(false, std::memory_order_relaxed);
+                    return;
+                }
+            }
+        });
+    }
+    for (auto& w : workers) w.join();
+    require(ok.load(std::memory_order_relaxed), "concurrent BearoffDB indexing/lookup mismatch");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -399,6 +497,7 @@ int main(int argc, char** argv) {
     test_shared_pos_cache_abandonment_and_probing();
     if (!bearoff_path.empty()) {
         test_multipy_set_bearoff_db_detach_and_swap(bearoff_path);
+        test_bearoff_concurrent_indexing(bearoff_path);
     } else {
         throw std::runtime_error("bearoff_1sided.db not found; pass its path as argv[1]");
     }
@@ -406,7 +505,9 @@ int main(int argc, char** argv) {
     test_neural_network_inputs_above_256();
     test_budget_forwarding_and_cache_raii();
     test_two_ply_details_weighted_average();
+    test_cube_nply_multi_bounds();
+    test_dead_cube_efficiency_skip_predicates_and_eval();
 
-    std::cout << "test_native_core: all 6 test groups passed\n";
+    std::cout << "test_native_core: all 9 test groups passed\n";
     return 0;
 }

@@ -1516,11 +1516,11 @@ default `parallel_threads=0`, both stages use the budget resolved from
 | `seed` | 42 | Seed for stratified dice generation |
 | `late_ply` | -1 | Default late-game ply (-1 = same as `decision_ply`) |
 | `late_threshold` | 20 | Half-move index where late strategies activate |
-| `ultra_late_threshold` | 2 | Half-move where checker/cube drop to 1-ply |
+| `ultra_late_threshold` | 2 | Half-move where checker eval drops to 1-ply and VR thins to even moves (cube decisions are unaffected) |
 | `checker` | unset | TrialEvalConfig: checker play strategy override |
 | `checker_late` | unset | TrialEvalConfig: late-game checker play override |
-| `cube` | unset | TrialEvalConfig: cube decision strategy override |
-| `cube_late` | unset | TrialEvalConfig: late-game cube decision override |
+| `cube` | unset | TrialEvalConfig: cube decision strategy override (used throughout the trial) |
+| `cube_late` | unset | Compatibility no-op in Python/pybind bindings; cube decisions use `cube` throughout the trial |
 | `cubeful_trial_moves` | true | When true, trial-level checker moves are picked by cubeful equity (cl2cf) against the branch cube state. See §8 "Cube-Aware Selection". Set false for cubeless trial move selection. |
 | `cubeful_late_threshold` | 0 | When `cubeful_trial_moves` is on, drop to cubeless BMI at half-moves >= this value. 0 = inherit from `ultra_late_threshold`. Set lower than `ultra_late_threshold` (e.g. 12) for full rollouts to bound cube-aware work to the early game. |
 | `cancel_flag` | null | Atomic bool for rollout cancellation |
