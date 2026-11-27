@@ -16,6 +16,33 @@
 
 namespace bgbot {
 
+namespace {
+
+struct BearoffDiceRoll { int d1, d2, weight; };
+constexpr BearoffDiceRoll kBearoffRolls[21] = {
+    {1,1,1}, {2,2,1}, {3,3,1}, {4,4,1}, {5,5,1}, {6,6,1},
+    {1,2,2}, {1,3,2}, {1,4,2}, {1,5,2}, {1,6,2},
+    {2,3,2}, {2,4,2}, {2,5,2}, {2,6,2},
+    {3,4,2}, {3,5,2}, {3,6,2},
+    {4,5,2}, {4,6,2},
+    {5,6,2}
+};
+
+float one_roll_gammon_loss(const Board& board) {
+    int failing_rolls = 0;
+    std::vector<Board> moves;
+    for (const auto& roll : kBearoffRolls) {
+        possible_boards_unsorted(board, roll.d1, roll.d2, moves);
+        const bool saves = std::any_of(moves.begin(), moves.end(), [](const Board& move) {
+            return player_borne_off(move) > 0;
+        });
+        if (!saves) failing_rolls += roll.weight;
+    }
+    return failing_rolls / 36.0f;
+}
+
+} // namespace
+
 // --- Binomial coefficient table ---
 
 unsigned int BearoffDB::binom_table_[MAX_N][MAX_K] = {};
@@ -128,6 +155,19 @@ std::array<float, NUM_OUTPUTS> BearoffDB::lookup_probs(
 
     const auto& p_dist = distributions_[p_idx];
     const auto& o_dist = distributions_[o_idx];
+    const auto* player_gammon = get_gammon_distribution(p_idx);
+    const auto* opp_gammon = get_gammon_distribution(o_idx);
+
+    // With all 15 checkers left against a guaranteed next-roll finish, the
+    // side on roll can only play to save the gammon. The stored gammon
+    // distribution follows the fastest finish policy. If it already saves
+    // on all rolls, there is no need to enumerate legal plays.
+    if (!post_move && o_dist[1] == 65535 && player_gammon && (*player_gammon)[1] != 0) {
+        return {0.0f, 0.0f, 0.0f, one_roll_gammon_loss(board), 0.0f};
+    }
+    if (post_move && p_dist[1] == 65535 && opp_gammon && (*opp_gammon)[1] != 0) {
+        return {1.0f, one_roll_gammon_loss(flip(board)), 0.0f, 0.0f, 0.0f};
+    }
 
     constexpr float SCALE = 1.0f / 65535.0f;
 
@@ -160,9 +200,6 @@ std::array<float, NUM_OUTPUTS> BearoffDB::lookup_probs(
 
     float p_gammon_win = 0.0f;
     float p_gammon_loss = 0.0f;
-
-    const auto* opp_gammon = get_gammon_distribution(o_idx);
-    const auto* player_gammon = get_gammon_distribution(p_idx);
 
     if (!post_move) {
         if (opp_gammon) {
@@ -250,16 +287,6 @@ int total_checkers(const int checkers[BearoffDB::POINTS]) {
     }
     return sum;
 }
-
-struct BearoffDiceRoll { int d1, d2, weight; };
-constexpr BearoffDiceRoll kBearoffRolls[21] = {
-    {1,1,1}, {2,2,1}, {3,3,1}, {4,4,1}, {5,5,1}, {6,6,1},
-    {1,2,2}, {1,3,2}, {1,4,2}, {1,5,2}, {1,6,2},
-    {2,3,2}, {2,4,2}, {2,5,2}, {2,6,2},
-    {3,4,2}, {3,5,2}, {3,6,2},
-    {4,5,2}, {4,6,2},
-    {5,6,2}
-};
 
 } // namespace
 

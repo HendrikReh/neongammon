@@ -1,6 +1,6 @@
 # Bearoff Database
 
-One-sided bearoff database for exact evaluation of endgame positions where all
+One-sided bearoff database for evaluating endgame positions where all
 checkers are in the home board (or borne off). Covers 54,264 positions
 (C(21,6) = 15 checkers on 6 points). File: `data/bearoff_1sided.db` (~4.7 MB).
 
@@ -9,7 +9,7 @@ checkers are in the home board (or borne off). Covers 54,264 positions
 - **Bearoff distribution** (32 × uint16): P(all checkers borne off in exactly k rolls)
 - **Mean rolls** (float32): expected rolls to bear off all (for EPC)
 - **Gammon distribution** (32 × uint16, only for all-15-on-board positions):
-  P(0 checkers borne off after k rolls under optimal play)
+  P(0 checkers borne off after k rolls under the policy that minimizes mean finish time)
 
 ## Position Indexing
 
@@ -18,10 +18,14 @@ Combinatorial number system (stars-and-bars). A 6-element checker count array
 
 ## Two-Sided Probability Computation
 
-Combines two one-sided distributions for exact cubeless probabilities:
+Combines two one-sided distributions for cubeless probabilities under the stored bearoff policy:
 - `P(win) = Σ P_player[i] × (1 - CDF_opponent[i-1])` (player-on-roll advantage)
 - `P(gammon_win) = Σ P_player[i] × ZeroOff_opponent[i-1]`
 - `P(backgammon) = 0` (impossible in home-board bearoff)
+
+If the side on roll still has all 15 checkers and the other side is guaranteed to finish
+on its next roll, the lookup computes the exact gammon probability. A roll saves the
+gammon whenever any legal play bears off a checker.
 
 ## `is_bearoff` Check
 
@@ -32,7 +36,7 @@ and the opponent's checkers are only on points 19–24 (~10 comparisons, negligi
 
 Both `MultiPlyStrategy` and `RolloutStrategy` accept an optional `BearoffDB*`
 via `set_bearoff_db()`. When set:
-- **Multi-ply:** bearoff positions short-circuit recursion and return exact probabilities.
+- **Multi-ply:** cubeless evaluation of bearoff positions short-circuits recursion and returns DB probabilities.
 - **Rollout:** bearoff input positions skip all trials (SE=0); truncation uses the DB.
 
 The `BearoffStrategy` wrapper intercepts 1-ply leaf evaluations (variance reduction and
@@ -70,7 +74,7 @@ BearoffDB db;
 db.load("data/bearoff_1sided.db");
 
 if (db.is_bearoff(board)) {
-    auto probs = db.lookup_probs(board);      // exact cubeless probs
+    auto probs = db.lookup_probs(board);      // cubeless probabilities
     float epc = db.lookup_epc(board, 0);      // EPC for player on roll
 }
 

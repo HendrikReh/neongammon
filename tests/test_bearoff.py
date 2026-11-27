@@ -5,7 +5,9 @@
 import sys
 
 import bgbot_cpp
-from neongammon import BgBotAnalyzer
+import pytest
+
+from neongammon import BgBotAnalyzer, batch_cube_action, batch_cube_action_nply
 from neongammon.weights import bearoff_db_path
 
 N_POSITIONS = 54264
@@ -110,6 +112,54 @@ def test_two_sided_probabilities():
     assert -2 <= eq <= 2
 
     print("  PASS: two-sided probabilities")
+
+
+@pytest.fixture
+def one_roll_gammon_save():
+    board = [0] * 26
+    board[3], board[5], board[6] = 5, 1, 9
+    board[24] = -1
+    # The last opponent checker comes off on any roll. A legal play saves
+    # the gammon on every one of the 36 ordered rolls except double fours.
+    return board, 1 / 36
+
+
+@pytest.mark.parametrize("post_move", [False, True])
+def test_db_uses_one_roll_gammon_saving_play(one_roll_gammon_save, post_move):
+    board, gammon = one_roll_gammon_save
+    if post_move:
+        board = [-count for count in reversed(board)]
+    probs = load_db().lookup_probs(board, post_move=post_move)
+    assert probs == pytest.approx(
+        [1, gammon, 0, 0, 0] if post_move else [0, 0, 0, gammon, 0]
+    )
+
+
+@pytest.mark.parametrize("level", ["1ply", "2ply", "4ply", "truncated3"])
+def test_cube_action_reports_one_roll_gammon_loss(one_roll_gammon_save, level):
+    board, gammon = one_roll_gammon_save
+    analyzer = BgBotAnalyzer(eval_level=level, parallel_threads=1)
+    result = analyzer.cube_action(
+        board, cube_value=2, cube_owner="opponent", max_cube_value=2,
+        jacoby=False, beaver=False,
+    )
+    assert result.probs.gammon_loss == pytest.approx(gammon)
+    assert result.cubeless_equity == pytest.approx(-1 - gammon)
+    if level != "truncated3":
+        assert result.equity_nd == pytest.approx(-1 - gammon)
+
+
+@pytest.mark.parametrize(
+    ("evaluate", "level"), [(batch_cube_action, "1ply"), (batch_cube_action_nply, "2ply")]
+)
+def test_batch_cube_reports_one_roll_gammon_loss(one_roll_gammon_save, evaluate, level):
+    board, gammon = one_roll_gammon_save
+    result, = evaluate(
+        [dict(board=board, cube_value=2, cube_owner="opponent", max_cube_value=2)],
+        eval_level=level, n_threads=1, jacoby=False, beaver=False,
+    )
+    assert result.probs.gammon_loss == pytest.approx(gammon)
+    assert result.cubeless_equity == pytest.approx(-1 - gammon)
 
 
 def test_analyzer_integration():
