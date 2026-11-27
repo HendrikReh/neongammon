@@ -231,6 +231,13 @@ public:
         double* equities,
         std::array<float, NUM_OUTPUTS>* best_probs_out) const override;
 
+    BearoffLayer bearoff_layer() const override { return {db_, base_.get()}; }
+    bool supports_cube_candidate_reuse() const override {
+        return base_->supports_cube_candidate_reuse();
+    }
+    std::array<float, NUM_OUTPUTS> evaluate_pinned_probs(
+        const Board& board, bool race, int pinned) const override;
+
     const Strategy& base() const { return *base_; }
     const BearoffDB& db() const { return *db_; }
 

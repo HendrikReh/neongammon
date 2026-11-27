@@ -90,6 +90,7 @@ struct RolloutConfig {
     TrialEvalConfig checker_late;   // Late-game checker play
     TrialEvalConfig cube;           // Cube decision evaluation
     TrialEvalConfig cube_late;      // Late-game cube decisions
+    EvalOptions cube_eval_options;  // Deep prefilter for trial cube and truncation searches
 
     // Cancellation flag. When non-null and set to true, the rollout aborts
     // between trial chunks. Checked by run_trials_parallel() and

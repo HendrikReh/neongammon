@@ -411,6 +411,12 @@ std::vector<CubefulProbsAndEquity> cubeful_checker_endpoints_nply(
     int threads,
     const std::function<void()>& check_budget = {});
 
+// Tuning for the optional deep-node PubEval shortlist.
+struct EvalOptions {
+    int deep_prefilter_threshold = 16;
+    int deep_prefilter_keep = 14;
+};
+
 // Batched version: evaluate cubeful equity for the SAME board at N-ply depth
 // against MULTIPLE cube states simultaneously. Returns one equity per cube
 // state in `out`, in the same order as `cubes`.
@@ -451,7 +457,8 @@ void cubeful_equity_nply_multi(
     bool fTop = false,                       // true: caller already built ND+DT pairs
     std::array<float, NUM_OUTPUTS>* probs_out = nullptr,
     bool deep_prefilter = false,
-    const Board* root_board = nullptr);   // root routing: the decision's pre-move board
+    const Board* root_board = nullptr,   // root routing: the decision's pre-move board
+    EvalOptions options = {});
 
 // Batched cube decision: evaluate cube decisions for multiple branches that
 // share the same board.  For each input cube in `cubes`, this is exactly
@@ -471,7 +478,8 @@ void cube_decision_nply_multi(
     int n_threads = 1,
     const Strategy* move_filter = nullptr,
     bool deep_prefilter = false,
-    const std::function<void()>& check_budget = {});
+    const std::function<void()>& check_budget = {},
+    EvalOptions options = {});
 
 // Compute full cube decision at N-ply depth.
 // `board` is pre-roll from the player's perspective.

@@ -1420,7 +1420,7 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
                                                 board, cubes_in, n_cd, cf_base,
                                                 cube_cfg->ply, tmp, cube_filter,
                                                 1 /*serial*/, move_filter_.get(),
-                                                /*deep_prefilter=*/true);
+                                                /*deep_prefilter=*/true, {}, config_.cube_eval_options);
                                         } catch (...) {
                                             cdst.store(-1, std::memory_order_release);
                                             throw;
@@ -1471,7 +1471,7 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
                                     board, cubes_in, n_cd, cf_base,
                                     cube_cfg->ply, cds, cube_filter,
                                     1 /*serial*/, move_filter_.get(),
-                                    /*deep_prefilter=*/true);
+                                    /*deep_prefilter=*/true, {}, config_.cube_eval_options);
                             }
                         }
                     }
@@ -2118,7 +2118,8 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
                 board, active_cubes, n_active, cf_strat,
                 truncation_ply_, cfs, MoveFilters::TINY,
                 1 /*serial*/, move_filter_.get(),
-                false, &tree_probs, /*deep_prefilter=*/true);
+                false, &tree_probs, /*deep_prefilter=*/true, nullptr,
+                config_.cube_eval_options);
             // tree_probs are pre-roll probs in the NEXT mover's perspective;
             // invert to the last mover's POV and clamp (the convention of
             // the cubeless truncation output below).
@@ -2166,7 +2167,8 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
                 board, &dead_cube_info(), 1, cf_strat,
                 truncation_ply_, &cf_unused, MoveFilters::TINY,
                 1 /*serial*/, move_filter_.get(),
-                false, &tree_probs, /*deep_prefilter=*/true);
+                false, &tree_probs, /*deep_prefilter=*/true, nullptr,
+                config_.cube_eval_options);
             // tree_probs are pre-roll probs in the next mover's perspective;
             // invert to the last mover's POV (the convention below).
             last_mover_probs = invert_probs(tree_probs);

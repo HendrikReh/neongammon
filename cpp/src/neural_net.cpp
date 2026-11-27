@@ -3,7 +3,6 @@
 #include "bgbot/neural_net.h"
 #include "bgbot/board.h"
 #include "bgbot/encoding.h"
-#include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <random>
@@ -2693,14 +2692,9 @@ BackgameAwarePairStrategy::BackgameAwarePairStrategy(
     // 24-NN layouts): the massive net is NOT pinned, because it values the
     // non-massive positions below a massive root worse than per-node routing
     // does (measured 2026-09-05: neighbourhood ER 30.0 vs 25.9, and the
-    // massive folder no better at 2/3-ply pinned than per-node). The
-    // NEONGAMMON_NO_ROOT_ROUTING environment variable disables root routing
-    // process-wide (A/B scoring: the cube path builds its strategy inside
-    // C++, out of reach of the Python set_root_pinned control).
-    // (BGSAGE_NO_ROOT_ROUTING is the name from before the bgsage -> neongammon
-    // rename and is still honoured.)
-    if (snake_ && !std::getenv("NEONGAMMON_NO_ROOT_ROUTING") &&
-        !std::getenv("BGSAGE_NO_ROOT_ROUTING")) root_pinned_ = {22};
+    // massive folder no better at 2/3-ply pinned than per-node).
+    // Call set_root_pinned with an empty list for an unpinned comparison.
+    if (snake_) root_pinned_ = {22};
     blended_backgame_ = !phase_containment && (n == NUM_BACKGAME_PAIR_NNS_HYBRID);
     categorized_backgame_ = phase_containment || (n == NUM_BACKGAME_PAIR_NNS_CATEGORIZED);
     nns_.resize(n);
@@ -2713,6 +2707,19 @@ BackgameAwarePairStrategy::BackgameAwarePairStrategy(
                 ": " + weight_paths[i]);
         nns_[i]->ensure_transposed_weights();
     }
+}
+
+std::array<float, NUM_OUTPUTS> BackgameAwarePairStrategy::evaluate_pinned_probs(
+    const Board& board, bool race, int pinned) const
+{
+    if (pinned >= 0 && !race) return probs_with_nn(board, pinned);
+    return evaluate_probs(board, race);
+}
+
+RolloutVRNetwork BackgameAwarePairStrategy::rollout_vr_network(const Board& board) const {
+    const int index = nn_index_for(board);
+    if (index >= BLENDED_SENTINEL_BASE) return {};
+    return {nns_[index].get(), index == 0};
 }
 
 int BackgameAwarePairStrategy::root_pin_for(const Board& root) const {

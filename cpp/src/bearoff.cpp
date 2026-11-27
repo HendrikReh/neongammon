@@ -768,8 +768,8 @@ uint64_t BearoffDB::next_identity() {
 BearoffStrategy::BearoffStrategy(std::shared_ptr<Strategy> base, const BearoffDB* db)
     : base_(std::move(base)), db_(db)
 {
-    const auto* inner = dynamic_cast<const BearoffStrategy*>(base_.get());
-    wraps_same_db_ = inner && inner->db_ == db_;
+    const auto inner = base_->bearoff_layer();
+    wraps_same_db_ = inner.base && inner.db == db_;
 }
 
 uint64_t BearoffStrategy::eval_identity() const {
@@ -811,6 +811,15 @@ std::array<float, NUM_OUTPUTS> BearoffStrategy::evaluate_probs(
         return db_->lookup_probs(board, /*post_move=*/true);
     }
     return base_->evaluate_probs(board, pre_move_board);
+}
+
+std::array<float, NUM_OUTPUTS> BearoffStrategy::evaluate_pinned_probs(
+    const Board& board, bool race, int pinned) const
+{
+    if (db_->is_bearoff(board)) {
+        return db_->lookup_probs(board, /*post_move=*/true);
+    }
+    return base_->evaluate_pinned_probs(board, race, pinned);
 }
 
 int BearoffStrategy::best_move_index(const std::vector<Board>& candidates,

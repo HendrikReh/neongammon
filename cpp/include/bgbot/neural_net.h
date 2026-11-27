@@ -435,6 +435,12 @@ public:
     // evaluation engine's batched candidate kernel to group candidates by NN).
     int nn_index_for(const Board& board) const { return select_nn_idx(board); }
 
+    bool cube_candidate_probs(
+        const std::vector<Board>& candidates, const int* indices, int count,
+        const CubeSearchNode& node, std::array<float, NUM_OUTPUTS>* out,
+        int pinned) const override;
+    bool supports_cube_candidate_reuse() const override { return true; }
+
     // Raw-NN probs for a board given an NN index. Public for symmetry with
     // BackgameAwarePairStrategy so the cubeful engine's templated kernel
     // compiles against both classes (its blend-sentinel branch is dead here).
@@ -658,6 +664,12 @@ public:
     // May return the BLENDED_* sentinels (>= BLENDED_SENTINEL_BASE) on hybrid models.
     int nn_index_for(const Board& board) const { return select_nn_idx(board); }
 
+    bool cube_candidate_probs(
+        const std::vector<Board>& candidates, const int* indices, int count,
+        const CubeSearchNode& node, std::array<float, NUM_OUTPUTS>* out,
+        int pinned) const override;
+    bool supports_cube_candidate_reuse() const override { return true; }
+
     // Raw-NN probs for a board given an NN index; handles the blend sentinels
     // (21/22) by evaluating both backgame NNs and mixing by pip-ramped weight.
     // Public so the cubeful engine's batched kernel can evaluate blended
@@ -674,6 +686,9 @@ public:
     // net and 2-ply scored worse than 1-ply. Default: the snake net on the
     // 23-NN layout. An empty list disables root routing.
     int root_pin_for(const Board& root) const override;
+    std::array<float, NUM_OUTPUTS> evaluate_pinned_probs(
+        const Board& board, bool race, int pinned) const override;
+    RolloutVRNetwork rollout_vr_network(const Board& board) const override;
     void set_root_pinned(std::vector<int> nn_indices) { root_pinned_ = std::move(nn_indices); }
     const std::vector<int>& root_pinned() const { return root_pinned_; }
 

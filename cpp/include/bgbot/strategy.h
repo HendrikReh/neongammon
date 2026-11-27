@@ -16,6 +16,25 @@ namespace bgbot {
 // header only needs the type name. strategy.cpp includes cube.h for the
 // default implementations.
 struct CubeInfo;
+class Strategy;
+class BearoffDB;
+class NeuralNetwork;
+
+struct BearoffLayer {
+    const BearoffDB* db = nullptr;
+    const Strategy* base = nullptr;
+};
+
+struct CubeSearchNode {
+    const Board& board;
+    int depth;
+    uint64_t id;
+};
+
+struct RolloutVRNetwork {
+    const NeuralNetwork* network = nullptr;
+    bool pure_race = false;
+};
 
 constexpr int NUM_OUTPUTS = 5;  // P(win), P(gw), P(bw), P(gl), P(bl)
 
@@ -138,6 +157,24 @@ public:
     // -1 to let each node pick its own net. Only region-specialist nets pin
     // a tree; see BackgameAwarePairStrategy::set_root_pinned for why.
     virtual int root_pin_for(const Board& /*root*/) const { return -1; }
+    virtual std::array<float, NUM_OUTPUTS> evaluate_pinned_probs(
+        const Board& board, bool race, int /*pinned*/) const {
+        return evaluate_probs(board, race);
+    }
+
+    // A wrapper may intercept exact bearoff positions before evaluating the
+    // remaining candidates with its base strategy.
+    virtual BearoffLayer bearoff_layer() const { return {}; }
+
+    // Optional batched interior evaluation for the cube tree. The selected
+    // indices refer to both the original candidate and probability arrays.
+    virtual bool cube_candidate_probs(
+        const std::vector<Board>&, const int*, int, const CubeSearchNode&,
+        std::array<float, NUM_OUTPUTS>*, int) const { return false; }
+    virtual bool supports_cube_candidate_reuse() const { return false; }
+
+    // A single network may serve the entire 21-roll variance-reduction fan.
+    virtual RolloutVRNetwork rollout_vr_network(const Board&) const { return {}; }
 
     // Evaluate a post-move board position. Higher = better for player 1.
     // The board is from player 1's perspective.
