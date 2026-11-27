@@ -152,13 +152,6 @@ struct SharedPosCache {
         entry->state.store(STATE_READY, std::memory_order_release);
     }
 
-    void abandon(Entry* entry) {
-        if (!entry) return;
-        entry->hash = 0;
-        entry->plies = 0;
-        entry->state.store(STATE_EMPTY, std::memory_order_release);
-    }
-
     void insert(std::size_t h, int plies, const Board& board,
                 const std::array<float, NUM_OUTPUTS>& probs) {
         ensure_entries();
