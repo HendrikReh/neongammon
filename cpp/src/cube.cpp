@@ -470,27 +470,27 @@ float cl2cf_match(const std::array<float, NUM_OUTPUTS>& probs,
     return cl2cf_match_live(probs, cube, cube_x);
 }
 
-float cl2cf(const std::array<float, NUM_OUTPUTS>& probs,
-            const CubeInfo& cube, float cube_x)
+float cl2cf_raw(const std::array<float, NUM_OUTPUTS>& probs,
+                const CubeInfo& cube, float cube_x)
 {
-    // Dead cube: return cubeless equity directly (no Janowski interpolation)
     if (cube_is_dead(cube)) {
-        if (cube.is_money()) {
-            return cubeless_equity(probs);
-        }
-        // Match play: return cubeless MWC converted to equity
-        float mwc = cubeless_mwc(probs, cube.match.away1, cube.match.away2,
-                                  cube.cube_value, cube.match.is_crawford);
-        return mwc2eq(mwc, cube.match.away1, cube.match.away2,
-                      cube.cube_value, cube.match.is_crawford);
+        return cubeless_value(probs, cube);
     }
-
     if (cube.is_money()) {
         return cl2cf_money(probs, cube.owner, cube_x, cube.jacoby_active());
     }
-    // Match play: cl2cf_match returns MWC, convert to equity
-    float mwc = cl2cf_match(probs, cube, cube_x);
-    return mwc2eq(mwc, cube.match.away1, cube.match.away2,
+    return cl2cf_match(probs, cube, cube_x);
+}
+
+float cl2cf(const std::array<float, NUM_OUTPUTS>& probs,
+            const CubeInfo& cube, float cube_x)
+{
+    const float raw = cl2cf_raw(probs, cube, cube_x);
+    if (cube.is_money()) {
+        return raw;
+    }
+    // Match play: cl2cf_raw returns MWC, convert to equity
+    return mwc2eq(raw, cube.match.away1, cube.match.away2,
                   cube.cube_value, cube.match.is_crawford);
 }
 
@@ -711,22 +711,12 @@ CubeDecision cube_decision_1ply(
         return result;
     }
 
-    if (cube.is_money()) {
-        const float nd_raw = cl2cf_money(probs, cube.owner, cube_x, cube.jacoby_active());
-        CubeInfo taken = cube;
-        taken.cube_value = 2 * cube.cube_value;
-        taken.owner = CubeOwner::OPPONENT;
-        const float dt_raw = cl2cf(probs, taken, cube_x);
-        return decision_from_raw_equities(cube, nd_raw, dt_raw, /*dt_is_basis_scaled=*/false);
-    }
-
-    const float nd_m = cl2cf_match(probs, cube, cube_x);
-    CubeInfo dt_cube;
+    const float nd_raw = cl2cf_raw(probs, cube, cube_x);
+    CubeInfo dt_cube = cube;
     dt_cube.cube_value = 2 * cube.cube_value;
     dt_cube.owner = CubeOwner::OPPONENT;
-    dt_cube.match = cube.match;
-    const float dt_m = cl2cf_match(probs, dt_cube, cube_x);
-    return decision_from_raw_equities(cube, nd_m, dt_m, /*dt_is_basis_scaled=*/false);
+    const float dt_raw = cl2cf_raw(probs, dt_cube, cube_x);
+    return decision_from_raw_equities(cube, nd_raw, dt_raw, /*dt_is_basis_scaled=*/false);
 }
 
 CubeDecision cube_decision_1ply(
@@ -812,13 +802,14 @@ CubefulProbsAndEquity cubeful_probs_and_equity_nply(
     const MoveFilter& filter,
     int n_threads,
     const Strategy* move_filter,
-    const Board* root_board)
+    const Board* root_board,
+    const std::function<void()>& check_budget)
 {
     float out = 0.0f;
     std::array<float, NUM_OUTPUTS> probs{};
     cubeful_equity_nply_multi(board, &cube, 1, strategy, n_plies, &out,
                               filter, n_threads, move_filter, false, &probs,
-                              /*deep_prefilter=*/false, root_board);
+                              /*deep_prefilter=*/false, root_board, {}, check_budget);
     return {probs, out};
 }
 

@@ -36,7 +36,9 @@ void validate(const NeongammonMobileRequest& r, int operation) {
     if(operation<0 || operation>1 || r.ply<1 || r.ply>2 || r.cube_owner<0 || r.cube_owner>2 ||
        r.cube_value<1 || r.cube_value>32768 || (r.cube_value & (r.cube_value-1)) ||
        r.away1<0 || r.away2<0 ||
-       ((r.away1==0)!=(r.away2==0)) || r.budget_ms<1 || r.budget_ms>1000 ||
+       ((r.away1==0)!=(r.away2==0)) ||
+       (r.is_crawford!=0 && (r.cube_value!=1 || ((r.away1==1)==(r.away2==1)))) ||
+       r.budget_ms<1 || r.budget_ms>1000 ||
        (operation==0 && (r.die1<1 || r.die1>6 || r.die2<1 || r.die2>6)))
         throw std::invalid_argument("unsupported request");
     int player=r.board[25], opponent=r.board[0];

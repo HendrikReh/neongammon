@@ -133,6 +133,12 @@ def main():
         assert not lib.neongammon_mobile_analyze(handle, 0, C.byref(request))
         request.ply = 1; request.board[1] = 500
         assert not lib.neongammon_mobile_analyze(handle, 0, C.byref(request))
+        # Reject impossible Crawford configurations (money, neither 1-away, DMP, cube > 1).
+        for away1, away2, cube_value in ((0, 0, 1), (5, 5, 1), (1, 1, 1), (1, 3, 2)):
+            bad_crawford = Request((C.c_int * 26)(*STARTING_BOARD), 3, 1, 1, cube_value, 0,
+                                   away1, away2, 1, 0, 0, 1000)
+            assert not lib.neongammon_mobile_analyze(handle, 1, C.byref(bad_crawford)), (away1, away2, cube_value)
+            assert lib.neongammon_mobile_last_error() == b"unsupported request"
     finally:
         lib.neongammon_mobile_destroy(handle)
     print(json.dumps({"cases": cases, "max_absolute_error": max_error, "max_native_ms": max(timings),

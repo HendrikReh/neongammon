@@ -12,6 +12,7 @@ import random
 from typing import Callable
 
 from ._primitives import (
+    MAX_MATCH_LENGTH,
     flip_owner as _flip_owner_name,
     resolve_owner as _resolve_owner_name,
     validate_board,
@@ -56,7 +57,7 @@ class GameConfig:
     def __post_init__(self):
         _integer('player_on_roll', self.player_on_roll, 1, 2)
         _integer('max_turns', self.max_turns, 1, 10000)
-        _integer('match_length', self.match_length, 0, 99)
+        _integer('match_length', self.match_length, 0, MAX_MATCH_LENGTH)
         _integer('cube_value', self.cube_value, 1, 1024)
         _integer('max_cube_value', self.max_cube_value, 2, 1024)
         for name in ('cube_value', 'max_cube_value'):
@@ -216,7 +217,7 @@ def simulate_match(*, match_length: int = 5, seed: int = 42, players=None,
     target; ``points_awarded`` records the actual score increment separately.
     Games have derived seeds; each can be replayed independently.
     """
-    _integer('match_length', match_length, 1, 99)
+    _integer('match_length', match_length, 1, MAX_MATCH_LENGTH)
     _integer('seed', seed, 0, 2147483647)
     _integer('max_total_turns', max_total_turns, 1, 100000)
     # Validate limits before allocating/loading analyzers.

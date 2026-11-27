@@ -376,8 +376,16 @@ class TestDetailsAcrossCubeStates(unittest.TestCase):
 
     # A snake: the 24-NN layout pins every contact node of its tree to NN 22.
     SNAKE = [0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 2, 3, 3, 2, 2, 1, -7, -7, 0]
+    # A race where the opponent is ahead enough to double/take (on ND) and
+    # redouble/take (on DT) after player rolls such as 5-5 at 5a/5a cv=1.
+    OPP_REDOUBLE_RACE = [
+        0, 0, 0, 0, 0, 3, 4, 3, 3, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, -4, -4, -3, -2, 0, 0, 0,
+    ]
     CASES = [
         (BOARD, dict(cube_value=1, cube_owner="centered", away1=5, away2=3)),
+        (BOARD, dict(cube_value=1, cube_owner="centered", away1=5, away2=5)),
+        (OPP_REDOUBLE_RACE, dict(cube_value=1, cube_owner="centered", away1=5, away2=5)),
         (BOARD, dict(cube_value=2, cube_owner="player", away1=7, away2=4)),
         (BOARD, dict(cube_value=1, cube_owner="centered", away1=1, away2=4, is_crawford=True)),
         (BOARD, dict(cube_value=2, cube_owner="opponent")),
@@ -394,14 +402,28 @@ class TestDetailsAcrossCubeStates(unittest.TestCase):
                 for field in ("equity_nd", "equity_dt", "equity_dp", "optimal_action"):
                     self.assertEqual(getattr(detailed, field), getattr(plain, field),
                                      f"{label}: {field}")
-                for section, headline in (("nd", detailed.equity_nd), ("dt", None)):
+                for section, headline in (("nd", detailed.equity_nd), ("dt", detailed.equity_dt)):
                     rolls = detailed.details[section]
                     self.assertEqual(len(rolls), 21, label)
-                    if headline is None:
-                        continue   # equity_dt may carry the beaver
                     avg = sum(r["cubeful_equity"] * (1 if r["die1"] == r["die2"] else 2)
                               for r in rolls) / 36.0
-                    self.assertAlmostEqual(avg, headline, places=4, msg=label)
+                    # Under a money beaver, headline equity_dt is doubled relative
+                    # to the pre-beaver DT roll values.
+                    expected = headline / 2.0 if (section == "dt" and detailed.is_beaver) else headline
+                    self.assertAlmostEqual(avg, expected, places=4, msg=f"{label} {section}")
+                    if n_plies >= 3:
+                        for pr in rolls:
+                            opp_rolls = pr.get("opponent_rolls")
+                            if not opp_rolls:
+                                continue
+                            opp_avg = sum(
+                                o["cubeful_equity"] * (1 if o["die1"] == o["die2"] else 2)
+                                for o in opp_rolls
+                            ) / 36.0
+                            self.assertAlmostEqual(
+                                opp_avg, pr["cubeful_equity"], places=4,
+                                msg=f"{label} {section} roll {pr['die1']}-{pr['die2']}",
+                            )
                 for nd, dt in zip(detailed.details["nd"], detailed.details["dt"]):
                     self.assertEqual(nd["checkers"], dt["checkers"], label)
                     assert_legal(self, board, nd["die1"], nd["die2"], nd["checkers"], label)

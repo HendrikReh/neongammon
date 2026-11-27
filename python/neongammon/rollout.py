@@ -6,15 +6,17 @@ from __future__ import annotations
 
 import threading
 
-import bgbot_cpp
-
+from ._native import load_native
 from ._primitives import cubeless_equity
+from .runtime import _notify_thread_budget
 from .strategies import (
     _CubelessBase,
     _cube_limit_kwargs,
     _default_parallel_threads,
     resolve_owner,
 )
+
+bgbot_cpp = load_native()
 
 
 class RolloutCancelled(Exception):
@@ -45,6 +47,9 @@ def _rollout_eval_candidate(
     """
     rollout_analyzer._check_cancel()
     use_cubeful = owner is not None
+    _notify_thread_budget(
+        "rollout_evaluate", rollout_analyzer._parallel_threads, cubeful=use_cubeful,
+    )
     try:
         if use_cubeful:
             r = rollout_analyzer._rollout_strategy.cubeful_evaluate_board(
@@ -351,6 +356,9 @@ class _RolloutAnalyzer(_CubelessBase):
                 progress_callback(completed_trials, total_trials, [])
 
         try:
+            _notify_thread_budget(
+                "rollout_cube_decision", self._parallel_threads, cubeful=True,
+            )
             r = self._rollout_strategy.cube_decision(
                 board, cube_value, owner,
                 away1=away1, away2=away2, is_crawford=is_crawford,

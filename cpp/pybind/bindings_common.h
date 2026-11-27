@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
@@ -18,6 +19,19 @@
 
 namespace bgbot::python {
 namespace py = pybind11;
+
+constexpr int kAbiVersion = 1;
+
+template <typename T>
+using CArray = py::array_t<T, py::array::c_style | py::array::forcecast>;
+
+template <typename T>
+const std::shared_ptr<T>& require_non_null(const std::shared_ptr<T>& ptr, const char* name) {
+    if (!ptr) {
+        throw std::invalid_argument(std::string(name) + " must not be None");
+    }
+    return ptr;
+}
 
 void bind_core(py::module_& module);
 void bind_eval(py::module_& module);

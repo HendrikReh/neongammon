@@ -298,8 +298,18 @@ std::array<float, NN_OUTPUTS> NeuralNetwork::forward(const float* inputs) const 
 
     // Collect non-zero inputs into compact arrays to avoid branch mispredictions
     // and enable multi-input processing (fewer passes over hiddens array).
-    int nz_idx[256];  // max 244 inputs
-    float nz_val[256];
+    int nz_idx_stack[256];  // stack fast path covers all standard encoders (<= 244 inputs)
+    float nz_val_stack[256];
+    std::vector<int> nz_idx_heap;
+    std::vector<float> nz_val_heap;
+    int* nz_idx = nz_idx_stack;
+    float* nz_val = nz_val_stack;
+    if (ni > 256) {
+        nz_idx_heap.resize(ni);
+        nz_val_heap.resize(ni);
+        nz_idx = nz_idx_heap.data();
+        nz_val = nz_val_heap.data();
+    }
     int n_nz = 0;
     for (int i = 0; i < ni; ++i) {
         if (inputs[i] != 0.0f) {
@@ -496,14 +506,25 @@ void NeuralNetwork::forward_batch(
         hiddens = hiddens_heap.data();
     }
 
+    int nz_idx_stack[256];
+    float nz_val_stack[256];
+    std::vector<int> nz_idx_heap;
+    std::vector<float> nz_val_heap;
+    int* nz_idx = nz_idx_stack;
+    float* nz_val = nz_val_stack;
+    if (ni > 256) {
+        nz_idx_heap.resize(ni);
+        nz_val_heap.resize(ni);
+        nz_idx = nz_idx_heap.data();
+        nz_val = nz_val_heap.data();
+    }
+
     for (int b = 0; b < count; ++b) {
         const float* inputs = inputs_array + b * ni;
 
         std::memcpy(hiddens, hidden_biases_.data(), nh * sizeof(float));
 
         // Collect non-zero inputs
-        int nz_idx[256];
-        float nz_val[256];
         int n_nz = 0;
         for (int i = 0; i < ni; ++i) {
             if (inputs[i] != 0.0f) {
@@ -2681,7 +2702,9 @@ std::array<float, NN_OUTPUTS> RoutedStrategy::evaluate_probs(
 
 int RoutedStrategy::best_move_index(const std::vector<Board>& candidates,
                                                 bool pre_move_is_race) const {
-    int nn_idx = pre_move_is_race ? 0 : 6;  // fallback: purerace or att_att
+    int nn_idx = pre_move_is_race
+        ? 0
+        : routing_.contact_pairs[game_plan_pair_index(GamePlan::ATTACKING, GamePlan::ATTACKING)];
     const int n = static_cast<int>(candidates.size());
     if (n == 1) return 0;
 
@@ -2766,6 +2789,14 @@ int RoutedStrategy::score_candidate_batch(
         return std::tuple{network, index == 0,
                           [this, index](const Board& board) { return probs_with_nn(board, index); }};
     });
+}
+
+bool accelerate_enabled() noexcept {
+#if defined(BGBOT_USE_ACCELERATE)
+    return true;
+#else
+    return false;
+#endif
 }
 
 } // namespace bgbot

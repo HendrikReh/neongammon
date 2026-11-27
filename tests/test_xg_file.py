@@ -21,8 +21,11 @@ _XG_DIR = _ROOT / "data" / "money_benchmark" / "xg"
 _STAGE1 = _ROOT / "data" / "money_benchmark" / "build" / "stage1"
 _SAMPLE = _XG_DIR / "seed_1_pp.xg"
 
-pytestmark = pytest.mark.skipif(not _SAMPLE.exists(),
-                                reason="money benchmark XG data not present")
+pytestmark = [
+    pytest.mark.external_data,
+    pytest.mark.skipif(not _SAMPLE.exists(),
+                       reason="money benchmark XG data not present"),
+]
 
 
 def test_archive_roundtrip_unmodified(tmp_path):

@@ -289,6 +289,7 @@ void bind_rollout(py::module_& m) {
                                            bool beaver,
                                            int max_cube_value,
                                            py::object progress_callback) {
+            validate_met_away_scores(away1, away2);
             auto b = list_to_board(board_vec);
             CubeInfo ci{cube_value, owner, {away1, away2, is_crawford},
                         cube_x_override, jacoby, beaver, max_cube_value};
@@ -339,6 +340,7 @@ void bind_rollout(py::module_& m) {
                                   bool beaver,
                                   int max_cube_value,
                                   py::object progress_callback) {
+            validate_met_away_scores(away1, away2);
             Board board = list_to_board(checkers);
             bool race = is_race(board);
             CubeInfo ci{cube_value, owner, {away1, away2, is_crawford},
@@ -489,6 +491,7 @@ void bind_rollout(py::module_& m) {
     m.def("score_benchmarks_rollout", [](const ScenarioSet& ss,
                                           std::shared_ptr<RolloutStrategy> strat,
                                           int n_threads) {
+        require_non_null(strat, "strategy");
         py::gil_scoped_release release;
         return score_benchmarks(*strat, ss.scenarios, n_threads);
     }, "Score benchmarks using rollout strategy",
@@ -500,7 +503,8 @@ void bind_rollout(py::module_& m) {
         strat.set_bearoff_db(db);
     }, py::call_guard<py::gil_scoped_release>(),
        "Set bearoff DB on a RolloutStrategy for exact bearoff evaluation",
-       py::arg("strategy"), py::arg("db"));
+       py::arg("strategy"), py::arg("db"),
+       py::keep_alive<1, 2>());
 
     // --- Pair strategy rollout creation ---
     m.def("create_rollout_pair", [](const std::vector<std::string>& weight_paths,
@@ -557,7 +561,7 @@ void bind_rollout(py::module_& m) {
                                          int cubeful_late_threshold,
                                          double target_se,
                                          int max_batches, int truncation_ply) {
-        if (!base) throw std::invalid_argument("base strategy is None");
+        require_non_null(base, "base");
         py::gil_scoped_release release;
         auto rc = make_rollout_config(
             n_trials, truncation_depth, decision_ply,
@@ -637,6 +641,7 @@ void bind_cube_rollout(py::module_& m) {
                                        py::object progress_callback,
                                        double target_se,
                                        int max_batches) {
+        validate_met_away_scores(away1, away2);
         Board board = list_to_board(checkers);
         bool race = is_race(board);
 

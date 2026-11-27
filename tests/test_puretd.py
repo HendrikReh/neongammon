@@ -39,6 +39,7 @@ def test_puretd_root_filter_requires_lookahead(tmp_path):
         ng.PureTDPolicy(tmp_path / "library", tmp_path / "model", root_filter=0.075)
 
 
+@pytest.mark.puretd
 def test_puretd_uses_native_root_filter_and_delegates_cube(puretd):
     board = [
         0, 0, -2, 4, 2, 0, 3, 2, 2, 0, 0, 0, 0,
@@ -62,6 +63,7 @@ def test_puretd_uses_native_root_filter_and_delegates_cube(puretd):
                 == puretd.analysis.cube_decision(board, **context).should_take)
 
 
+@pytest.mark.puretd
 def test_opt_in_money_policy_uses_filtered_puretd(puretd, monkeypatch):
     library = os.environ["NEONGAMMON_TEST_PURETD_LIBRARY"]
     model = os.environ["NEONGAMMON_TEST_PURETD_MODEL"]
@@ -104,6 +106,7 @@ def test_default_players_never_probe_puretd(monkeypatch, config):
     assert ng.simulate_game(config=config) == ng.simulate_game(config=config, players=(stage, stage))
 
 
+@pytest.mark.puretd
 def test_puretd_one_reply_changes_checker_play_and_delegates_cube(puretd):
     board = [
         0, 0, 0, 0, 0, 0, 5, -2, 3, 0, 0, 0, -3,
@@ -126,6 +129,7 @@ def test_puretd_one_reply_changes_checker_play_and_delegates_cube(puretd):
         )
 
 
+@pytest.mark.puretd
 def test_puretd_chooses_9_and_10_on_opening_43(puretd):
     board = puretd.select_checker_move(ng.STARTING_BOARD, 4, 3)
     assert board == [
@@ -137,6 +141,7 @@ def test_puretd_chooses_9_and_10_on_opening_43(puretd):
     ).moves[0].board
 
 
+@pytest.mark.puretd
 def test_puretd_uses_stage11_outside_supported_cube_rules(puretd):
     board = ng.STARTING_BOARD
     for context in (
@@ -149,6 +154,7 @@ def test_puretd_uses_stage11_outside_supported_cube_rules(puretd):
         assert puretd.select_checker_move(board, 4, 3, **context) == expected.moves[0].board
 
 
+@pytest.mark.puretd
 def test_puretd_accepts_a_forced_pass(puretd):
     board = [0] * 26
     board[25] = 1
@@ -156,6 +162,7 @@ def test_puretd_accepts_a_forced_pass(puretd):
     assert puretd.select_checker_move(board, 6, 1) == board
 
 
+@pytest.mark.puretd
 def test_puretd_rejects_invalid_board_before_native_evaluation(puretd):
     board = ng.STARTING_BOARD.copy()
     board[25] = 16

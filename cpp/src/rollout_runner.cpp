@@ -161,10 +161,11 @@ RolloutStrategy::CubefulRolloutResult RolloutStrategy::cubeful_cube_decision_imp
     const bool uses_move1_cache =
         (config_.truncation_depth == 0) || (config_.truncation_depth > 1);
 
+    const bool cube_active = !cube_is_dead(nd_template.cube) || !cube_is_dead(dt_template.cube);
     std::array<CubeInfo, 2> select_cubes_for_cache{nd_template.cube, dt_template.cube};
     const CubeInfo* select_cubes_ptr = nullptr;
     int n_select_cubes = 0;
-    if (config_.cubeful_trial_moves) {
+    if (config_.cubeful_trial_moves && cube_active) {
         select_cubes_ptr = select_cubes_for_cache.data();
         n_select_cubes = 2;
     }

@@ -166,8 +166,14 @@ def test_normalize_cube_context_validates_limit_and_disables_money_rules_in_matc
     assert prim._normalize_cube_context(2, 0, 0, True, True, 4) == (True, True)
     assert prim._normalize_cube_context(2, 0, 0, False, True, 0) == (False, True)
     assert prim._normalize_cube_context(2, 5, 3, True, True, 4) == (False, False)
-    assert prim._normalize_cube_context(1, 0, 1, True, True, 0) == (False, False)
+    assert prim._normalize_cube_context(1, 1, 1, True, True, 0) == (False, False)
 
+    for bad_a1, bad_a2 in ((0, 1), (1, 0), (-1, 5), (5, -1), (-1, -2), (26, 5), (True, 5)):
+        with pytest.raises(ValueError, match="away"):
+            prim._normalize_cube_context(1, bad_a1, bad_a2, True, True, 0)
+    for bad_cv in (0, -1, 3, True, "2"):
+        with pytest.raises(ValueError, match="cube_value"):
+            prim._normalize_cube_context(bad_cv, 0, 0, True, True, 0)
     for bad_max in (-2, 1, 3, True, "4"):
         with pytest.raises(ValueError, match="max_cube_value"):
             prim._normalize_cube_context(1, 0, 0, True, True, bad_max)
@@ -248,11 +254,17 @@ class NativeRolloutCancelled(Exception):
     pass
 
 stub = types.ModuleType("bgbot_cpp")
+stub.ABI_VERSION = 1
+stub.ACCELERATE_ENABLED = False
 stub.CubeOwner = CubeOwner
 stub.RolloutCancelled = NativeRolloutCancelled
+stub.RoutingManifest = object
 stub.MONEY_CONTACT_CUBE_LIFE = {1: 0.72, 2: 0.75}
 stub.MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE = {1: 0.001, 2: 0.001}
 stub.CUBEFUL_FILTERED_PLIES = [2]
+stub._get_met_after = lambda a1, a2: 0.5
+stub._validate_met_away_scores = lambda a1, a2: None
+stub._validate_batch_move_filter = lambda *a, **kw: None
 stub.can_double_match = lambda a1, a2, cv, owner, crawford, cap=0: (
     not crawford and owner != CubeOwner.OPPONENT and (cap == 0 or cv < cap)
 )

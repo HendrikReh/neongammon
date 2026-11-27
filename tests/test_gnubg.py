@@ -18,6 +18,8 @@ import shutil
 import time
 import unittest
 
+import pytest
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_dir = os.path.dirname(script_dir)  # the neongammon repo root
 
@@ -51,6 +53,7 @@ def flip_board(checkers):
     return flipped
 
 
+@pytest.mark.gnubg
 @unittest.skipUnless(_GNUBG_FOUND, _NO_GNUBG)
 class TestGnubgEndgame(unittest.TestCase):
     """Test simple endgame positions where the answer is known exactly.
@@ -151,6 +154,7 @@ class TestGnubgEndgame(unittest.TestCase):
         self.assertAlmostEqual(result['equity'], eq, places=3)
 
 
+@pytest.mark.gnubg
 @unittest.skipUnless(_GNUBG_FOUND, _NO_GNUBG)
 class TestGnubgVsStage4(unittest.TestCase):
     """Compare gnubg 2-ply with Stage 4 2-ply on top-100 worst 0-ply positions."""
@@ -887,6 +891,7 @@ class TestGnubgParsers(unittest.TestCase):
         self.assertAlmostEqual(res.probs.win, 0.255, places=4)
 
 
+@pytest.mark.gnubg
 @unittest.skipUnless(_GNUBG_FOUND, _NO_GNUBG)
 class TestGnuBgAnalyzerLive(unittest.TestCase):
     """Live GNUbg integration tests covering score/owner symmetry, opponent

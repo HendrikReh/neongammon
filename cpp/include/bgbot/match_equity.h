@@ -11,7 +11,7 @@ enum class CubeOwner;
 
 constexpr int MAX_MATCH_LENGTH = 25;
 
-// Reject scores above the MET range. Terminal outcome scores may be nonpositive.
+// Enforce (away1 == 0 && away2 == 0) for money play or both in [1, MAX_MATCH_LENGTH].
 void validate_met_away_scores(int away1, int away2);
 
 // Match state from the perspective of the player on roll.

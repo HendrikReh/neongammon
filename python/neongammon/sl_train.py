@@ -29,7 +29,7 @@ import time
 
 import numpy as np
 
-import bgbot_cpp
+from ._native import load_native
 
 NUM_OUTPUTS = 5
 _EVAL_EVERY = 16  # MLX steps between forced evaluations (bounds the lazy graph)
@@ -135,6 +135,7 @@ def _initial_weights(weights_path: str, n_hidden: int, n_inputs: int, seed: int)
                 f"expected {n_hidden}h x {n_inputs}")
         return w
     # Random init: NeuralNetwork(nh, ni, eps=0.1, seed), as the C++ trainers use.
+    bgbot_cpp = load_native()
     nn = bgbot_cpp.NeuralNetwork(n_hidden, n_inputs, 0.1, seed)
     return _unpack_layers(*nn._get_weights())
 
@@ -220,6 +221,7 @@ def _mlx_supervised_train(inputs, targets, weights_path, n_hidden, n_inputs, alp
         weights = host_weights() if scenarios is not None or checkpoint else None
         score = -1.0
         if scenarios is not None:
+            bgbot_cpp = load_native()
             score = bgbot_cpp._score_benchmarks_nn_arrays(scenarios, *_pack_layers(*weights)).score()
             scores.append(score)
 
@@ -278,6 +280,7 @@ def supervised_train(boards, targets, weights_path="", n_hidden=120, n_inputs=19
     boards = np.ascontiguousarray(boards, dtype=np.int32)
     if boards.ndim != 2 or boards.shape[1] != 26:
         raise RuntimeError("boards must be shape [N, 26]")
+    bgbot_cpp = load_native()
     inputs = bgbot_cpp.encode_boards_batch(boards, n_inputs)
     msg = (f"Pre-encoded {len(boards)} positions ({n_inputs} inputs each)  hidden={n_hidden}"
            f"  alpha={alpha}  batch={batch_size}  seed={seed}")

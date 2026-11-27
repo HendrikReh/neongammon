@@ -240,8 +240,8 @@ void bind_training(py::module_& m) {
        py::arg("contact_benchmark") = std::shared_ptr<ScenarioSet>(nullptr));
 
     // --- Supervised Learning ---
-    m.def("supervised_train", [](py::array_t<int32_t> boards_np,
-                                  py::array_t<float> targets_np,
+    m.def("supervised_train", [](CArray<int32_t> boards_np,
+                                  CArray<float> targets_np,
                                   const std::string& weights_path,
                                   int n_hidden,
                                   int n_inputs,
@@ -252,6 +252,10 @@ void bind_training(py::module_& m) {
                                   int print_interval,
                                   const std::string& save_path,
                                   std::shared_ptr<ScenarioSet> benchmark_ss) {
+        if (n_inputs < 1 || n_inputs > EXTENDED_CONTACT_INPUTS) {
+            throw std::invalid_argument(
+                "n_inputs must be between 1 and " + std::to_string(EXTENDED_CONTACT_INPUTS));
+        }
         // Validate input shapes
         auto boards_info = boards_np.request();
         auto targets_info = targets_np.request();
@@ -284,12 +288,12 @@ void bind_training(py::module_& m) {
             for (int j = 0; j < 26; ++j) {
                 b[j] = boards_ptr[i * 26 + j];
             }
-            if (n_inputs == EXTENDED_CONTACT_INPUTS) {
-                auto inp = compute_extended_contact_inputs(b);
-                std::copy(inp.begin(), inp.end(), &all_inputs[i * n_inputs]);
-            } else {
+            if (n_inputs == TESAURO_INPUTS) {
                 auto inp = compute_tesauro_inputs(b);
                 std::copy(inp.begin(), inp.end(), &all_inputs[i * n_inputs]);
+            } else {
+                auto inp = compute_extended_contact_inputs(b);
+                std::copy(inp.data(), inp.data() + n_inputs, &all_inputs[i * n_inputs]);
             }
         }
 

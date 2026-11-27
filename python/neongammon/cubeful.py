@@ -8,9 +8,11 @@ from __future__ import annotations
 # to verify that cubeful checker play spawns zero Python thread pools.
 from concurrent.futures import ThreadPoolExecutor  # noqa: F401
 
-import bgbot_cpp
-
+from ._native import load_native
 from .rollout import _RolloutAnalyzer, _rollout_eval_candidate
+from .runtime import _notify_thread_budget
+
+bgbot_cpp = load_native()
 from .strategies import (
     _FLIP_OWNER,
     _CubelessBase,
@@ -81,6 +83,9 @@ class _CubefulAnalyzer:
         opp_owner = _FLIP_OWNER[owner]
         db = getattr(self._inner, '_bearoff_db', None)
         n_threads = getattr(self._inner, '_parallel_threads', 1)
+        _notify_thread_budget(
+            "cubeful_equity_nply", n_threads or 1, plies=ply, cubeful=True,
+        )
         if is_match:
             opp_eq = bgbot_cpp.cubeful_equity_nply(
                 opp_pre_roll, opp_owner,
@@ -132,6 +137,10 @@ class _CubefulAnalyzer:
         """
         inner = self._inner
         ply = self._cubeful_ply
+        n_threads = getattr(inner, "_parallel_threads", 1) or 1
+        _notify_thread_budget(
+            "checker_play_nply", n_threads, plies=ply, cubeful=True,
+        )
         moves = bgbot_cpp.checker_play_nply(
             list(board), die1, die2, inner._strategy_1ply, inner._strategy_nply,
             cube_value=cube_value, cube_owner=owner,
@@ -146,7 +155,7 @@ class _CubefulAnalyzer:
             contact_x_nply=_contact_cube_life(ply, away1, away2),
             contact_x_pip_slope_nply=_contact_cube_slope(ply, away1, away2),
             cubeful_filtered_plies=sorted(CUBEFUL_FILTERED_PLIES),
-            n_threads=getattr(inner, "_parallel_threads", 1) or 1,
+            n_threads=n_threads,
         )
         for m in moves:
             m["probs"] = list(m["probs"])
@@ -178,6 +187,7 @@ class _CubefulAnalyzer:
             pos["is_crawford"] = is_crawford
         if max_cube_value:
             pos["max_cube_value"] = max_cube_value
+        _notify_thread_budget("checker_play_1ply", 1, plies=1, cubeful=True)
         moves = bgbot_cpp.batch_checker_play(
             [pos], inner._strategy_1ply,
             n_threads=1,

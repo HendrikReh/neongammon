@@ -46,6 +46,9 @@ dev = [
     "tomli; python_version < '3.11'",
 ]
 
+[project.scripts]
+neongammon = "neongammon.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/HendrikReh/neongammon"
 Repository = "https://github.com/HendrikReh/neongammon"
@@ -132,3 +135,11 @@ tests/test_move_dice.py::test_high_branching_1_1_moves_above_2048_exact_parity""
 [tool.cibuildwheel.macos]
 # Apple Silicon only (NEON + Accelerate).
 archs = ["arm64"]
+
+[tool.pytest.ini_options]
+markers = [
+    "external_data: tests requiring untracked local XG archives or templates",
+    "gnubg: tests requiring an external GNU Backgammon binary",
+    "puretd: tests requiring an external PureTD library and checkpoint",
+    "mlx: tests requiring Apple MLX and Metal GPU execution",
+]

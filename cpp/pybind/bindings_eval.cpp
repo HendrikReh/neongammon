@@ -163,9 +163,9 @@ CheckerPosition checker_position_from_dict(const py::dict& inp) {
     validate_die(p.die2);
     p.cube_value = inp["cube_value"].cast<int>();
     p.owner = inp["cube_owner"].cast<CubeOwner>();
-    if (inp.contains("away1")) {
-        p.match.away1 = inp["away1"].cast<int>();
-        p.match.away2 = inp["away2"].cast<int>();
+    if (inp.contains("away1") || inp.contains("away2")) {
+        p.match.away1 = inp.contains("away1") ? inp["away1"].cast<int>() : 0;
+        p.match.away2 = inp.contains("away2") ? inp["away2"].cast<int>() : 0;
         validate_met_away_scores(p.match.away1, p.match.away2);
         if (inp.contains("is_crawford"))
             p.match.is_crawford = inp["is_crawford"].cast<bool>();
@@ -229,7 +229,7 @@ py::list batch_checker_play_nply(
         float contact_x_nply,
         float contact_x_pip_slope_nply,
         const std::vector<int>& filtered_plies) {
-    if (!strategy_nply) throw std::invalid_argument("strategy_nply is None");
+    require_non_null(strategy_nply, "strategy_nply");
     const int plies = strategy_nply->n_plies();
     const bool filtered_root = checker_root_is_filtered(plies, filtered_plies);
     validate_batch_move_filter(plies, filter_max_moves, filter_threshold, filtered_root);
@@ -278,6 +278,7 @@ py::list batch_evaluate_positions_impl(
         int cube_value;
         CubeOwner owner;
         MatchInfo match;
+        int max_cube_value = 0;
     };
     const int n = static_cast<int>(py::len(positions));
     if (n == 0) return py::list();
@@ -293,6 +294,9 @@ py::list batch_evaluate_positions_impl(
             inputs[i].match.away2 = pos[4].cast<int>();
             validate_met_away_scores(inputs[i].match.away1, inputs[i].match.away2);
             inputs[i].match.is_crawford = pos[5].cast<bool>();
+            if (py::len(pos) >= 7) {
+                inputs[i].max_cube_value = pos[6].cast<int>();
+            }
         }
     }
 
@@ -323,7 +327,7 @@ py::list batch_evaluate_positions_impl(
             auto [_pp, _op] = pip_counts(inp.board);
             CubeInfo ci{inp.cube_value, inp.owner, inp.match, -1.0f,
                         money && jacoby, money && beaver,
-                        0, money ? contact_x : -1.0f,
+                        inp.max_cube_value, money ? contact_x : -1.0f,
                         money ? contact_x_pip_slope : 0.0f};
             float x = resolve_cube_x(out.probs, ci, race, _pp, _op);
             out.cubeful_equity = cl2cf(out.probs, ci, x);
@@ -510,6 +514,7 @@ void bind_eval(py::module_& m) {
 
     m.def("can_double_match", [](int away1, int away2, int cube_value,
                                   CubeOwner owner, bool is_crawford, int max_cube_value) {
+        validate_met_away_scores(away1, away2);
         CubeInfo cube{cube_value, owner, {away1, away2, is_crawford}};
         cube.max_cube_value = max_cube_value;
         return can_double(cube);
@@ -547,6 +552,7 @@ void bind_eval(py::module_& m) {
     m.def("cl2cf", [](const std::array<float, NUM_OUTPUTS>& probs,
                        int cube_value, CubeOwner owner, float cube_x,
                        int away1, int away2, bool is_crawford, bool jacoby) {
+        validate_met_away_scores(away1, away2);
         CubeInfo ci{cube_value, owner, {away1, away2, is_crawford}, -1.0f, jacoby};
         return cl2cf(probs, ci, cube_x);
     }, "Cubeless-to-cubeful conversion (money or match). Returns cubeful equity.",
@@ -612,6 +618,7 @@ void bind_eval(py::module_& m) {
                                     int cube_value, CubeOwner owner, float cube_x,
                                     int away1, int away2, bool is_crawford,
                                     bool jacoby) {
+        validate_met_away_scores(away1, away2);
         CubeInfo ci{cube_value, owner, {away1, away2, is_crawford}, -1.0f, jacoby};
         return cube_decision_1ply(probs, ci, cube_x);
     }, "Compute 1-ply cube decision from cubeless pre-roll probs (Janowski).\n"
@@ -638,6 +645,7 @@ void bind_eval(py::module_& m) {
                                         float cube_x_override, bool jacoby,
                                         bool beaver, int max_cube_value,
                                         const BearoffDB* bearoff_db) {
+        validate_met_away_scores(away1, away2);
         Board board = list_to_board(checkers);
         auto gps = std::make_shared<GamePlanStrategy>(
             purerace_w, racing_w, attacking_w, priming_w, anchoring_w,
@@ -729,6 +737,7 @@ void bind_eval(py::module_& m) {
             throw std::invalid_argument(
                 "incl_2ply_details requires n_plies >= 2 (analysis depth not deep enough)");
         }
+        validate_met_away_scores(away1, away2);
 
         Board board = list_to_board(checkers);
         auto gps = std::make_shared<GamePlanStrategy>(
@@ -823,6 +832,7 @@ void bind_eval(py::module_& m) {
             bool beaver,
             float contact_x,
             float contact_x_pip_slope) {
+        require_non_null(strategy, "strategy");
         return batch_evaluate_positions_impl(
             positions, *strategy, strategy.get(), n_threads,
             jacoby, beaver, contact_x, contact_x_pip_slope);
@@ -873,6 +883,7 @@ void bind_eval(py::module_& m) {
             bool jacoby,
             float contact_x,
             float contact_x_pip_slope) {
+        require_non_null(strategy, "strategy");
         return batch_evaluate_post_move_impl(
             positions, *strategy, strategy.get(), n_threads,
             jacoby, contact_x, contact_x_pip_slope);
@@ -954,6 +965,7 @@ void bind_eval(py::module_& m) {
             float contact_x_nply, float contact_x_pip_slope_nply,
             const std::vector<int>& cubeful_filtered_plies,
             int n_threads) {
+        require_non_null(strategy_nply, "strategy_nply");
         CheckerPosition pos;
         pos.board = list_to_board(board);
         pos.die1 = die1;
@@ -962,6 +974,7 @@ void bind_eval(py::module_& m) {
         validate_die(pos.die2);
         pos.cube_value = cube_value;
         pos.owner = cube_owner;
+        validate_met_away_scores(away1, away2);
         pos.match = MatchInfo{away1, away2, is_crawford};
         pos.max_cube_value = max_cube_value;
         for (const auto& b : force_boards) pos.force_boards.push_back(list_to_board(b));
@@ -1050,16 +1063,16 @@ void bind_eval(py::module_& m) {
                                      float contact_x,
             float contact_x_pip_slope) {
         Board board = list_to_board(board_vec);
+        validate_met_away_scores(away1, away2);
         MoveFilter filter{filter_max_moves, filter_threshold};
+        require_non_null(strategy, "strategy");
 
         auto eval_strat = with_bearoff_db(std::move(strategy), bearoff_db);
 
         py::gil_scoped_release release;
-        if (away1 > 0 && away2 > 0) {
-            CubeInfo ci{cube_value, owner, {away1, away2, is_crawford}, -1.0f, jacoby, beaver, max_cube_value, contact_x, contact_x_pip_slope};
-            return cubeful_equity_nply(board, ci, *eval_strat, n_plies, filter, n_threads);
-        }
-        CubeInfo ci{cube_value, owner, {0, 0, false}, -1.0f, jacoby, beaver, max_cube_value, contact_x, contact_x_pip_slope};
+        CubeInfo ci{cube_value, owner,
+                    {away1, away2, away1 > 0 && is_crawford},
+                    -1.0f, jacoby, beaver, max_cube_value, contact_x, contact_x_pip_slope};
         return cubeful_equity_nply(board, ci, *eval_strat, n_plies, filter, n_threads);
     }, "Compute cubeful equity for a pre-roll position at N-ply depth (unified, any Strategy).",
        py::arg("board"), py::arg("owner"),
@@ -1088,7 +1101,9 @@ void bind_eval(py::module_& m) {
                                     bool jacoby, bool beaver,
                                     const BearoffDB* bearoff_db, int max_cube_value) {
         Board board = list_to_board(board_vec);
+        validate_met_away_scores(away1, away2);
         MoveFilter filter{filter_max_moves, filter_threshold};
+        require_non_null(strategy, "strategy");
 
         auto eval_strat = with_bearoff_db(std::move(strategy), bearoff_db);
 
@@ -1096,8 +1111,7 @@ void bind_eval(py::module_& m) {
         {
             py::gil_scoped_release release;
             CubeInfo ci{cube_value, owner,
-                        {(away1 > 0 ? away1 : 0), (away2 > 0 ? away2 : 0),
-                         is_crawford},
+                        {away1, away2, away1 > 0 && is_crawford},
                         -1.0f, jacoby, beaver, max_cube_value};
             probs = cubeful_probs_nply(board, ci, *eval_strat, n_plies, filter, n_threads);
         }
@@ -1134,7 +1148,9 @@ void bind_eval(py::module_& m) {
              float contact_x,
             float contact_x_pip_slope) {
         Board board = list_to_board(board_vec);
+        validate_met_away_scores(away1, away2);
         MoveFilter filter{filter_max_moves, filter_threshold};
+        require_non_null(strategy, "strategy");
         Board root{};
         const Board* root_ptr = nullptr;
         if (!root_board.empty()) {
@@ -1148,8 +1164,7 @@ void bind_eval(py::module_& m) {
         {
             py::gil_scoped_release release;
             CubeInfo ci{cube_value, owner,
-                        {(away1 > 0 ? away1 : 0), (away2 > 0 ? away2 : 0),
-                         is_crawford},
+                        {away1, away2, away1 > 0 && is_crawford},
                         -1.0f, jacoby, beaver, max_cube_value, contact_x, contact_x_pip_slope};
             result = cubeful_probs_and_equity_nply(
                 board, ci, *eval_strat, n_plies, filter, n_threads, nullptr, root_ptr);
@@ -1184,6 +1199,7 @@ void bind_eval(py::module_& m) {
                                                 bool beaver, int max_cube_value, float contact_x, float contact_x_pip_slope,
                                                 const BearoffDB* bearoff_db,
                                                 std::shared_ptr<Strategy> strategy) {
+        validate_met_away_scores(away1, away2);
         Board board = list_to_board(checkers);
         const CubeInfo ci{cube_value, owner, {away1, away2, is_crawford}, cube_x_override,
                           jacoby, beaver, max_cube_value, contact_x, contact_x_pip_slope};
@@ -1230,7 +1246,7 @@ void bind_eval(py::module_& m) {
             int threads, bool decision_only, int max_moves, float threshold) {
         validate_search_depth(plies);
         validate_batch_move_filter(plies, max_moves, threshold, false);
-        if (!base) throw std::invalid_argument("base strategy is None");
+        require_non_null(base, "base");
         auto strategy = with_bearoff_db(base, db);
         std::vector<CubeEvaluation> results(positions.size());
         {
@@ -1288,6 +1304,7 @@ void bind_eval(py::module_& m) {
             throw std::invalid_argument(
                 "incl_2ply_details requires n_plies >= 2");
         }
+        validate_met_away_scores(away1, away2);
         Board board = list_to_board(checkers);
         std::shared_ptr<Strategy> base_strat;
         {

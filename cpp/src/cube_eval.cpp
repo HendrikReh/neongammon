@@ -561,12 +561,7 @@ void leaf_from_post_probs(
                    : (!race && aci[i].contact_x >= 0.0f)
                        ? contact_cube_x(aci[i], leaf_pp, leaf_op)
                    : default_x;
-        if (aci[i].is_money()) {
-            arCf[i] = cl2cf_money(pre_roll_probs, aci[i].owner, x,
-                                   aci[i].jacoby_active());
-        } else {
-            arCf[i] = cl2cf_match(pre_roll_probs, aci[i], x);
-        }
+        arCf[i] = cl2cf_raw(pre_roll_probs, aci[i], x);
     }
 
     get_ecf3_local(arCubeful, cci, arCf, aci);
@@ -948,9 +943,10 @@ void eval_roll_node(
         const bool needs_cube_efficiency = !cube_is_dead(primary_cube);
         cf_vals.resize(n_eval);
         for (int c = 0; c < n_eval; ++c) {
+            const Board& cand = (*eval_candidates)[c];
+            clamp_probs_to_board(cand_probs[c], cand);
             float cube_x = 0.0f;
             if (needs_cube_efficiency) {
-                const Board& cand = (*eval_candidates)[c];
                 auto [pp, op] = pip_counts(cand);
                 cube_x = cube_efficiency(cand_probs[c], is_race(cand), pp, op);
             }
@@ -1096,7 +1092,7 @@ void cubeful_eval_recursive(
     }
     SharedPosCache* shared_cache =
         all_dead ? MultiPlyStrategy::get_shared_cache() : nullptr;
-    SharedPosCache::Entry* shared_reservation = nullptr;
+    SharedPosCache::ReservationGuard shared_reservation;
     if (shared_cache) {
         const uint64_t shared_key = key ^ 0x9e3779b97f4a7c15ULL;
         auto res = shared_cache->lookup_or_reserve(shared_key, 0, board);
@@ -1111,7 +1107,9 @@ void cubeful_eval_recursive(
                                      arCubeful, p);
             return;
         }
-        shared_reservation = res.reservation;
+        if (res.reservation) {
+            shared_reservation = SharedPosCache::ReservationGuard(shared_cache, res.reservation);
+        }
     }
 
     // Internal node: expand cube states, iterate 21 rolls.
@@ -1199,7 +1197,7 @@ void cubeful_eval_recursive(
             ctx.checker->put(key, fp, board, arCubeful, probs_final);
     }
     if (shared_reservation) {
-        shared_cache->publish(shared_reservation, probs_final);
+        shared_reservation.publish(probs_final);
     }
 }
 
@@ -1231,7 +1229,9 @@ void eval_pre_roll_1ply_multi(
     for (int i = 0; i < n_cubes; ++i) {
         const CubeInfo& cube = cubes[i];
         if (terminal) {
-            if (cube.is_money()) {
+            if (cube_is_dead(cube)) {
+                out_raw[i] = cubeless_value(pre_roll_probs, cube);
+            } else if (cube.is_money()) {
                 out_raw[i] = cube.jacoby_active()
                     ? (2.0f * pre_roll_probs[0] - 1.0f)
                     : cubeless_equity(pre_roll_probs);
@@ -1242,13 +1242,12 @@ void eval_pre_roll_1ply_multi(
             }
             continue;
         }
-        float x = resolve_cube_x_local(pre_roll_probs, cube, board, race);
-        if (cube.is_money()) {
-            out_raw[i] = cl2cf_money(pre_roll_probs, cube.owner, x,
-                                      cube.jacoby_active());
-        } else {
-            out_raw[i] = cl2cf_match(pre_roll_probs, cube, x);
+        if (cube_is_dead(cube)) {
+            out_raw[i] = cubeless_value(pre_roll_probs, cube);
+            continue;
         }
+        float x = resolve_cube_x_local(pre_roll_probs, cube, board, race);
+        out_raw[i] = cl2cf_raw(pre_roll_probs, cube, x);
     }
     if (probs_out) *probs_out = pre_roll_probs;
 }
@@ -1371,12 +1370,13 @@ void cubeful_equity_nply_multi(
     std::array<float, NUM_OUTPUTS>* probs_out,
     bool deep_prefilter,
     const Board* root_board,
-    EvalOptions options)
+    EvalOptions options,
+    const std::function<void()>& check_budget)
 {
     validate_eval_options(options);
     cubeful_equity_nply_multi_impl<false>(
         board, cubes, n_cubes, strategy, n_plies, out, filter, n_threads,
-        move_filter, fTop, probs_out, deep_prefilter, root_board, nullptr, nullptr, {}, options);
+        move_filter, fTop, probs_out, deep_prefilter, root_board, nullptr, nullptr, check_budget, options);
 }
 
 std::vector<CubefulProbsAndEquity> cubeful_checker_endpoints_nply(
@@ -1396,19 +1396,23 @@ std::vector<CubefulProbsAndEquity> cubeful_checker_endpoints_nply(
     std::vector<std::exception_ptr> errors(count);
     std::unique_ptr<CheckerSubtrees> cache;
     if (workers > 1 && plies == 4) cache = std::make_unique<CheckerSubtrees>();
+    std::atomic<bool> failed{false};
     std::atomic<int> next{0};
     multipy_parallel_run(workers, [&] {
         for (int i = next.fetch_add(1, std::memory_order_relaxed); i < count;
              i = next.fetch_add(1, std::memory_order_relaxed)) {
+            if (failed.load(std::memory_order_relaxed)) break;
             try {
                 if (check_budget) check_budget();
                 auto& result = results[i];
                 cubeful_equity_nply_multi_impl<false>(
                     flip(endpoints[i]), &cube, 1, strategy, plies, &result.equity,
                     MoveFilters::TINY, roll_threads, nullptr, false, &result.probs,
-                    false, &before, nullptr, cache.get());
+                    false, &before, nullptr, cache.get(), check_budget);
             } catch (...) {
                 errors[i] = std::current_exception();
+                failed.store(true, std::memory_order_relaxed);
+                break;
             }
         }
     });
@@ -1533,7 +1537,7 @@ static void opponent_roll_equities(
     for (int o = 0; o < 21; ++o) {
         const float raw = opp.rolls[o].cf[idx];
         detail.opponent_rolls[o].cubeful_equity = is_money
-            ? scale * raw : mwc2eq(raw, away1, away2, cv, is_crawford);
+            ? scale * raw : mwc2eq(raw, away1, away2, initial_cv, is_crawford);
     }
 }
 
@@ -1608,7 +1612,7 @@ CubeDecision cube_decision_nply_with_details(
             dt.cubeful_equity = -2.0f * rc.cf[2];
         } else {
             nd.cubeful_equity = mwc2eq(1.0f - rc.cf[0], a1, a2, cv, craw);
-            dt.cubeful_equity = mwc2eq(1.0f - rc.cf[2], a1, a2, 2 * cv, craw);
+            dt.cubeful_equity = mwc2eq(1.0f - rc.cf[2], a1, a2, cv, craw);
         }
 
         if (rc.terminal || !rc.child) continue;   // no opponent-roll level

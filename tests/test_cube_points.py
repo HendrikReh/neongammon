@@ -15,6 +15,7 @@ Run with:
     python -m pytest neongammon/tests/test_cube_points.py -v
 """
 
+import math
 import unittest
 
 from neongammon.cube_points import cube_action_points
@@ -158,14 +159,53 @@ class TestPostCrawford(unittest.TestCase):
         self.assertAlmostEqual(trailer.cash.dead, 0.97606, places=6)
 
     def test_post_crawford_does_not_crash(self):
-        """Post-Crawford (player 1-away) with centered cube — shouldn't raise.
-
-        At post-Crawford with leader at 1-away: leader can't meaningfully
-        double. We don't set a specific expected value here — just that the
-        call completes without crashing.
-        """
-        r = cube_action_points(GAMMONLESS, "centered", 1, 1, 4, True, 0.68)
+        """Post-Crawford leader (player 1-away, is_crawford=False) with centered cube:
+        leader cannot double, cash, or be too good, but can still take."""
+        r = cube_action_points(GAMMONLESS, "centered", 1, 1, 4, False, 0.68)
         self.assertTrue(r.cannot_double)
+        self.assertTrue(r.cannot_cash)
+        self.assertTrue(r.cannot_too_good)
+        self.assertIsNone(r.double_label)
+        self.assertTrue(math.isnan(r.double.janowski))
+        self.assertFalse(r.cannot_take)
+        self.assertFalse(math.isnan(r.take.dead))
+
+    def test_post_crawford_trailer_cannot_take(self):
+        """Post-Crawford trailer (4-away vs 1-away, centered) can double but cannot take."""
+        r = cube_action_points(GAMMONLESS, "centered", 1, 4, 1, False, 0.68)
+        self.assertFalse(r.cannot_double)
+        self.assertEqual(r.double_label, "Double")
+        self.assertTrue(r.cannot_take)
+        self.assertTrue(math.isnan(r.take.dead))
+        self.assertTrue(math.isnan(r.take.live))
+        self.assertTrue(math.isnan(r.take.janowski))
+
+    def test_dmp_and_dead_cubes_mark_all_actions_ineligible(self):
+        """DMP (1a-1a) and dead cubes (cv >= away) must flag every row as N/A."""
+        for owner, cv, a1, a2 in (
+            ("centered", 1, 1, 1),   # DMP
+            ("centered", 2, 2, 2),   # dead centered cube
+            ("player", 2, 2, 3),     # player owns dead cube
+            ("opponent", 2, 3, 2),   # opponent owns dead cube
+        ):
+            r = cube_action_points(GAMMONLESS, owner, cv, a1, a2, False, 0.68)
+            self.assertTrue(r.cannot_double, (owner, cv, a1, a2))
+            self.assertTrue(r.cannot_take, (owner, cv, a1, a2))
+            self.assertTrue(r.cannot_cash, (owner, cv, a1, a2))
+            self.assertTrue(r.cannot_too_good, (owner, cv, a1, a2))
+            self.assertIsNone(r.double_label, (owner, cv, a1, a2))
+            for triple in (r.take, r.double, r.cash, r.too_good):
+                self.assertTrue(math.isnan(triple.dead))
+                self.assertTrue(math.isnan(triple.live))
+                self.assertTrue(math.isnan(triple.janowski))
+
+    def test_invalid_away_scores_and_cube_value_raise(self):
+        for a1, a2 in ((0, 5), (5, 0), (-1, 5), (-1, -2)):
+            with self.assertRaises(ValueError):
+                cube_action_points(GAMMONLESS, "centered", 1, a1, a2)
+        for bad_cv in (0, -1, 3):
+            with self.assertRaises(ValueError):
+                cube_action_points(GAMMONLESS, "centered", bad_cv, 0, 0)
 
 
 class TestNoGammonsToggle(unittest.TestCase):

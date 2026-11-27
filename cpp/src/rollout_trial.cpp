@@ -382,13 +382,9 @@ void RolloutStrategy::run_phase3_vr_mean(
                 if (branches[b].finished) continue;
                 double mean_cf = 0.0;
                 for (size_t i = 0; i < ALL_ROLLS.size(); ++i) {
-                    double val;
-                    if (is_match) {
-                        val = cl2cf_match(roll_best_probs[i], branches[b].cube, cube_x);
-                    } else {
-                        float cf = cl2cf_money(roll_best_probs[i], branches[b].cube.owner, cube_x,
-                                                branches[b].cube.jacoby_active());
-                        val = cf * branches[b].cube.cube_value / branches[b].basis_cube;
+                    double val = cl2cf_raw(roll_best_probs[i], branches[b].cube, cube_x);
+                    if (!is_match) {
+                        val = val * branches[b].cube.cube_value / branches[b].basis_cube;
                     }
                     mean_cf += ALL_ROLLS[i].weight * val;
                 }
@@ -557,13 +553,9 @@ void RolloutStrategy::run_phase4b_vr_luck(
     if (cube_active) {
         for (int b = 0; b < n_branches; ++b) {
             if (branches[b].finished) continue;
-            double actual_val;
-            if (is_match) {
-                actual_val = cl2cf_match(actual_probs, branches[b].cube, cube_x);
-            } else {
-                float cf = cl2cf_money(actual_probs, branches[b].cube.owner, cube_x,
-                                        branches[b].cube.jacoby_active());
-                actual_val = cf * branches[b].cube.cube_value / branches[b].basis_cube;
+            double actual_val = cl2cf_raw(actual_probs, branches[b].cube, cube_x);
+            if (!is_match) {
+                actual_val = actual_val * branches[b].cube.cube_value / branches[b].basis_cube;
             }
             double luck = actual_val - mean_cf_branch[b];
             if (is_sp_turn) {
@@ -605,6 +597,13 @@ RolloutStrategy::TrialResult RolloutStrategy::run_phase5_terminal(
 {
     auto t_probs = terminal_probs(result);
 
+    std::array<float, NUM_OUTPUTS> sp_probs =
+        is_sp_turn ? t_probs : invert_probs(t_probs);
+    double raw_eq = compute_equity(sp_probs);
+    std::array<float, NUM_OUTPUTS> vr_probs;
+    for (int k = 0; k < NUM_OUTPUTS; ++k)
+        vr_probs[k] = static_cast<float>(sp_probs[k] - cl_accumulated_luck[k]);
+
     if (cube_active) {
         double mover_eq_full = compute_equity(t_probs);
         for (int b = 0; b < n_branches; ++b) {
@@ -620,7 +619,8 @@ RolloutStrategy::TrialResult RolloutStrategy::run_phase5_terminal(
                 sp_val = is_sp_turn ? static_cast<double>(mwc)
                                     : (1.0 - static_cast<double>(mwc));
             } else {
-                double mover_eq = branches[b].cube.jacoby_active()
+                double mover_eq = (!cube_is_dead(branches[b].cube)
+                                   && branches[b].cube.jacoby_active())
                     ? (2.0 * t_probs[0] - 1.0) : mover_eq_full;
                 double points = mover_eq * branches[b].cube.cube_value;
                 sp_val = points / branches[b].basis_cube;
@@ -630,24 +630,27 @@ RolloutStrategy::TrialResult RolloutStrategy::run_phase5_terminal(
             branches[b].finished = true;
         }
     } else if (n_branches > 0) {
-        std::array<float, NUM_OUTPUTS> sp_probs_t =
-            is_sp_turn ? t_probs : invert_probs(t_probs);
-        double raw_sp = compute_equity(sp_probs_t);
-        double vr_sp = raw_sp - cl_scalar_eq_luck;
+        double vr_sp = raw_eq - cl_scalar_eq_luck;
         for (int b = 0; b < n_branches; ++b) {
             if (branches[b].finished) continue;
-            branches[b].final_equity = vr_sp
-                * branches[b].cube.cube_value / branches[b].basis_cube;
+            if (is_match) {
+                // branches[b].cube stayed in SP's perspective while !cube_active.
+                // cubeless_mwc is affine in probs, so applying it to vr_probs
+                // preserves zero-mean variance reduction in MWC space.
+                branches[b].final_equity = static_cast<double>(cubeless_mwc(
+                    vr_probs,
+                    branches[b].cube.match.away1,
+                    branches[b].cube.match.away2,
+                    branches[b].cube.cube_value,
+                    branches[b].cube.match.is_crawford));
+            } else {
+                branches[b].final_equity = vr_sp
+                    * branches[b].cube.cube_value / branches[b].basis_cube;
+            }
             branches[b].finished = true;
         }
     }
 
-    std::array<float, NUM_OUTPUTS> sp_probs =
-        is_sp_turn ? t_probs : invert_probs(t_probs);
-    double raw_eq = compute_equity(sp_probs);
-    std::array<float, NUM_OUTPUTS> vr_probs;
-    for (int k = 0; k < NUM_OUTPUTS; ++k)
-        vr_probs[k] = static_cast<float>(sp_probs[k] - cl_accumulated_luck[k]);
     return {vr_probs, raw_eq - cl_scalar_eq_luck, raw_eq - cl_scalar_eq_luck};
 }
 
@@ -742,6 +745,13 @@ RolloutStrategy::TrialResult RolloutStrategy::run_truncation_phase(
     rollout_profile::trial_count.fetch_add(1, std::memory_order_relaxed);
 #endif
 
+    std::array<float, NUM_OUTPUTS> sp_probs =
+        last_mover_is_sp ? last_mover_probs : invert_probs(last_mover_probs);
+    double raw_eq = compute_equity(sp_probs);
+    std::array<float, NUM_OUTPUTS> vr_probs;
+    for (int k = 0; k < NUM_OUTPUTS; ++k)
+        vr_probs[k] = static_cast<float>(sp_probs[k] - cl_accumulated_luck[k]);
+
     if (!cubeful_done && cube_active) {
         auto [last_pp, last_op] = pip_counts(last_mover_board);
         float trunc_x = cube_efficiency(last_mover_probs, trunc_race, last_pp, last_op);
@@ -750,12 +760,11 @@ RolloutStrategy::TrialResult RolloutStrategy::run_truncation_phase(
             CubeInfo last_cube = flip_cube_perspective(branches[b].cube);
             double sp_val;
             if (is_match) {
-                float mwc = cl2cf_match(last_mover_probs, last_cube, trunc_x);
+                float mwc = cl2cf_raw(last_mover_probs, last_cube, trunc_x);
                 sp_val = last_mover_is_sp ? static_cast<double>(mwc)
                                           : (1.0 - static_cast<double>(mwc));
             } else {
-                float cf = cl2cf_money(last_mover_probs, last_cube.owner, trunc_x,
-                                        last_cube.jacoby_active());
+                float cf = cl2cf_raw(last_mover_probs, last_cube, trunc_x);
                 double points = cf * last_cube.cube_value;
                 sp_val = points / branches[b].basis_cube;
                 if (!last_mover_is_sp) sp_val = -sp_val;
@@ -764,24 +773,25 @@ RolloutStrategy::TrialResult RolloutStrategy::run_truncation_phase(
             branches[b].finished = true;
         }
     } else if (!cubeful_done && n_branches > 0) {
-        std::array<float, NUM_OUTPUTS> sp_probs_t =
-            last_mover_is_sp ? last_mover_probs : invert_probs(last_mover_probs);
-        double raw_sp = compute_equity(sp_probs_t);
-        double vr_sp = raw_sp - cl_scalar_eq_luck;
+        double vr_sp = raw_eq - cl_scalar_eq_luck;
         for (int b = 0; b < n_branches; ++b) {
             if (branches[b].finished) continue;
-            branches[b].final_equity = vr_sp
-                * branches[b].cube.cube_value / branches[b].basis_cube;
+            if (is_match) {
+                // branches[b].cube stayed in SP's perspective while !cube_active.
+                branches[b].final_equity = static_cast<double>(cubeless_mwc(
+                    vr_probs,
+                    branches[b].cube.match.away1,
+                    branches[b].cube.match.away2,
+                    branches[b].cube.cube_value,
+                    branches[b].cube.match.is_crawford));
+            } else {
+                branches[b].final_equity = vr_sp
+                    * branches[b].cube.cube_value / branches[b].basis_cube;
+            }
             branches[b].finished = true;
         }
     }
 
-    std::array<float, NUM_OUTPUTS> sp_probs =
-        last_mover_is_sp ? last_mover_probs : invert_probs(last_mover_probs);
-    double raw_eq = compute_equity(sp_probs);
-    std::array<float, NUM_OUTPUTS> vr_probs;
-    for (int k = 0; k < NUM_OUTPUTS; ++k)
-        vr_probs[k] = static_cast<float>(sp_probs[k] - cl_accumulated_luck[k]);
     return {vr_probs, raw_eq - cl_scalar_eq_luck, raw_eq - cl_scalar_eq_luck};
 }
 
@@ -803,7 +813,7 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
     for (int b = 0; b < n_branches; ++b) {
         if (!cube_is_dead(branches[b].cube)) { cube_active = true; break; }
     }
-    const bool is_match = cube_active && n_branches > 0 && !branches[0].cube.is_money();
+    const bool is_match = n_branches > 0 && !branches[0].cube.is_money();
     const bool use_cubeful_select =
         (config_.cubeful_trial_moves && cube_active && n_branches > 0);
     const int cubeful_late_threshold =
@@ -816,10 +826,12 @@ RolloutStrategy::TrialResult RolloutStrategy::run_trial_unified(
     if (start_post_move) {
         board = flip(start_board);
         sp_parity_offset = 1;
-        for (int b = 0; b < n_branches; ++b) {
-            branches[b].cube.owner = flip_owner(branches[b].cube.owner);
-            if (is_match) {
-                std::swap(branches[b].cube.match.away1, branches[b].cube.match.away2);
+        if (cube_active) {
+            for (int b = 0; b < n_branches; ++b) {
+                branches[b].cube.owner = flip_owner(branches[b].cube.owner);
+                if (is_match) {
+                    std::swap(branches[b].cube.match.away1, branches[b].cube.match.away2);
+                }
             }
         }
     } else {

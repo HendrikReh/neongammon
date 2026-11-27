@@ -186,8 +186,14 @@ def test_seed_validation(kwargs):
 
 
 @pytest.mark.parametrize('kwargs', [dict(cube_value=3), dict(max_cube_value=3),
+    dict(match_length=26), dict(match_length=-1),
     dict(start_board=[0]*26), dict(start_board=[16]+[0]*25), dict(score1=1),
     dict(is_crawford=True), dict(player_on_roll=0), dict(max_turns=True)])
 def test_context_validation(kwargs):
     with pytest.raises(ValueError):
         GameConfig(**kwargs)
+
+
+def test_simulate_match_rejects_match_length_above_met_limit():
+    with pytest.raises(ValueError, match='match_length'):
+        simulate_match(match_length=26, players=(Policy(), Policy()))

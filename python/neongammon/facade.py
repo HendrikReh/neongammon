@@ -21,12 +21,14 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-import bgbot_cpp
-
+from ._native import load_native
 from ._primitives import _normalize_cube_context
 from .cubeful import _CubefulAnalyzer
 from .luck import roll_luck as _roll_luck
 from .rollout import RolloutCancelled, _RolloutAnalyzer
+from .runtime import _notify_thread_budget
+
+bgbot_cpp = load_native()
 from .strategies import (
     _CubelessBase,
     _MultiPlyAnalyzer,
@@ -55,7 +57,9 @@ if TYPE_CHECKING:
 
 def _normalize_analyzer_cube_context(
     cube_value: int, away1: int, away2: int, jacoby: bool, beaver: bool, max_cube_value: int,
+    cube_owner: object = "centered",
 ) -> tuple[bool, bool]:
+    resolve_owner(cube_owner)
     bgbot_cpp._validate_met_away_scores(away1, away2)
     return _normalize_cube_context(cube_value, away1, away2, jacoby, beaver, max_cube_value)
 
@@ -95,6 +99,16 @@ def _optimal_action(should_double: bool, should_take: bool,
     if should_take:
         return "Double/Take"
     return "Double/Pass"
+
+
+class _UnsetType:
+    def __repr__(self) -> str:
+        return "<default>"
+
+
+_UNSET: Any = _UnsetType()
+_FIXED_DEPTH_LEVELS: frozenset[str] = frozenset(("1ply", "2ply", "3ply", "4ply"))
+_TRUNCATED_PRESET_LEVELS: frozenset[str] = frozenset(("truncated1", "truncated2", "truncated3"))
 
 
 class BgBotAnalyzer:
@@ -148,30 +162,104 @@ class BgBotAnalyzer:
         eval_level: str = "1ply",
         cubeful: bool = True,
         *,
-        filter_max_moves: int = 5,
-        filter_threshold: float = 0.08,
+        filter_max_moves: int = _UNSET,
+        filter_threshold: float = _UNSET,
         parallel_threads: int = 0,
-        n_trials: int = 1296,
-        truncation_depth: int = 0,
-        decision_ply: int = 1,
-        truncation_ply: int = -1,
-        late_ply: int = -1,
-        late_threshold: int = 20,
+        n_trials: int = _UNSET,
+        truncation_depth: int = _UNSET,
+        decision_ply: int = _UNSET,
+        truncation_ply: int = _UNSET,
+        late_ply: int = _UNSET,
+        late_threshold: int = _UNSET,
         seed: int = 42,
         bearoff_db: bool | str | None = None,
         models: BatchModels | None = None,
-        checker=None,
-        checker_late=None,
-        cube=None,
-        cube_late=None,
-        ultra_late_threshold: int = 9999,
+        checker=_UNSET,
+        checker_late=_UNSET,
+        cube=_UNSET,
+        cube_late=_UNSET,
+        ultra_late_threshold: int = _UNSET,
         cubeful_trial_moves: bool = True,
         cubeful_late_threshold: int = 0,
-        prefilter_threshold: float | None = None,
-        target_se: float = 0.0,
-        max_batches: int = 50,
+        prefilter_threshold: float | None = _UNSET,
+        target_se: float = _UNSET,
+        max_batches: int = _UNSET,
     ):
         from .batch import _resolve_models
+
+        rollout_only_args = {
+            "n_trials": n_trials,
+            "truncation_depth": truncation_depth,
+            "decision_ply": decision_ply,
+            "truncation_ply": truncation_ply,
+            "late_ply": late_ply,
+            "late_threshold": late_threshold,
+            "checker": checker,
+            "checker_late": checker_late,
+            "cube": cube,
+            "cube_late": cube_late,
+            "ultra_late_threshold": ultra_late_threshold,
+            "target_se": target_se,
+            "max_batches": max_batches,
+        }
+        if eval_level in _TRUNCATED_PRESET_LEVELS:
+            disallowed = {
+                **rollout_only_args,
+                "filter_max_moves": filter_max_moves,
+                "filter_threshold": filter_threshold,
+            }
+            if eval_level == "truncated1":
+                disallowed["prefilter_threshold"] = prefilter_threshold
+            ignored = [name for name, val in disallowed.items() if val is not _UNSET]
+            if ignored:
+                raise ValueError(
+                    f"eval_level={eval_level!r} is a fixed rollout preset and does not accept "
+                    f"{', '.join(ignored)}; use eval_level='rollout' for custom rollout settings"
+                )
+        elif eval_level in _FIXED_DEPTH_LEVELS:
+            disallowed = {
+                **rollout_only_args,
+                "prefilter_threshold": prefilter_threshold,
+            }
+            ignored = [name for name, val in disallowed.items() if val is not _UNSET]
+            if ignored:
+                raise ValueError(
+                    f"eval_level={eval_level!r} does not accept rollout options "
+                    f"({', '.join(ignored)}); use eval_level='rollout'"
+                )
+
+        if filter_max_moves is _UNSET:
+            filter_max_moves = 5
+        if filter_threshold is _UNSET:
+            filter_threshold = 0.08
+        if n_trials is _UNSET:
+            n_trials = 1296
+        if truncation_depth is _UNSET:
+            truncation_depth = 0
+        if decision_ply is _UNSET:
+            decision_ply = 1
+        if truncation_ply is _UNSET:
+            truncation_ply = -1
+        if late_ply is _UNSET:
+            late_ply = -1
+        if late_threshold is _UNSET:
+            late_threshold = 20
+        if checker is _UNSET:
+            checker = None
+        if checker_late is _UNSET:
+            checker_late = None
+        if cube is _UNSET:
+            cube = None
+        if cube_late is _UNSET:
+            cube_late = None
+        if ultra_late_threshold is _UNSET:
+            ultra_late_threshold = 9999
+        if prefilter_threshold is _UNSET:
+            prefilter_threshold = None
+        if target_se is _UNSET:
+            target_se = 0.0
+        if max_batches is _UNSET:
+            max_batches = 50
 
         self._models = _resolve_models(weights, models, bearoff_db)
         self._weights = self._models.weights
@@ -426,10 +514,11 @@ class BgBotAnalyzer:
                 player actually made is always scored at the expert level.
         """
         jacoby, beaver = _normalize_analyzer_cube_context(
-            cube_value, away1, away2, jacoby, beaver, max_cube_value
+            cube_value, away1, away2, jacoby, beaver, max_cube_value, cube_owner
         )
+        effective_owner = cube_owner if self._cubeful else None
         raw = self._analyzer.checker_play_analytics(
-            board, die1, die2, cube_value, cube_owner, progress_callback,
+            board, die1, die2, cube_value, effective_owner, progress_callback,
             away1=away1, away2=away2, is_crawford=is_crawford, jacoby=jacoby,
             beaver=beaver, **_cube_limit_kwargs(max_cube_value), force_boards=force_boards,
             finalize_progress=finalize_progress,
@@ -456,7 +545,7 @@ class BgBotAnalyzer:
         if self._eval_level != "2ply" or not self._cubeful:
             raise ValueError("top_two_promote requires a cubeful 2-ply analyzer")
         jacoby, beaver = _normalize_analyzer_cube_context(
-            cube_value, away1, away2, jacoby, beaver, max_cube_value
+            cube_value, away1, away2, jacoby, beaver, max_cube_value, cube_owner
         )
         if len(moves) < 2:
             return moves, "2-ply"
@@ -478,6 +567,10 @@ class BgBotAnalyzer:
             contact_cube_slope(3, away1, away2),
         )
         endpoints = [first.board, second.board]
+        _notify_thread_budget(
+            "score_checker_endpoints", inner._parallel_threads or 1,
+            plies=3, cubeful=True,
+        )
         scores = bgbot_cpp.score_checker_endpoints(
             board, endpoints, opponent_cube, inner._strategy_1ply, 3, inner._parallel_threads,
         )
@@ -529,7 +622,7 @@ class BgBotAnalyzer:
                 and don't emit progress.
         """
         jacoby, beaver = _normalize_analyzer_cube_context(
-            cube_value, away1, away2, jacoby, beaver, max_cube_value
+            cube_value, away1, away2, jacoby, beaver, max_cube_value, cube_owner
         )
 
         inner = self._analyzer
@@ -550,10 +643,18 @@ class BgBotAnalyzer:
         if isinstance(inner, _MultiPlyAnalyzer):
             n_plies = inner._n_plies
             inner._strategy_nply.clear_cache()
+            _notify_thread_budget(
+                "multipy_evaluate", inner._strategy_nply.effective_parallel_threads(),
+                plies=n_plies, cubeful=False,
+            )
             r = inner._strategy_nply.evaluate_board(board, board)
             eval_level = f"{n_plies}-ply"
         elif isinstance(inner, _RolloutAnalyzer):
             inner._check_cancel()
+            _notify_thread_budget(
+                "rollout_evaluate", inner._parallel_threads,
+                cubeful=use_cubeful_rollout,
+            )
             try:
                 if use_cubeful_rollout:
                     r = inner._rollout_strategy.cubeful_evaluate_board(
@@ -652,7 +753,7 @@ class BgBotAnalyzer:
                 2-ply call.
         """
         jacoby, beaver = _normalize_analyzer_cube_context(
-            cube_value, away1, away2, jacoby, beaver, max_cube_value
+            cube_value, away1, away2, jacoby, beaver, max_cube_value, cube_owner
         )
         raw = self._analyzer.cube_action_analytics(
             board, cube_value, cube_owner,
@@ -706,7 +807,7 @@ class BgBotAnalyzer:
         Arguments as in :meth:`cube_action`.
         """
         jacoby, beaver = _normalize_analyzer_cube_context(
-            cube_value, away1, away2, jacoby, beaver, max_cube_value
+            cube_value, away1, away2, jacoby, beaver, max_cube_value, cube_owner
         )
         kw = dict(away1=away1, away2=away2, is_crawford=is_crawford, jacoby=jacoby,
                   beaver=beaver, **_cube_limit_kwargs(max_cube_value))
@@ -742,6 +843,7 @@ class BgBotAnalyzer:
         is_crawford: bool = False,
         jacoby: bool = True,
         beaver: bool = True,
+        max_cube_value: int = 0,
         is_opening_roll: bool = False,
     ) -> LuckResult | None:
         """Compute how lucky ``(die1, die2)`` was from ``board``.
@@ -758,7 +860,8 @@ class BgBotAnalyzer:
         cube = self.cube_action(
             board, cube_value, cube_owner,
             away1=away1, away2=away2, is_crawford=is_crawford,
-            jacoby=jacoby, beaver=beaver, incl_2ply_details=True,
+            jacoby=jacoby, beaver=beaver, max_cube_value=max_cube_value,
+            incl_2ply_details=True,
         )
         return _roll_luck(cube, die1, die2, is_opening_roll=is_opening_roll)
 

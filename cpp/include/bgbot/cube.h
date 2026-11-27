@@ -264,7 +264,13 @@ void get_match_points(
 float cl2cf_match(const std::array<float, NUM_OUTPUTS>& probs,
                   const CubeInfo& cube, float cube_x);
 
-// Unified cubeless-to-cubeful: dispatches to cl2cf_money() or cl2cf_match().
+// Unified cubeless-to-cubeful in raw engine units, respecting cube_is_dead:
+//   - Money game: cubeful equity normalized to cube=1 (cubeless equity if dead)
+//   - Match play: cubeful MWC (cubeless MWC if dead)
+float cl2cf_raw(const std::array<float, NUM_OUTPUTS>& probs,
+                const CubeInfo& cube, float cube_x);
+
+// Unified cubeless-to-cubeful: dispatches via cl2cf_raw().
 // For money game: returns cubeful equity.
 // For match play: returns cubeful equity (MWC converted to equity via mwc2eq).
 float cl2cf(const std::array<float, NUM_OUTPUTS>& probs,
@@ -446,7 +452,8 @@ CubefulProbsAndEquity cubeful_probs_and_equity_nply(
     const MoveFilter& filter = MoveFilters::TINY,
     int n_threads = 1,
     const Strategy* move_filter = nullptr,
-    const Board* root_board = nullptr);   // root routing: the decision's pre-move board
+    const Board* root_board = nullptr,   // root routing: the decision's pre-move board
+    const std::function<void()>& check_budget = {});
 
 // Evaluate several post-move checker endpoints under the same cube and root
 // position, sharing 2-ply subtrees across concurrent 4-ply endpoints and
@@ -507,7 +514,8 @@ void cubeful_equity_nply_multi(
     std::array<float, NUM_OUTPUTS>* probs_out = nullptr,
     bool deep_prefilter = false,
     const Board* root_board = nullptr,   // root routing: the decision's pre-move board
-    EvalOptions options = {});
+    EvalOptions options = {},
+    const std::function<void()>& check_budget = {});
 
 // Batched cube decision: evaluate cube decisions for multiple branches that
 // share the same board.  For each input cube in `cubes`, this is exactly

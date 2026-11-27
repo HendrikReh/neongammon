@@ -18,8 +18,13 @@ from neongammon import sl_train
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_dir = os.path.dirname(script_dir)
 
-needs_mlx = pytest.mark.skipif(not sl_train.mlx_available(), reason="MLX not available")
 WEIGHTS = os.path.join(project_dir, 'models', 'sl_s9_race_race.weights.best')
+
+
+@pytest.fixture
+def require_mlx():
+    if not sl_train.mlx_available():
+        pytest.skip("MLX not available")
 
 
 def _sigmoid(z):
@@ -76,9 +81,9 @@ def test_random_init_matches_neural_network(tmp_path, monkeypatch):
         np.testing.assert_array_equal(a, b)
 
 
-@needs_mlx
+@pytest.mark.mlx
 @pytest.mark.parametrize('use_sw', [False, True])
-def test_mlx_matches_reference_update(tmp_path, use_sw):
+def test_mlx_matches_reference_update(tmp_path, use_sw, require_mlx):
     # 300 rows at batch 128: two full batches and a partial one per epoch.
     x, y, sw = _data(300, 244)
     sw = sw if use_sw else None
@@ -96,8 +101,8 @@ def test_mlx_matches_reference_update(tmp_path, use_sw):
         np.testing.assert_allclose(g, w, rtol=0, atol=2e-5)
 
 
-@needs_mlx
-def test_random_init_training_runs(tmp_path):
+@pytest.mark.mlx
+def test_random_init_training_runs(tmp_path, require_mlx):
     x, y, _ = _data(200, 196)
     save = str(tmp_path / 'pr.weights')
     r = sl_train._mlx_supervised_train(
@@ -108,14 +113,15 @@ def test_random_init_training_runs(tmp_path):
         np.testing.assert_allclose(g, w, rtol=0, atol=2e-5)
 
 
+@pytest.mark.mlx
 def test_backend_reports_a_trainer():
     assert sl_train.backend() in ('mlx', None)
     assert sl_train.gpu_available() == (sl_train.backend() is not None)
 
 
-@needs_mlx
+@pytest.mark.mlx
 @pytest.mark.parametrize("use_scenario_set", [False, True])
-def test_mlx_benchmarks_in_memory_and_keeps_file_scoring_parity(monkeypatch, use_scenario_set):
+def test_mlx_benchmarks_in_memory_and_keeps_file_scoring_parity(monkeypatch, use_scenario_set, require_mlx):
     from neongammon.board import STARTING_BOARD, possible_moves
 
     board = STARTING_BOARD
