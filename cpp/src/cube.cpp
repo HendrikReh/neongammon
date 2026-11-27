@@ -587,18 +587,14 @@ CubeDecision decision_from_raw_equities(
         const int cv = cube.cube_value;
         const bool craw = cube.match.is_crawford;
         const float dp_m = dp_mwc(away1, away2, cv, craw);
-        // Post-Crawford automatic double: the trailing player (away1 > 1,
-        // opponent at 1-away) should always double — losing costs the match
-        // regardless of cube value, while winning scores more points.
-        const bool auto_double = (!craw && away1 > 1 && away2 == 1);
-
+        const float best_mwc = std::min(dt_raw, dp_m);
+        // Prefer doubling on a post-Crawford tie. The leader can also pass,
+        // so playing on may be strictly better (e.g. a match-winning gammon).
+        const bool trailer = !craw && away1 > 1 && away2 == 1;
+        constexpr float tie_tolerance = std::numeric_limits<float>::epsilon();
         result.should_take = (dt_raw <= dp_m);
-        if (auto_double) {
-            result.should_double = true;
-        } else {
-            const float best_mwc = std::min(dt_raw, dp_m);
-            result.should_double = (best_mwc > nd_raw);
-        }
+        result.should_double = best_mwc > nd_raw
+            || (trailer && nd_raw - best_mwc <= tie_tolerance);
         result.optimal_equity = result.should_double
             ? std::min(result.equity_dt, result.equity_dp)
             : result.equity_nd;

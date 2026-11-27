@@ -500,9 +500,11 @@ should_double = min(dt_mwc, dp_mwc) > nd_mwc
 should_take = dt_mwc ≤ dp_mwc
 ```
 
-Special case: **post-Crawford automatic double** — when the trailing player (away > 1)
-faces an opponent at 1-away, they should always double (losing costs the match
-regardless of cube value, but winning scores more points).
+When the post-Crawford trailer faces a 1-away opponent, doubling is preferred
+when the two choices have equal match-winning probability within float32
+rounding. Playing on takes precedence when it gives a higher match-winning
+probability, for example when a gammon wins the match and a pass would give
+the trailer only one point.
 
 ### Cubeful Equity (Single Value)
 
