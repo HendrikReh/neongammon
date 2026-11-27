@@ -63,25 +63,56 @@ def gpu_available() -> bool:
 # Weight files (NeuralNetwork::save_weights format)
 # ---------------------------------------------------------------------------
 
+_WEIGHT_MAGIC = b"NGWT"
+_WEIGHT_SCHEMA = 1
+_ENCODERS = {196: 1, 244: 2, 214: 3}
+
+
 def read_weights(path: str):
-    """Read a ``.weights`` file into (W_h [nh, ni], b_h [nh], W_o [5, nh], b_o [5])."""
+    """Read legacy and versioned weights as matrices and bias vectors."""
     with open(path, "rb") as f:
-        nh, ni, no = struct.unpack("<3i", f.read(12))
-        hidden = np.frombuffer(f.read(nh * (ni + 1) * 4), dtype="<f4").reshape(nh, ni + 1)
-        output = np.frombuffer(f.read(no * (nh + 1) * 4), dtype="<f4").reshape(no, nh + 1)
+        versioned = f.read(4) == _WEIGHT_MAGIC
+        if versioned:
+            header = f.read(20)
+            if len(header) != 20:
+                raise ValueError("Incomplete versioned weight header")
+            schema, encoder, nh, ni, no = struct.unpack("<5I", header)
+            if schema != _WEIGHT_SCHEMA or encoder != _ENCODERS.get(ni) or no != 5:
+                raise ValueError("Unsupported weight schema, encoder, or output width")
+        else:
+            f.seek(0)
+            header = f.read(12)
+            if len(header) != 12:
+                raise ValueError("Incomplete weight header")
+            nh, ni, no = struct.unpack("<3i", header)
+        hidden_bytes = nh * (ni + 1) * 4
+        output_bytes = no * (nh + 1) * 4
+        remaining = os.fstat(f.fileno()).st_size - f.tell()
+        required = hidden_bytes + output_bytes
+        if min(nh, ni, no) <= 0 or remaining < required or (versioned and remaining != required):
+            raise ValueError("Weight file size does not match its topology")
+        hidden = np.frombuffer(f.read(hidden_bytes), dtype="<f4").reshape(nh, ni + 1)
+        output = np.frombuffer(f.read(output_bytes), dtype="<f4").reshape(no, nh + 1)
     return (hidden[:, :ni].copy(), hidden[:, ni].copy(),
             output[:, :nh].copy(), output[:, nh].copy())
 
 
-def write_weights(path: str, w_h, b_h, w_o, b_o) -> None:
-    """Write weights in NeuralNetwork::save_weights format (bias in the last column)."""
+def write_weights(path: str, w_h, b_h, w_o, b_o, *, versioned: bool = False) -> None:
+    """Write bias in the last column, with an optional versioned header."""
     w_h, b_h, w_o, b_o = (np.asarray(a, dtype=np.float32) for a in (w_h, b_h, w_o, b_o))
     nh, ni = w_h.shape
     hidden = np.concatenate([w_h, b_h[:, None]], axis=1)
     output = np.concatenate([w_o, b_o[:, None]], axis=1)
+    if versioned:
+        encoder = _ENCODERS.get(ni)
+        if encoder is None or nh < 1 or w_o.shape != (5, nh):
+            raise ValueError("Unsupported versioned weight topology")
+        header = _WEIGHT_MAGIC + struct.pack("<5I", _WEIGHT_SCHEMA, encoder, nh, ni, 5)
+    else:
+        header = struct.pack("<3i", nh, ni, w_o.shape[0])
     tmp = f"{path}.tmp{os.getpid()}"
     with open(tmp, "wb") as f:
-        f.write(struct.pack("<3i", nh, ni, w_o.shape[0]))
+        f.write(header)
         f.write(hidden.astype("<f4").tobytes())
         f.write(output.astype("<f4").tobytes())
     os.replace(tmp, path)

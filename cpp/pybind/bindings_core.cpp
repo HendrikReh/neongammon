@@ -202,7 +202,8 @@ void bind_core(py::module_& m) {
              py::arg("n_inputs") = NN_INPUTS,
              py::arg("eps") = 0.1f,
              py::arg("seed") = 42)
-        .def("save_weights", &NeuralNetwork::save_weights)
+        .def("save_weights", &NeuralNetwork::save_weights,
+             py::arg("filepath"), py::arg("versioned") = false)
         .def("load_weights", &NeuralNetwork::load_weights)
         .def("n_hidden", &NeuralNetwork::n_hidden)
         .def("n_inputs", &NeuralNetwork::n_inputs)

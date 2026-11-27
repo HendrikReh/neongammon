@@ -31,6 +31,24 @@ unnatural minima. TD gives realistic probability distributions that SL refines.
 - Narrow subsets cause catastrophic regression
 - Game plan weight (`--gameplan-weight`) specializes each NN during SL
 
+### Weight files
+
+Both the C++ engine and the Python trainer read legacy and versioned files.
+For a versioned file, pass `versioned=True` to `NeuralNetwork.save_weights`
+or `sl_train.write_weights`. Existing training paths still write legacy files.
+
+| Field | Encoding |
+| --- | --- |
+| Magic | Four bytes `NGWT` |
+| Schema | Little-endian uint32, currently 1 |
+| Encoder | Little-endian uint32. 1 = 196-input Tesauro, 2 = 244-input extended contact, 3 = 214-input legacy contact |
+| Topology | Three little-endian uint32 values in hidden, input, output order |
+| Payload | Hidden and output matrices in row-major float32, little-endian, with each bias in its row's final column |
+
+The legacy format starts at the topology field. A versioned file must
+match the encoder and dimensions, including all five outputs and the exact
+payload size.
+
 ### GPU SL trainer (`neongammon.sl_train`)
 
 `supervised_train(boards, targets, ...)` and

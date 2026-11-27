@@ -140,13 +140,11 @@ public:
 
     // ----- Persistence -----
 
-    // Save weights in binary format.
-    // Format: [int32 n_hidden] [int32 n_inputs] [int32 n_outputs]
-    //         [n_hidden*(n_inputs+1) floats: hidden weights row-major]
-    //         [n_outputs*(n_hidden+1) floats: output weights row-major]
-    bool save_weights(const std::string& filepath) const;
+    // The versioned header records the encoder as well as the topology.
+    // Legacy output is the default for compatibility with older trainers.
+    bool save_weights(const std::string& filepath, bool versioned = false) const;
 
-    // Load weights from binary file. n_inputs in file must match n_inputs_.
+    // Both formats must match the dimensions of this network.
     bool load_weights(const std::string& filepath);
 
     int n_hidden() const { return n_hidden_; }
