@@ -90,6 +90,7 @@ struct RolloutConfig {
     TrialEvalConfig checker_late;   // Late-game checker play
     TrialEvalConfig cube;           // Cube decision evaluation
     TrialEvalConfig cube_late;      // Late-game cube decisions
+    EvalOptions cube_eval_options;  // Deep prefilter for trial cube and truncation searches
 
     // Cancellation flag. When non-null and set to true, the rollout aborts
     // between trial chunks. Checked by run_trials_parallel() and
@@ -285,7 +286,7 @@ public:
     // Bearoff DB: when set, positions in the DB are evaluated exactly.
     // Input positions that are bearoff get immediate results (no simulation).
     // Truncation evaluations also use the DB when applicable.
-    void set_bearoff_db(const BearoffDB* db);
+    void set_bearoff_db(const BearoffDB* db) override;
     const BearoffDB* bearoff_db() const { return bearoff_db_; }
 
     // Set a cheap filter strategy (e.g. PubEval) for pre-filtering candidates

@@ -16,6 +16,10 @@
 
 ## Training Pipeline
 
+Stage-specific training and benchmark recipes for Stages 4–10 live in
+[`scripts/archive/`](../scripts/archive/README.md). Their existing script paths
+also work. Archived recipes write their default experiment reports under `logs/`.
+
 **CRITICAL: TD pre-training is required before SL.** SL from random init finds
 unnatural minima. TD gives realistic probability distributions that SL refines.
 
@@ -31,6 +35,24 @@ unnatural minima. TD gives realistic probability distributions that SL refines.
 - Narrow subsets cause catastrophic regression
 - Game plan weight (`--gameplan-weight`) specializes each NN during SL
 
+### Weight files
+
+Both the C++ engine and the Python trainer read legacy and versioned files.
+For a versioned file, pass `versioned=True` to `NeuralNetwork.save_weights`
+or `sl_train.write_weights`. Existing training paths still write legacy files.
+
+| Field | Encoding |
+| --- | --- |
+| Magic | Four bytes `NGWT` |
+| Schema | Little-endian uint32, currently 1 |
+| Encoder | Little-endian uint32. 1 = 196-input Tesauro, 2 = 244-input extended contact, 3 = 214-input legacy contact |
+| Topology | Three little-endian uint32 values in hidden, input, output order |
+| Payload | Hidden and output matrices in row-major float32, little-endian, with each bias in its row's final column |
+
+The legacy format starts at the topology field. A versioned file must
+match the encoder and dimensions, including all five outputs and the exact
+payload size.
+
 ### GPU SL trainer (`neongammon.sl_train`)
 
 `supervised_train(boards, targets, ...)` and
@@ -44,7 +66,8 @@ The update rules are upstream's CUDA trainer's: sigmoid-MSE delta
 `(t-p)·p·(1-p)` (times the per-sample weight), backprop through the
 pre-update output weights, SGD at `alpha / batch_rows` (the partial last batch
 uses its own row count), one epoch = one shuffled pass (NumPy draws it), CPU
-benchmark scoring after every epoch with best-score weights saved as `.best`,
+benchmark scoring directly from in-memory weights after every epoch, with
+best-score weights saved as `.best`,
 and random init from `bgbot_cpp.NeuralNetwork(nh, ni, 0.1, seed)`.
 `tests/test_sl_train.py` holds the MLX weights to a float64 NumPy
 transcription of the update rules (2e-5).

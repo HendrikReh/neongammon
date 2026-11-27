@@ -599,14 +599,14 @@ a cube decision); the callers pass that root through `root_board` /
 `pre_move_board`, the engine stores the answer in `EvalCtx.pinned_nn`, and
 every contact position in the tree - the batched interior picks in
 `eval_groups_pair` and the leaves, dances, forced moves and 1-ply entries
-in `pinned_post_probs` - is then evaluated with that one net. Race
+in `Strategy::evaluate_pinned_probs` - is then evaluated with that one net. Race
 positions and exact bearoff positions keep their own values. Unwrapping
 must go through EVERY `BearoffStrategy` layer (the analyzer wraps once and
 the bindings wrap again), and the pin is part of the eval-cache fingerprint,
 since pinned and unpinned evaluations of one board are different values.
 Today only `BackgameAwarePairStrategy` pins, and only for the snake net on
 23+ NN layouts (`root_pinned_`, default `{22}`, including Stage 11's 24-NN layout;
-`NEONGAMMON_NO_ROOT_ROUTING` disables it); every other strategy
+`set_root_pinned([])` disables it on a strategy instance); every other strategy
 returns -1 and routes per node exactly as above. Rationale and results:
 [docs/model-history.md](model-history.md) ("Stage 11s", round 2).
 
@@ -644,7 +644,7 @@ MOVE_FILTER_THRESHOLD = 16     // Entry-ply: pre-filter if > 16 candidates
 MOVE_FILTER_KEEP = 15          // Entry-ply: keep top 15
 DEEP_FILTER_THRESHOLD = 16     // Deep nodes: pre-filter if > 16 candidates
 DEEP_FILTER_KEEP = 14          // Deep nodes: keep top 14
-// Deep values overridable via BGBOT_CUBEFUL_DEEP_THRESHOLD / _KEEP env vars
+// Pass EvalOptions to the native multi-cube functions or to RolloutConfig.
 ```
 
 ## 7. N-Ply Checker Play Evaluation

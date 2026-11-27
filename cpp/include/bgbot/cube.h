@@ -58,7 +58,7 @@ inline CubeOwner flip_owner(CubeOwner o) {
 }
 
 // Flip a CubeInfo to the opponent's perspective.
-// PLAYER â†” OPPONENT, CENTERED stays. Match away values swapped.
+// PLAYER ↔ OPPONENT, CENTERED stays. Match away values swapped.
 inline CubeInfo flip_cube_perspective(const CubeInfo& cube) {
     CubeInfo opp;
     opp.cube_value = cube.cube_value;
@@ -75,7 +75,7 @@ inline CubeInfo flip_cube_perspective(const CubeInfo& cube) {
 
 // Can the player on roll legally double?
 inline bool can_double(const CubeInfo& ci) {
-    // Cube at or above max â†’ cannot double (max_cube_value=1 means cubeless)
+    // Cube at or above max → cannot double (max_cube_value=1 means cubeless)
     if (ci.max_cube_value > 0 && ci.cube_value >= ci.max_cube_value)
         return false;
     if (!ci.is_money()) {
@@ -366,7 +366,7 @@ float cubeful_equity_nply(
 
 // Returns post-roll probabilities from the N-ply CUBE-AWARE tree, in the
 // player-on-roll's perspective at `board`. Mirrors `cubeful_equity_nply` (CubeInfo
-// overload) but accumulates probs from the same tree â€” interior move picks use
+// overload) but accumulates probs from the same tree — interior move picks use
 // 1-ply cubeful equity against `cube` (shared-cube MVP), so the returned probs
 // reflect match-aware play throughout, unlike `evaluate_probs_nply` which uses
 // cubeless interior picks.
@@ -411,6 +411,12 @@ std::vector<CubefulProbsAndEquity> cubeful_checker_endpoints_nply(
     int threads,
     const std::function<void()>& check_budget = {});
 
+// Tuning for the optional deep-node PubEval shortlist.
+struct EvalOptions {
+    int deep_prefilter_threshold = 16;
+    int deep_prefilter_keep = 14;
+};
+
 // Batched version: evaluate cubeful equity for the SAME board at N-ply depth
 // against MULTIPLE cube states simultaneously. Returns one equity per cube
 // state in `out`, in the same order as `cubes`.
@@ -451,7 +457,8 @@ void cubeful_equity_nply_multi(
     bool fTop = false,                       // true: caller already built ND+DT pairs
     std::array<float, NUM_OUTPUTS>* probs_out = nullptr,
     bool deep_prefilter = false,
-    const Board* root_board = nullptr);   // root routing: the decision's pre-move board
+    const Board* root_board = nullptr,   // root routing: the decision's pre-move board
+    EvalOptions options = {});
 
 // Batched cube decision: evaluate cube decisions for multiple branches that
 // share the same board.  For each input cube in `cubes`, this is exactly
@@ -471,7 +478,8 @@ void cube_decision_nply_multi(
     int n_threads = 1,
     const Strategy* move_filter = nullptr,
     bool deep_prefilter = false,
-    const std::function<void()>& check_budget = {});
+    const std::function<void()>& check_budget = {},
+    EvalOptions options = {});
 
 // Compute full cube decision at N-ply depth.
 // `board` is pre-roll from the player's perspective.
@@ -506,7 +514,7 @@ CubeDecision cube_decision_nply_with_details(
 
 // Compute cube decision from cubeless pre-roll probabilities (Janowski conversion).
 // This is the simplest form of cubeful evaluation from any source of cubeless probs
-// (rollout, N-ply, etc.) â€” just applies Janowski to the given probs.
+// (rollout, N-ply, etc.) — just applies Janowski to the given probs.
 // Same as cube_decision_1ply but with auto-detected cube efficiency.
 inline CubeDecision cube_decision_from_probs(
     const std::array<float, NUM_OUTPUTS>& cubeless_probs,

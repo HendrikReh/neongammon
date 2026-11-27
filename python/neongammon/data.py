@@ -6,17 +6,6 @@ Data loading for GNUbg benchmark and training files.
 Parses .bm benchmark files into structured data that the C++ engine can consume.
 """
 
-import sys
-import os
-
-# Add the build directory to find the compiled C++ module
-_BUILD_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'build')
-if os.path.isdir(_BUILD_DIR):
-    sys.path.insert(0, os.path.abspath(_BUILD_DIR))
-
-import bgbot_cpp
-
-
 def board_from_gnubg_position_string(pos_str: str) -> list[int]:
     """
     Decode a 20-character GNUbg position string into a 26-element board list.
@@ -79,6 +68,8 @@ def load_benchmark_file(filepath: str, step: int = 1):
     Returns:
         A bgbot_cpp.ScenarioSet with all scenarios stored in C++.
     """
+    from bgbot_cpp import ScenarioSet
+
     with open(filepath, 'r') as f:
         lines = f.readlines()
 
@@ -88,7 +79,7 @@ def load_benchmark_file(filepath: str, step: int = 1):
     # Subsample
     move_lines = move_lines[::step]
 
-    ss = bgbot_cpp.ScenarioSet()
+    ss = ScenarioSet()
     ss.reserve(len(move_lines))
 
     for line in move_lines:
@@ -131,13 +122,15 @@ def load_benchmark_scenarios_by_indices(filepath: str, indices: list):
     Returns:
         A bgbot_cpp.ScenarioSet with only the requested scenarios.
     """
+    from bgbot_cpp import ScenarioSet
+
     with open(filepath, 'r') as f:
         lines = f.readlines()
 
     move_lines = [line for line in lines if line.startswith('m ')]
 
     indices_set = set(indices)
-    ss = bgbot_cpp.ScenarioSet()
+    ss = ScenarioSet()
     ss.reserve(len(indices))
 
     for i, line in enumerate(move_lines):

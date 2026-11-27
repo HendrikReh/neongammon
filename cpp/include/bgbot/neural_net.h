@@ -140,13 +140,11 @@ public:
 
     // ----- Persistence -----
 
-    // Save weights in binary format.
-    // Format: [int32 n_hidden] [int32 n_inputs] [int32 n_outputs]
-    //         [n_hidden*(n_inputs+1) floats: hidden weights row-major]
-    //         [n_outputs*(n_hidden+1) floats: output weights row-major]
-    bool save_weights(const std::string& filepath) const;
+    // The versioned header records the encoder as well as the topology.
+    // Legacy output is the default for compatibility with older trainers.
+    bool save_weights(const std::string& filepath, bool versioned = false) const;
 
-    // Load weights from binary file. n_inputs in file must match n_inputs_.
+    // Both formats must match the dimensions of this network.
     bool load_weights(const std::string& filepath);
 
     int n_hidden() const { return n_hidden_; }
@@ -366,6 +364,11 @@ public:
         std::array<float, NUM_OUTPUTS>* best_probs_out) const override;
 
 private:
+    int score_candidate_batch(
+        const std::vector<Board>& candidates, const Board& pre_move_board,
+        double* equities, std::array<float, NUM_OUTPUTS>* per_move_probs,
+        std::array<float, NUM_OUTPUTS>* best_probs) const;
+
     std::shared_ptr<NeuralNetwork> purerace_nn_;
     std::shared_ptr<NeuralNetwork> racing_nn_;
     std::shared_ptr<NeuralNetwork> attacking_nn_;
@@ -435,12 +438,23 @@ public:
     // evaluation engine's batched candidate kernel to group candidates by NN).
     int nn_index_for(const Board& board) const { return select_nn_idx(board); }
 
+    bool cube_candidate_probs(
+        const std::vector<Board>& candidates, const int* indices, int count,
+        const CubeSearchNode& node, std::array<float, NUM_OUTPUTS>* out,
+        int pinned) const override;
+    bool supports_cube_candidate_reuse() const override { return true; }
+
     // Raw-NN probs for a board given an NN index. Public for symmetry with
     // BackgameAwarePairStrategy so the cubeful engine's templated kernel
     // compiles against both classes (its blend-sentinel branch is dead here).
     std::array<float, NN_OUTPUTS> probs_with_nn(const Board& board, int nn_idx) const;
 
 private:
+    int score_candidate_batch(
+        const std::vector<Board>& candidates, const Board& pre_move_board,
+        double* equities, std::array<float, NUM_OUTPUTS>* per_move_probs,
+        std::array<float, NUM_OUTPUTS>* best_probs) const;
+
     std::array<std::shared_ptr<NeuralNetwork>, NUM_PAIR_NNS> nns_;
 
     // Determine which NN to use for a board position.
@@ -601,7 +615,21 @@ constexpr float BACKGAME_BLEND_W_ARM2 = 0.60f; // zone weight: gate arm 2
 constexpr int BACKGAME_BLEND_PIP_LO = 170;
 constexpr int BACKGAME_BLEND_PIP_HI = 230;
 
-class BackgameAwarePairStrategy : public Strategy {
+// Network 0 always uses the pure-race encoder; contact slots use the
+// extended-contact encoder. A negative specialist slot disables that route.
+struct RoutingManifest {
+    std::array<int, 16> contact_pairs{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    std::array<int, 3> backgame_categories{-1, -1, -1};
+    std::array<int, 2> side_backgame{-1, -1};
+    std::array<int, 2> blend_extra{-1, -1};
+    int snake = -1;
+    int containment = -1;
+    int massive = -1;
+    int early_containment = -1;
+    std::vector<int> root_pins;
+};
+
+class RoutedStrategy : public Strategy {
 public:
     // Construct from vectors of weight paths and hidden sizes (length 19, 20
     // or 21). Index 0 = PureRace, indices 1-16 = contact pairs. With 19 NNs,
@@ -613,9 +641,12 @@ public:
     // phase_containment: the 22-NN Stage 11 PHASED layout (trio at 17/18/19,
     // early-containment NN at 20, containment-game NN at 21), or 23 NNs with
     // the snake NN at 22.
-    BackgameAwarePairStrategy(const std::vector<std::string>& weight_paths,
-                              const std::vector<int>& hidden_sizes,
-                              bool phase_containment = false);
+    RoutedStrategy(const std::vector<std::string>& weight_paths,
+                   const std::vector<int>& hidden_sizes,
+                   bool phase_containment = false);
+    RoutedStrategy(const std::vector<std::string>& weight_paths,
+                   const std::vector<int>& hidden_sizes,
+                   RoutingManifest routing);
 
     double evaluate(const Board& board, bool pre_move_is_race) const override;
 
@@ -658,6 +689,12 @@ public:
     // May return the BLENDED_* sentinels (>= BLENDED_SENTINEL_BASE) on hybrid models.
     int nn_index_for(const Board& board) const { return select_nn_idx(board); }
 
+    bool cube_candidate_probs(
+        const std::vector<Board>& candidates, const int* indices, int count,
+        const CubeSearchNode& node, std::array<float, NUM_OUTPUTS>* out,
+        int pinned) const override;
+    bool supports_cube_candidate_reuse() const override { return true; }
+
     // Raw-NN probs for a board given an NN index; handles the blend sentinels
     // (21/22) by evaluating both backgame NNs and mixing by pip-ramped weight.
     // Public so the cubeful engine's batched kernel can evaluate blended
@@ -674,22 +711,22 @@ public:
     // net and 2-ply scored worse than 1-ply. Default: the snake net on the
     // 23-NN layout. An empty list disables root routing.
     int root_pin_for(const Board& root) const override;
-    void set_root_pinned(std::vector<int> nn_indices) { root_pinned_ = std::move(nn_indices); }
-    const std::vector<int>& root_pinned() const { return root_pinned_; }
+    std::array<float, NUM_OUTPUTS> evaluate_pinned_probs(
+        const Board& board, bool race, int pinned) const override;
+    RolloutVRNetwork rollout_vr_network(const Board& board) const override;
+    void set_root_pinned(std::vector<int> nn_indices) override { routing_.root_pins = std::move(nn_indices); }
+    const std::vector<int>& root_pinned() const override { return routing_.root_pins; }
 
 private:
-    std::vector<std::shared_ptr<NeuralNetwork>> nns_;  // 19 (base), 20 (categorized) or 21 (hybrid)
-    bool blended_backgame_ = false;      // true when 21 NNs are loaded
-    bool categorized_backgame_ = false;  // true when 20 NNs are loaded (Stage 11)
-    bool phase_containment_ = false;     // Stage 11 phased: out-of-region early
-                                         // containment -> NN 20
-    bool snake_ = false;                 // phased with 23+ NNs: snake -> NN 22
-    bool massive_ = false;               // phased with 24 NNs: massive back game -> NN 23
-    std::vector<int> root_pinned_;       // nets that pin a search tree rooted in their region
+    int score_candidate_batch(
+        const std::vector<Board>& candidates, const Board& pre_move_board,
+        double* equities, std::array<float, NUM_OUTPUTS>* per_move_probs,
+        std::array<float, NUM_OUTPUTS>* best_probs) const;
 
-    // Determine which NN to use. Returns 0 for purerace, 1-16 for standard
-    // contact pairs, 17 for player backgame, 18 for opponent backgame; on
-    // hybrid models, the BLENDED_* sentinels for detected backgames.
+    std::vector<std::shared_ptr<NeuralNetwork>> nns_;
+    RoutingManifest routing_;
+    bool categorized_backgame_ = false;
+
     int select_nn_idx(const Board& board) const;
 
     double evaluate_with_nn(const Board& board, int nn_idx) const;
@@ -697,5 +734,7 @@ private:
                                                          bool player_bg) const;
     bool is_purerace_nn(int nn_idx) const { return nn_idx == 0; }
 };
+
+using BackgameAwarePairStrategy = RoutedStrategy;
 
 } // namespace bgbot

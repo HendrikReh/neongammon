@@ -63,6 +63,51 @@ On an M4 Pro with four threads (five samples, Accelerate, seed 42), the
 and 7.17 ms batched. With three bearoff rows added the same comparison was
 8.14 ms and 8.06 ms. All returned fields matched.
 
+### Private 5-ply feasibility probe
+
+Run the opt-in probe with the production model, model files, and bearoff database.
+Use `PYTHONPATH` to select the native extension and the matching Python source.
+
+```bash
+VECLIB_MAXIMUM_THREADS=1 PYTHONPATH=build:python \
+    python scripts/probe_five_ply.py --threads 4 > five-ply-pilot.json
+```
+
+[The probe](../scripts/probe_five_ply.py) pins 16 rollout-tier rows from the
+tracked money and five-point match benchmarks, with four checker and four cube
+rows per context. It carries each row's cube owner, value, and match score into
+the native search, with Jacoby and beavers enabled for money. For each checker
+row it forces two legal boards with the lowest saved equities and compares the
+returned board set with all legal endpoints. The cube comparison checks every
+decision-only field against the rich analysis at the same depth. The tool uses
+the private analyzers, alternates depth and cube call order across rows, and
+reports one wall-time observation per call with models loaded. Its JSON report
+contains each result, the depth checks, and the host load averages.
+
+On November 27, 2026, both depths covered all 44 checker endpoints and all 16
+forced boards, with every endpoint reporting the requested depth. All eight
+cube rows at each depth reported that depth and matched exactly across every
+shared rich and decision-only field. Five-ply changed two checker picks, adding
+0.01226 and 0.00118 equity loss on their saved rollout references. At least one
+cube decision flag changed on three rows.
+
+| Call | 4-ply median (s) | 5-ply median (s) | Slowest 5-ply call (s) |
+| --- | ---: | ---: | ---: |
+| Checker | 0.131 | 2.708 | 18.791 |
+| Rich cube | 0.069 | 1.217 | 2.832 |
+| Decision-only cube | 0.033 | 0.453 | 1.098 |
+
+The timed run used an Apple M4 Pro with macOS 27.0.1, CPython 3.14.7, Stage 11,
+four native threads, and single-thread BLAS. The Python source was at
+`bce25f2`, with an existing arm64 Release extension (SHA-256
+`75ce9427697eddcb1064da2e504e87fb782947d005c56d78fa492118b821511e`).
+The one-minute host load rose from 11.5 to 21.8 while native benchmarks, tests,
+and browser processes were running. The slowest checker row was centered money
+contact with nine legal endpoints. Use the observed spread when budgeting a
+larger study. Public 5-ply support still requires held-out money and match
+cube-life calibration, rollout-grade strength comparisons, and fresh runtime
+measurements. [Release gate](https://github.com/HendrikReh/neongammon/issues/54)
+
 ### Benchmark PR rollout sample (this fork)
 
 The full reference `data/benchmark_pr/rollouts.jsonl` is gitignored and was
@@ -561,6 +606,36 @@ out=build/candidate-grouping-ab
 scripts/experiments/candidate_grouping/build.sh "$out"
 "$ENGINE_PYTHON" -IB scripts/experiments/tiny_output/measure.py \
     "$out" "$FIXTURE_SCRIPT" compare --depths 3 4 --pairs 4
+```
+
+### Overlapping the rich cube traversals
+
+An experimental 3-ply build overlapped the cubeful decision and independent
+cubeless probability searches. It split the four-thread search budget evenly
+between the traversals. The existing build ran both in sequence and could use
+all four threads in each traversal.
+
+On the M4 Pro with CPython 3.14.7 and Accelerate, both builds used source
+commit `44a207e` and the Stage 11 assets. The benchmark alternated build order
+across 12 fresh-process pairs. It compared five warm calls per fixture per
+process after three discarded warmups. Every returned field matched.
+
+| Fixture | Sequential warm | Overlapped warm |
+| --- | ---: | ---: |
+| 5-away/4-away, centered | 1.54 ms | 2.07 ms |
+| Money, player owns the 2-cube | 5.16 ms | 6.10 ms |
+| Snake, centered money cube | 1.51 ms | 1.65 ms |
+
+The production path keeps the sequential search. Build two Release
+extensions from `44a207e` with Accelerate enabled, applying the
+[overlap patch](../scripts/experiments/cube_3ply/overlap_traversals.patch) to
+the second checkout. From the repository root, run the
+[comparison driver](../scripts/experiments/cube_3ply/measure_overlap.py)
+with the directories containing those two extensions.
+
+```sh
+python scripts/experiments/cube_3ply/measure_overlap.py \
+  build/baseline build/overlap
 ```
 
 ## Rollout and N-Ply Regression Benchmarks

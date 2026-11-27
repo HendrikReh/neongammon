@@ -26,7 +26,8 @@ blocker = BlockNativeImport()
 sys.meta_path.insert(0, blocker)
 
 import neongammon
-from neongammon import settings, weights, text_export
+path_before = sys.path.copy()
+from neongammon import data, settings, weights, text_export
 from neongammon.settings import gnubg_path
 from neongammon.weights import WeightConfig
 from neongammon.text_export import export_history_to_txt
@@ -36,6 +37,8 @@ assert callable(export_history_to_txt)
 assert settings is neongammon.settings
 assert weights is neongammon.weights
 assert text_export is neongammon.text_export
+assert data.board_from_gnubg_position_string('A' * 20) == [0] * 26
+assert sys.path == path_before
 assert not blocker.attempted and "bgbot_cpp" not in sys.modules
 assert "BgBotAnalyzer" in dir(neongammon)
 """
@@ -44,3 +47,40 @@ assert "BgBotAnalyzer" in dir(neongammon)
         capture_output=True, text=True, timeout=20,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def test_stale_extension_explains_how_to_load_matching_version():
+    import bgbot_cpp
+    import neongammon
+
+    paths = [
+        str(Path(neongammon.__file__).resolve().parent.parent),
+        str(Path(bgbot_cpp.__file__).resolve().parent),
+    ]
+    script = """
+import sys
+sys.path[:0] = sys.argv[1:]
+import bgbot_cpp
+del bgbot_cpp.MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE
+from neongammon import BgBotAnalyzer
+"""
+    completed = subprocess.run(
+        [sys.executable, "-I", "-c", script, *paths],
+        capture_output=True, text=True, timeout=20,
+    )
+    assert completed.returncode != 0
+    assert "ImportError: NeonGammon requires a matching bgbot_cpp extension" in completed.stderr
+    assert "MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE" in completed.stderr
+    assert "Rebuild" in completed.stderr and "reinstall" in completed.stderr
+    assert bgbot_cpp.__file__ in completed.stderr
+
+
+def test_analyzer_module_keeps_public_api_and_shared_calibration():
+    import neongammon
+    from neongammon import analyzer, facade, rollout, strategies
+
+    assert neongammon.BgBotAnalyzer is analyzer.BgBotAnalyzer is facade.BgBotAnalyzer
+    assert analyzer.create_analyzer is facade.create_analyzer
+    assert neongammon.RolloutCancelled is analyzer.RolloutCancelled is rollout.RolloutCancelled
+    assert analyzer.MONEY_CONTACT_CUBE_LIFE is strategies.MONEY_CONTACT_CUBE_LIFE
+    assert analyzer.MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE is strategies.MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE

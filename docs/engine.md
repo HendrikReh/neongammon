@@ -4,7 +4,7 @@ NeonGammon has two entry points for different tasks. Use `simulate_game()` or
 `simulate_match()` to play out games with a policy. Use `BgBotAnalyzer` to rank
 moves, examine equities, or analyze cube decisions. PureTD is an explicit simulation policy. The analyzer defaults to cubeful Stage 11 at
 1-ply, with optional weights and evaluation levels. [Simulation API](simulation.md)
-· [Analyzer configuration](../python/neongammon/analyzer.py) · [Model registry](../python/neongammon/weights.py)
+· [Analyzer configuration](../python/neongammon/facade.py) · [Model registry](../python/neongammon/weights.py)
 
 ## Which engine plays the position?
 
@@ -113,7 +113,7 @@ corresponds to NeonGammon's `2ply`. The two filters use their own scores and
 candidate rules. In `BgBotAnalyzer.checker_play()`, use `force_boards` to give a
 specific legal post-move board, such as the move actually played, the full
 requested evaluation depth even if a filter would otherwise discard it.
-[Analyzer and filter dispatch](../python/neongammon/analyzer.py) · [Multi-ply search](multi-ply.md)
+[Cubeful checker-play implementation](../python/neongammon/cubeful.py) · [Multi-ply search](multi-ply.md)
 
 ## Rollouts
 

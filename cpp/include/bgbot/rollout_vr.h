@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <typeinfo>
 #include <vector>
 
 namespace bgbot {
@@ -78,18 +77,15 @@ inline bool try_rollout_vr_rolls(
     const CubeInfo* cubes, int n_cubes, float cube_x, std::array<int, 21>& picks,
     std::array<std::array<float, NUM_OUTPUTS>, 21>& probs)
 {
-    if (typeid(base) != typeid(BackgameAwarePairStrategy)) return false;
     if (check_game_over(board) != GameResult::NOT_OVER) return false;
     // The opponent cannot move home on our roll. If already home, delegate
     // the entire fan, including mixed NN/database boundary rolls.
     if (db && board[0] == 0 &&
         std::none_of(board.begin() + 1, board.begin() + 19, [](int n) { return n < 0; }))
         return false;
-    const auto& model = static_cast<const BackgameAwarePairStrategy&>(base);
-    const int net = model.nn_index_for(board);
-    if (net >= BLENDED_SENTINEL_BASE) return false;
-    const auto& nn = *model.nn(net);
-    const bool is_pr = (net == 0);
+    const auto [network, is_pr] = base.rollout_vr_network(board);
+    if (!network) return false;
+    const auto& nn = *network;
     const bool cubeful = (cubes != nullptr && n_cubes > 0);
 
 #if defined(BGBOT_USE_ACCELERATE)

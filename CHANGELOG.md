@@ -19,6 +19,13 @@ Timings below were measured on an M4 Pro Mac mini (10P+4E cores).
 
 ## [Unreleased]
 
+- Root routing is configured on each strategy with `set_root_pinned`.
+  Use an empty list to disable it. This replaces
+  `NEONGAMMON_NO_ROOT_ROUTING` and `BGSAGE_NO_ROOT_ROUTING`.
+- Native cube prefilter tuning uses `EvalOptions`, including through
+  `RolloutConfig`. This replaces `BGBOT_CUBEFUL_DEEP_THRESHOLD` and
+  `BGBOT_CUBEFUL_DEEP_KEEP`.
+
 ## [3.2.1] - 2026-11-26
 
 - Deep native checker batches share the thread budget across candidate moves.

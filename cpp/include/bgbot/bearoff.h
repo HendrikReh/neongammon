@@ -172,6 +172,10 @@ public:
     // the same database adds nothing and shares that identity.
     uint64_t eval_identity() const override;
     int root_pin_for(const Board& root) const override { return base_->root_pin_for(root); }
+    void set_root_pinned(std::vector<int> indices) override {
+        base_->set_root_pinned(std::move(indices));
+    }
+    const std::vector<int>& root_pinned() const override { return base_->root_pinned(); }
 
     double evaluate(const Board& board, bool pre_move_is_race) const override;
 
@@ -230,6 +234,13 @@ public:
         const Board& pre_move_board,
         double* equities,
         std::array<float, NUM_OUTPUTS>* best_probs_out) const override;
+
+    BearoffLayer bearoff_layer() const override { return {db_, base_.get()}; }
+    bool supports_cube_candidate_reuse() const override {
+        return base_->supports_cube_candidate_reuse();
+    }
+    std::array<float, NUM_OUTPUTS> evaluate_pinned_probs(
+        const Board& board, bool race, int pinned) const override;
 
     const Strategy& base() const { return *base_; }
     const BearoffDB& db() const { return *db_; }

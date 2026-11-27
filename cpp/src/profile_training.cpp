@@ -17,7 +17,7 @@ using namespace bgbot;
 using Clock = std::chrono::steady_clock;
 
 int main() {
-    auto nn = std::make_shared<NeuralNetwork>(120, 0.1f, 42);
+    auto nn = std::make_shared<NeuralNetwork>(120, TESAURO_INPUTS, 0.1f, 42);
     NNStrategy strat(nn);
 
     std::mt19937 rng(42);

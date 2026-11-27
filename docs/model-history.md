@@ -1047,8 +1047,7 @@ and through `cubeless_tree_probs`, which passes its pre-move board;
 `cube_decision_nply_multi` pins from the position itself. The cubeful eval
 cache folds the pin into its fingerprint. Switch it off with
 `set_root_pinned([])` on the strategy (bound on both classes — the analyzer's
-`_strategy_1ply` is the bearoff wrapper) or process-wide with
-`NEONGAMMON_NO_ROOT_ROUTING=1` in the environment at construction.
+`_strategy_1ply` is the bearoff wrapper).
 
 Two leaks made the first measurements wrong, and are why
 `tests/test_backgame_category.py::test_root_routing_pins_leaves_and_cache_through_nested_wrappers`

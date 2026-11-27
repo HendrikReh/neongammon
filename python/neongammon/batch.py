@@ -47,9 +47,11 @@ from dataclasses import dataclass
 
 import bgbot_cpp
 
-from .analyzer import (
-    BgBotAnalyzer, CUBEFUL_FILTERED_PLIES, _optimal_action, _contact_cube_life, _contact_cube_slope,
-    _validate_cube_limit, load_bearoff_db, resolve_owner,
+from .cubeful import CUBEFUL_FILTERED_PLIES
+from .facade import BgBotAnalyzer, _optimal_action
+from .strategies import (
+    _contact_cube_life, _contact_cube_slope, _extension_constant, _validate_cube_limit,
+    load_bearoff_db, resolve_owner,
 )
 from .types import CheckerPlayResult, CubeActionResult, CubeDecisionResult, MoveAnalysis, PostMoveAnalysis, Probabilities
 from .weights import WeightConfig, WeightConfigPair, bearoff_db_path, default_weights
@@ -152,8 +154,14 @@ class BatchModels:
         with self._lock:
             if self._base is None:
                 w = self.weights
-                self._raw_base = bgbot_cpp.create_strategy(
-                    w.strategy_type, w.weight_paths_list, w.hidden_sizes_list)
+                args = (w.strategy_type, w.weight_paths_list, w.hidden_sizes_list)
+                if isinstance(w, WeightConfigPair) and w.routing is not None:
+                    routing = _extension_constant("RoutingManifest")()
+                    for name, value in w.routing.items():
+                        setattr(routing, name, value)
+                    self._raw_base = bgbot_cpp.create_strategy(*args, routing=routing)
+                else:
+                    self._raw_base = bgbot_cpp.create_strategy(*args)
                 self._base = (self._raw_base if self.bearoff_db is None else
                               bgbot_cpp.BearoffStrategy(self._raw_base, self.bearoff_db))
             return self._base

@@ -3,12 +3,13 @@
 #include "bgbot/neural_net.h"
 #include "bgbot/board.h"
 #include "bgbot/encoding.h"
-#include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <random>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
+#include <tuple>
 #include <algorithm>
 
 // SIMD headers: NEON on Apple Silicon. The AVX2 kernels exist only for the
@@ -1322,19 +1323,56 @@ void NeuralNetwork::td_update(
 
 // ======================== Persistence ========================
 
-bool NeuralNetwork::save_weights(const std::string& filepath) const {
+namespace {
+
+constexpr char WEIGHT_MAGIC[] = {'N', 'G', 'W', 'T'};
+constexpr uint32_t WEIGHT_SCHEMA = 1;
+
+uint32_t encoder_for_width(int width) {
+    switch (width) {
+        case TESAURO_INPUTS: return 1;
+        case EXTENDED_CONTACT_INPUTS: return 2;
+        case 214: return 3;  // legacy contact/crashed input prefix
+        default: return 0;
+    }
+}
+
+void write_word(std::ostream& out, uint32_t value) {
+    const unsigned char bytes[] = {
+        static_cast<unsigned char>(value), static_cast<unsigned char>(value >> 8),
+        static_cast<unsigned char>(value >> 16), static_cast<unsigned char>(value >> 24),
+    };
+    out.write(reinterpret_cast<const char*>(bytes), sizeof(bytes));
+}
+
+uint32_t read_word(std::istream& in) {
+    unsigned char bytes[4]{};
+    in.read(reinterpret_cast<char*>(bytes), sizeof(bytes));
+    return static_cast<uint32_t>(bytes[0]) | static_cast<uint32_t>(bytes[1]) << 8 |
+           static_cast<uint32_t>(bytes[2]) << 16 | static_cast<uint32_t>(bytes[3]) << 24;
+}
+
+} // namespace
+
+bool NeuralNetwork::save_weights(const std::string& filepath, bool versioned) const {
+    const uint32_t encoder = encoder_for_width(n_inputs_);
+    if (versioned && encoder == 0) return false;
     std::ofstream f(filepath, std::ios::binary);
     if (!f) return false;
 
-    int32_t header[3] = { static_cast<int32_t>(n_hidden_),
-                          static_cast<int32_t>(n_inputs_),
-                          static_cast<int32_t>(NN_OUTPUTS) };
-    f.write(reinterpret_cast<const char*>(header), sizeof(header));
+    if (versioned) {
+        f.write(WEIGHT_MAGIC, sizeof(WEIGHT_MAGIC));
+        write_word(f, WEIGHT_SCHEMA);
+        write_word(f, encoder);
+    }
+    write_word(f, n_hidden_);
+    write_word(f, n_inputs_);
+    write_word(f, NN_OUTPUTS);
     f.write(reinterpret_cast<const char*>(hidden_weights_.data()),
             hidden_weights_.size() * sizeof(float));
     f.write(reinterpret_cast<const char*>(output_weights_.data()),
             output_weights_.size() * sizeof(float));
-
+    f.close();
     return f.good();
 }
 
@@ -1342,24 +1380,36 @@ bool NeuralNetwork::load_weights(const std::string& filepath) {
     std::ifstream f(filepath, std::ios::binary);
     if (!f) return false;
 
-    int32_t header[3];
-    f.read(reinterpret_cast<char*>(header), sizeof(header));
-
-    if (header[0] != n_hidden_ || header[1] != n_inputs_ || header[2] != NN_OUTPUTS) {
+    char prefix[sizeof(WEIGHT_MAGIC)];
+    if (!f.read(prefix, sizeof(prefix))) return false;
+    const bool versioned = std::memcmp(prefix, WEIGHT_MAGIC, sizeof(prefix)) == 0;
+    if (versioned) {
+        const auto schema = read_word(f);
+        const auto encoder = read_word(f);
+        if (schema != WEIGHT_SCHEMA || encoder == 0 ||
+            encoder != encoder_for_width(n_inputs_)) return false;
+    } else {
+        f.seekg(0);
+    }
+    const auto hidden = read_word(f);
+    const auto inputs = read_word(f);
+    const auto outputs = read_word(f);
+    if (!f || hidden != static_cast<uint32_t>(n_hidden_) ||
+        inputs != static_cast<uint32_t>(n_inputs_) || outputs != NN_OUTPUTS) {
         return false;
     }
 
-    f.read(reinterpret_cast<char*>(hidden_weights_.data()),
-           hidden_weights_.size() * sizeof(float));
-    f.read(reinterpret_cast<char*>(output_weights_.data()),
-           output_weights_.size() * sizeof(float));
-
-    if (f.good()) {
-        build_transposed_weights();
-        transposed_weights_valid_ = true;
-        return true;
-    }
-    return false;
+    // Complete validation before replacing a previously usable network.
+    std::vector<float> hidden_weights(hidden_weights_.size());
+    std::vector<float> output_weights(output_weights_.size());
+    f.read(reinterpret_cast<char*>(hidden_weights.data()), hidden_weights.size() * sizeof(float));
+    f.read(reinterpret_cast<char*>(output_weights.data()), output_weights.size() * sizeof(float));
+    if (!f || (versioned && f.peek() != std::char_traits<char>::eof())) return false;
+    hidden_weights_ = std::move(hidden_weights);
+    output_weights_ = std::move(output_weights);
+    build_transposed_weights();
+    transposed_weights_valid_ = true;
+    return true;
 }
 
 // ======================== NNStrategy ========================
@@ -1866,239 +1916,107 @@ int GamePlanStrategy::evaluate_candidates_equity(
     return best_idx;
 }
 
-int GamePlanStrategy::batch_evaluate_candidates_equity(
-    const std::vector<Board>& candidates,
-    const Board& pre_move_board,
-    double* equities) const
+
+namespace {
+
+template<typename SelectModel>
+int score_game_plan_candidates(
+    const std::vector<Board>& candidates, double* equities,
+    std::array<float, NUM_OUTPUTS>* per_move_probs,
+    std::array<float, NUM_OUTPUTS>* best_probs, SelectModel select_model)
 {
-    const int n = static_cast<int>(candidates.size());
-    if (n == 0) return -1;
-    if (n == 1) {
-        if (equities) {
-            // Single candidate — just use the non-batch path
-            GameResult result = check_game_over(candidates[0]);
+    const int count = static_cast<int>(candidates.size());
+    if (count == 0) return -1;
+    if (count == 1 && !equities && !per_move_probs && !best_probs) return 0;
+
+    const auto [network, pure_race, evaluate_one] = select_model();
+    double best_value = -1e30;
+    int best_index = 0;
+    std::array<float, NUM_OUTPUTS> best_result{};
+    const auto record = [&](int index, double value, const auto& probs) {
+        if (equities) equities[index] = value;
+        if (per_move_probs) per_move_probs[index] = probs;
+        if (value > best_value) {
+            best_value = value;
+            best_index = index;
+            if (best_probs) best_result = probs;
+        }
+    };
+
+    if (count == 1 || !network) {
+        // A blended route has position-dependent weights and cannot reuse a
+        // neural base. Compare its candidates in generation order.
+        for (int i = 0; i < count; ++i) {
+            const auto result = check_game_over(candidates[i]);
             if (result != GameResult::NOT_OVER) {
-                equities[0] = terminal_equity(result);
+                record(i, terminal_equity(result), terminal_probs(result));
             } else {
-                GamePlan gp = classify_game_plan(pre_move_board);
-                equities[0] = evaluate_with_nn(candidates[0], gp);
+                const auto probs = evaluate_one(candidates[i]);
+                record(i, NeuralNetwork::compute_equity(probs), probs);
             }
         }
-        return 0;
-    }
-
-    GamePlan gp = classify_game_plan(pre_move_board);
-    const auto& nn = select_nn(gp);
-
-    // Separate terminals from non-terminals
-    // Use thread_local to avoid per-call allocation
-    thread_local std::vector<int> nn_indices;    // indices of non-terminal candidates
-
-    nn_indices.clear();
-    nn_indices.reserve(n);
-
-    double best_val = -1e30;
-    int best_idx = 0;
-
-    // First pass: handle terminals, collect non-terminals
-    for (int i = 0; i < n; ++i) {
-        GameResult result = check_game_over(candidates[i]);
-        if (result != GameResult::NOT_OVER) {
-            double val = terminal_equity(result);
-            if (equities) equities[i] = val;
-            if (val > best_val) {
-                best_val = val;
-                best_idx = i;
+    } else {
+        thread_local std::vector<int> indices;
+        thread_local std::vector<std::array<float, NUM_OUTPUTS>> probabilities;
+        indices.clear();
+        indices.reserve(count);
+        // Terminal moves win ties against evaluated moves. Within each group
+        // the first equal value wins, as in the original batch methods.
+        for (int i = 0; i < count; ++i) {
+            const auto result = check_game_over(candidates[i]);
+            if (result != GameResult::NOT_OVER) {
+                record(i, terminal_equity(result), terminal_probs(result));
+            } else {
+                indices.push_back(i);
             }
-        } else {
-            nn_indices.push_back(i);
+        }
+        const int group_size = static_cast<int>(indices.size());
+        if (group_size > 0) {
+            probabilities.resize(group_size);
+            evaluate_board_group(*network, pure_race, candidates,
+                                 indices.data(), group_size, probabilities.data());
+            for (int j = 0; j < group_size; ++j) {
+                const auto& probs = probabilities[j];
+                record(indices[j], NeuralNetwork::compute_equity(probs), probs);
+            }
         }
     }
+    if (best_probs) *best_probs = best_result;
+    return best_index;
+}
 
-    if (nn_indices.empty()) return best_idx;
+} // namespace
 
-    const int nn_count = static_cast<int>(nn_indices.size());
-
-    // One group evaluation for all non-terminal candidates (delta evaluation
-    // off the first candidate, or Accelerate on Apple builds).
-    thread_local std::vector<std::array<float, NUM_OUTPUTS>> group_out;
-    group_out.resize(nn_count);
-    evaluate_board_group(nn, gp == GamePlan::PURERACE, candidates,
-                         nn_indices.data(), nn_count, group_out.data());
-
-    for (int j = 0; j < nn_count; ++j) {
-        const auto& out = group_out[j];
-        double val = NeuralNetwork::compute_equity(out);
-        if (equities) equities[nn_indices[j]] = val;
-        if (val > best_val) {
-            best_val = val;
-            best_idx = nn_indices[j];
-        }
-    }
-
-    return best_idx;
+int GamePlanStrategy::batch_evaluate_candidates_equity(
+    const std::vector<Board>& candidates, const Board& pre_move_board, double* equities) const
+{
+    return score_candidate_batch(candidates, pre_move_board, equities, nullptr, nullptr);
 }
 
 int GamePlanStrategy::batch_evaluate_candidates_equity_probs(
-    const std::vector<Board>& candidates,
-    const Board& pre_move_board,
-    double* equities,
-    std::array<float, NUM_OUTPUTS>* probs_out) const
+    const std::vector<Board>& candidates, const Board& pre_move_board,
+    double* equities, std::array<float, NUM_OUTPUTS>* probs_out) const
 {
-    const int n = static_cast<int>(candidates.size());
-    if (n == 0) return -1;
-    if (n == 1) {
-        if (equities || probs_out) {
-            GameResult result = check_game_over(candidates[0]);
-            if (result != GameResult::NOT_OVER) {
-                if (equities) equities[0] = terminal_equity(result);
-                if (probs_out) probs_out[0] = terminal_probs(result);
-            } else {
-                GamePlan gp = classify_game_plan(pre_move_board);
-                auto probs = probs_with_nn(candidates[0], gp);
-                if (probs_out) probs_out[0] = probs;
-                if (equities) equities[0] = NeuralNetwork::compute_equity(probs);
-            }
-        }
-        return 0;
-    }
-
-    GamePlan gp = classify_game_plan(pre_move_board);
-    const auto& nn = select_nn(gp);
-
-    thread_local std::vector<int> nn_indices;
-
-    nn_indices.clear();
-    nn_indices.reserve(n);
-
-    double best_val = -1e30;
-    int best_idx = 0;
-
-    // First pass: handle terminals, collect non-terminals
-    for (int i = 0; i < n; ++i) {
-        GameResult result = check_game_over(candidates[i]);
-        if (result != GameResult::NOT_OVER) {
-            double val = terminal_equity(result);
-            if (probs_out) probs_out[i] = terminal_probs(result);
-            if (equities) equities[i] = val;
-            if (val > best_val) {
-                best_val = val;
-                best_idx = i;
-            }
-        } else {
-            nn_indices.push_back(i);
-        }
-    }
-
-    if (nn_indices.empty()) return best_idx;
-
-    const int nn_count = static_cast<int>(nn_indices.size());
-
-    thread_local std::vector<std::array<float, NUM_OUTPUTS>> group_out;
-    group_out.resize(nn_count);
-    evaluate_board_group(nn, gp == GamePlan::PURERACE, candidates,
-                         nn_indices.data(), nn_count, group_out.data());
-
-    for (int j = 0; j < nn_count; ++j) {
-        const auto& out = group_out[j];
-        if (probs_out) probs_out[nn_indices[j]] = out;
-        double val = NeuralNetwork::compute_equity(out);
-        if (equities) equities[nn_indices[j]] = val;
-        if (val > best_val) {
-            best_val = val;
-            best_idx = nn_indices[j];
-        }
-    }
-
-    return best_idx;
+    return score_candidate_batch(candidates, pre_move_board, equities, probs_out, nullptr);
 }
 
 int GamePlanStrategy::batch_evaluate_candidates_best_prob(
-    const std::vector<Board>& candidates,
-    const Board& pre_move_board,
-    double* equities,
-    std::array<float, NUM_OUTPUTS>* best_probs_out) const
+    const std::vector<Board>& candidates, const Board& pre_move_board,
+    double* equities, std::array<float, NUM_OUTPUTS>* best_probs_out) const
 {
-    const int n = static_cast<int>(candidates.size());
-    if (n == 0) return -1;
-    if (n == 1) {
-        if (equities || best_probs_out) {
-            GameResult result = check_game_over(candidates[0]);
-            if (result != GameResult::NOT_OVER) {
-                if (equities) equities[0] = terminal_equity(result);
-                if (best_probs_out) {
-                    *best_probs_out = terminal_probs(result);
-                }
-            } else {
-                GamePlan gp = classify_game_plan(pre_move_board);
-                std::array<float, NUM_OUTPUTS> probs = probs_with_nn(candidates[0], gp);
-                if (best_probs_out) {
-                    *best_probs_out = probs;
-                }
-                if (equities) equities[0] = NeuralNetwork::compute_equity(probs);
-            }
-        }
-        return 0;
-    }
+    return score_candidate_batch(candidates, pre_move_board, equities, nullptr, best_probs_out);
+}
 
-    GamePlan gp = classify_game_plan(pre_move_board);
-    const auto& nn = select_nn(gp);
-
-    thread_local std::vector<int> nn_indices;
-    nn_indices.clear();
-    nn_indices.reserve(n);
-
-    double best_val = -1e30;
-    int best_idx = 0;
-    std::array<float, NUM_OUTPUTS> best_probs{};
-
-    for (int i = 0; i < n; ++i) {
-        GameResult result = check_game_over(candidates[i]);
-        if (result != GameResult::NOT_OVER) {
-            double val = terminal_equity(result);
-            if (equities) equities[i] = val;
-            if (val > best_val) {
-                best_val = val;
-                best_idx = i;
-                if (best_probs_out) {
-                    best_probs = terminal_probs(result);
-                }
-            }
-        } else {
-            nn_indices.push_back(i);
-        }
-    }
-
-    if (nn_indices.empty()) {
-        if (best_probs_out) {
-            *best_probs_out = best_probs;
-        }
-        return best_idx;
-    }
-
-    const int nn_count = static_cast<int>(nn_indices.size());
-
-    thread_local std::vector<std::array<float, NUM_OUTPUTS>> group_out;
-    group_out.resize(nn_count);
-    evaluate_board_group(nn, gp == GamePlan::PURERACE, candidates,
-                         nn_indices.data(), nn_count, group_out.data());
-
-    for (int j = 0; j < nn_count; ++j) {
-        const auto& out = group_out[j];
-        double val = NeuralNetwork::compute_equity(out);
-        if (equities) equities[nn_indices[j]] = val;
-        if (val > best_val) {
-            best_val = val;
-            best_idx = nn_indices[j];
-            best_probs = out;
-        }
-    }
-
-    if (best_probs_out) {
-        *best_probs_out = best_probs;
-    }
-
-    return best_idx;
+int GamePlanStrategy::score_candidate_batch(
+    const std::vector<Board>& candidates, const Board& pre_move_board, double* equities,
+    std::array<float, NUM_OUTPUTS>* per_move_probs,
+    std::array<float, NUM_OUTPUTS>* best_probs) const
+{
+    return score_game_plan_candidates(candidates, equities, per_move_probs, best_probs, [&] {
+        const auto plan = classify_game_plan(pre_move_board);
+        return std::tuple{&select_nn(plan), plan == GamePlan::PURERACE,
+                          [this, plan](const Board& board) { return probs_with_nn(board, plan); }};
+    });
 }
 
 // ===========================================================================
@@ -2255,198 +2173,36 @@ int GamePlanPairStrategy::evaluate_candidates_equity(
 }
 
 int GamePlanPairStrategy::batch_evaluate_candidates_equity(
-    const std::vector<Board>& candidates,
-    const Board& pre_move_board,
-    double* equities) const
+    const std::vector<Board>& candidates, const Board& pre_move_board, double* equities) const
 {
-    const int n = static_cast<int>(candidates.size());
-    if (n == 0) return -1;
-    if (n == 1) {
-        if (equities) {
-            GameResult result = check_game_over(candidates[0]);
-            equities[0] = (result != GameResult::NOT_OVER)
-                ? terminal_equity(result)
-                : evaluate_with_nn(candidates[0], select_nn_idx(pre_move_board));
-        }
-        return 0;
-    }
-
-    int nn_idx = select_nn_idx(pre_move_board);
-    const auto& nn = *nns_[nn_idx];
-    bool is_pr = (nn_idx == 0);
-
-    thread_local std::vector<int> nn_indices;
-    nn_indices.clear();
-    nn_indices.reserve(n);
-
-    double best_val = -1e30;
-    int best_idx = 0;
-
-    for (int i = 0; i < n; ++i) {
-        GameResult result = check_game_over(candidates[i]);
-        if (result != GameResult::NOT_OVER) {
-            double val = terminal_equity(result);
-            if (equities) equities[i] = val;
-            if (val > best_val) { best_val = val; best_idx = i; }
-        } else {
-            nn_indices.push_back(i);
-        }
-    }
-    if (nn_indices.empty()) return best_idx;
-
-    const int nn_count = static_cast<int>(nn_indices.size());
-    thread_local std::vector<std::array<float, NUM_OUTPUTS>> group_out;
-    group_out.resize(nn_count);
-    evaluate_board_group(nn, is_pr, candidates, nn_indices.data(), nn_count,
-                         group_out.data());
-
-    for (int j = 0; j < nn_count; ++j) {
-        const auto& out = group_out[j];
-        double val = NeuralNetwork::compute_equity(out);
-        if (equities) equities[nn_indices[j]] = val;
-        if (val > best_val) { best_val = val; best_idx = nn_indices[j]; }
-    }
-    return best_idx;
+    return score_candidate_batch(candidates, pre_move_board, equities, nullptr, nullptr);
 }
 
 int GamePlanPairStrategy::batch_evaluate_candidates_equity_probs(
-    const std::vector<Board>& candidates,
-    const Board& pre_move_board,
-    double* equities,
-    std::array<float, NUM_OUTPUTS>* probs_out) const
+    const std::vector<Board>& candidates, const Board& pre_move_board,
+    double* equities, std::array<float, NUM_OUTPUTS>* probs_out) const
 {
-    const int n = static_cast<int>(candidates.size());
-    if (n == 0) return -1;
-    if (n == 1) {
-        if (equities || probs_out) {
-            GameResult result = check_game_over(candidates[0]);
-            if (result != GameResult::NOT_OVER) {
-                if (probs_out) probs_out[0] = terminal_probs(result);
-                if (equities) equities[0] = terminal_equity(result);
-            } else {
-                int nn_idx = select_nn_idx(pre_move_board);
-                auto probs = probs_with_nn(candidates[0], nn_idx);
-                if (probs_out) probs_out[0] = probs;
-                if (equities) equities[0] = NeuralNetwork::compute_equity(probs);
-            }
-        }
-        return 0;
-    }
-
-    int nn_idx = select_nn_idx(pre_move_board);
-    const auto& nn = *nns_[nn_idx];
-    bool is_pr = (nn_idx == 0);
-
-    thread_local std::vector<int> nn_indices;
-    nn_indices.clear();
-    nn_indices.reserve(n);
-
-    double best_val = -1e30;
-    int best_idx = 0;
-
-    for (int i = 0; i < n; ++i) {
-        GameResult result = check_game_over(candidates[i]);
-        if (result != GameResult::NOT_OVER) {
-            double val = terminal_equity(result);
-            if (probs_out) probs_out[i] = terminal_probs(result);
-            if (equities) equities[i] = val;
-            if (val > best_val) { best_val = val; best_idx = i; }
-        } else {
-            nn_indices.push_back(i);
-        }
-    }
-    if (nn_indices.empty()) return best_idx;
-
-    const int nn_count = static_cast<int>(nn_indices.size());
-    thread_local std::vector<std::array<float, NUM_OUTPUTS>> group_out;
-    group_out.resize(nn_count);
-    evaluate_board_group(nn, is_pr, candidates, nn_indices.data(), nn_count,
-                         group_out.data());
-
-    for (int j = 0; j < nn_count; ++j) {
-        const auto& out = group_out[j];
-        if (probs_out) probs_out[nn_indices[j]] = out;
-        double val = NeuralNetwork::compute_equity(out);
-        if (equities) equities[nn_indices[j]] = val;
-        if (val > best_val) {
-            best_val = val; best_idx = nn_indices[j];
-        }
-    }
-    return best_idx;
+    return score_candidate_batch(candidates, pre_move_board, equities, probs_out, nullptr);
 }
 
 int GamePlanPairStrategy::batch_evaluate_candidates_best_prob(
-    const std::vector<Board>& candidates,
-    const Board& pre_move_board,
-    double* equities,
-    std::array<float, NUM_OUTPUTS>* best_probs_out) const
+    const std::vector<Board>& candidates, const Board& pre_move_board,
+    double* equities, std::array<float, NUM_OUTPUTS>* best_probs_out) const
 {
-    const int n = static_cast<int>(candidates.size());
-    if (n == 0) return -1;
-    if (n == 1) {
-        if (equities || best_probs_out) {
-            GameResult result = check_game_over(candidates[0]);
-            if (result != GameResult::NOT_OVER) {
-                if (equities) equities[0] = terminal_equity(result);
-                if (best_probs_out) *best_probs_out = terminal_probs(result);
-            } else {
-                int nn_idx = select_nn_idx(pre_move_board);
-                auto probs = probs_with_nn(candidates[0], nn_idx);
-                if (best_probs_out) *best_probs_out = probs;
-                if (equities) equities[0] = NeuralNetwork::compute_equity(probs);
-            }
-        }
-        return 0;
-    }
+    return score_candidate_batch(candidates, pre_move_board, equities, nullptr, best_probs_out);
+}
 
-    int nn_idx = select_nn_idx(pre_move_board);
-    const auto& nn = *nns_[nn_idx];
-    bool is_pr = (nn_idx == 0);
-
-    thread_local std::vector<int> nn_indices;
-    nn_indices.clear();
-    nn_indices.reserve(n);
-
-    double best_val = -1e30;
-    int best_idx = 0;
-    std::array<float, NUM_OUTPUTS> best_probs{};
-
-    for (int i = 0; i < n; ++i) {
-        GameResult result = check_game_over(candidates[i]);
-        if (result != GameResult::NOT_OVER) {
-            double val = terminal_equity(result);
-            if (equities) equities[i] = val;
-            if (val > best_val) {
-                best_val = val; best_idx = i;
-                if (best_probs_out) best_probs = terminal_probs(result);
-            }
-        } else {
-            nn_indices.push_back(i);
-        }
-    }
-    if (nn_indices.empty()) {
-        if (best_probs_out) *best_probs_out = best_probs;
-        return best_idx;
-    }
-
-    const int nn_count = static_cast<int>(nn_indices.size());
-    thread_local std::vector<std::array<float, NUM_OUTPUTS>> group_out;
-    group_out.resize(nn_count);
-    evaluate_board_group(nn, is_pr, candidates, nn_indices.data(), nn_count,
-                         group_out.data());
-
-    for (int j = 0; j < nn_count; ++j) {
-        const auto& out = group_out[j];
-        double val = NeuralNetwork::compute_equity(out);
-        if (equities) equities[nn_indices[j]] = val;
-        if (val > best_val) {
-            best_val = val; best_idx = nn_indices[j];
-            if (best_probs_out) best_probs = out;
-        }
-    }
-
-    if (best_probs_out) *best_probs_out = best_probs;
-    return best_idx;
+int GamePlanPairStrategy::score_candidate_batch(
+    const std::vector<Board>& candidates, const Board& pre_move_board, double* equities,
+    std::array<float, NUM_OUTPUTS>* per_move_probs,
+    std::array<float, NUM_OUTPUTS>* best_probs) const
+{
+    return score_game_plan_candidates(candidates, equities, per_move_probs, best_probs, [&] {
+        const int index = select_nn_idx(pre_move_board);
+        const auto* network = nns_[index].get();
+        return std::tuple{network, index == 0,
+                          [this, index](const Board& board) { return probs_with_nn(board, index); }};
+    });
 }
 
 // ===========================================================================
@@ -2653,58 +2409,103 @@ BackgamePhase backgame_phase(const Board& board) {
     return backgame_phase(board, p1, p2);
 }
 
-BackgameAwarePairStrategy::BackgameAwarePairStrategy(
-    const std::vector<std::string>& weight_paths,
-    const std::vector<int>& hidden_sizes,
-    bool phase_containment)
-{
-    const int n = static_cast<int>(weight_paths.size());
+
+namespace {
+
+RoutingManifest legacy_routing(size_t weights, size_t hiddens, bool phase_containment) {
+    const int n = static_cast<int>(weights);
     if (phase_containment) {
         if ((n != NUM_BACKGAME_PAIR_NNS_PHASED &&
              n != NUM_BACKGAME_PAIR_NNS_PHASED_SNAKE &&
              n != NUM_BACKGAME_PAIR_NNS_PHASED_MASSIVE) ||
-            static_cast<int>(hidden_sizes.size()) != n) {
+            hiddens != weights) {
             throw std::runtime_error(
                 "Phased BackgameAwarePairStrategy requires " +
                 std::to_string(NUM_BACKGAME_PAIR_NNS_PHASED) + ", " +
                 std::to_string(NUM_BACKGAME_PAIR_NNS_PHASED_SNAKE) + " or " +
                 std::to_string(NUM_BACKGAME_PAIR_NNS_PHASED_MASSIVE) +
                 " weight paths and matching hidden sizes, got " +
-                std::to_string(weight_paths.size()) + "/" +
-                std::to_string(hidden_sizes.size()));
+                std::to_string(weights) + "/" +
+                std::to_string(hiddens));
         }
     } else if ((n != NUM_BACKGAME_PAIR_NNS && n != NUM_BACKGAME_PAIR_NNS_HYBRID &&
                 n != NUM_BACKGAME_PAIR_NNS_CATEGORIZED) ||
-               static_cast<int>(hidden_sizes.size()) != n) {
+               hiddens != weights) {
         throw std::runtime_error(
             "BackgameAwarePairStrategy requires " +
             std::to_string(NUM_BACKGAME_PAIR_NNS) + ", " +
             std::to_string(NUM_BACKGAME_PAIR_NNS_CATEGORIZED) + " or " +
             std::to_string(NUM_BACKGAME_PAIR_NNS_HYBRID) +
             " weight paths and matching hidden sizes, got " +
-            std::to_string(weight_paths.size()) + "/" +
-            std::to_string(hidden_sizes.size()));
+            std::to_string(weights) + "/" +
+            std::to_string(hiddens));
     }
-    phase_containment_ = phase_containment;
-    snake_ = phase_containment && (n == NUM_BACKGAME_PAIR_NNS_PHASED_SNAKE ||
-                                   n == NUM_BACKGAME_PAIR_NNS_PHASED_MASSIVE);
-    massive_ = phase_containment && (n == NUM_BACKGAME_PAIR_NNS_PHASED_MASSIVE);
-    // Root routing defaults to the snake net alone (on both the 23- and the
-    // 24-NN layouts): the massive net is NOT pinned, because it values the
-    // non-massive positions below a massive root worse than per-node routing
-    // does (measured 2026-09-05: neighbourhood ER 30.0 vs 25.9, and the
-    // massive folder no better at 2/3-ply pinned than per-node). The
-    // NEONGAMMON_NO_ROOT_ROUTING environment variable disables root routing
-    // process-wide (A/B scoring: the cube path builds its strategy inside
-    // C++, out of reach of the Python set_root_pinned control).
-    // (BGSAGE_NO_ROOT_ROUTING is the name from before the bgsage -> neongammon
-    // rename and is still honoured.)
-    if (snake_ && !std::getenv("NEONGAMMON_NO_ROOT_ROUTING") &&
-        !std::getenv("BGSAGE_NO_ROOT_ROUTING")) root_pinned_ = {22};
-    blended_backgame_ = !phase_containment && (n == NUM_BACKGAME_PAIR_NNS_HYBRID);
-    categorized_backgame_ = phase_containment || (n == NUM_BACKGAME_PAIR_NNS_CATEGORIZED);
+
+    RoutingManifest routing;
+    if (phase_containment || n == NUM_BACKGAME_PAIR_NNS_CATEGORIZED) {
+        routing.backgame_categories = {17, 18, 19};
+    } else {
+        routing.side_backgame = {17, 18};
+        if (n == NUM_BACKGAME_PAIR_NNS_HYBRID) routing.blend_extra = {19, 20};
+    }
+    if (phase_containment) {
+        routing.early_containment = 20;
+        routing.containment = 21;
+        if (n >= NUM_BACKGAME_PAIR_NNS_PHASED_SNAKE) {
+            routing.snake = 22;
+            routing.root_pins = {22};
+        }
+        if (n == NUM_BACKGAME_PAIR_NNS_PHASED_MASSIVE) routing.massive = 23;
+    }
+    return routing;
+}
+
+} // namespace
+
+RoutedStrategy::RoutedStrategy(const std::vector<std::string>& weight_paths,
+                               const std::vector<int>& hidden_sizes, bool phase_containment)
+    : RoutedStrategy(weight_paths, hidden_sizes,
+                     legacy_routing(weight_paths.size(), hidden_sizes.size(), phase_containment))
+{}
+
+RoutedStrategy::RoutedStrategy(const std::vector<std::string>& weight_paths,
+                               const std::vector<int>& hidden_sizes, RoutingManifest routing)
+    : routing_(std::move(routing))
+{
+    if (weight_paths.empty() || weight_paths.size() >= BLENDED_SENTINEL_BASE ||
+        weight_paths.size() != hidden_sizes.size()) {
+        throw std::invalid_argument("Routing requires equally sized, nonempty lists of weights and hidden sizes");
+    }
+    const int n = static_cast<int>(weight_paths.size());
+    const auto validate_contact = [n](int slot) {
+        if (slot <= 0 || slot >= n) {
+            throw std::invalid_argument("Contact routes require an existing non-race network slot");
+        }
+    };
+    const auto validate_optional = [&](int slot) {
+        if (slot != -1) validate_contact(slot);
+    };
+    for (int slot : routing_.contact_pairs) validate_contact(slot);
+    for (int slot : routing_.root_pins) validate_contact(slot);
+    for (int slot : routing_.backgame_categories) validate_optional(slot);
+    for (int slot : routing_.side_backgame) validate_optional(slot);
+    for (int slot : {routing_.snake, routing_.containment, routing_.massive,
+                     routing_.early_containment}) validate_optional(slot);
+    for (int side = 0; side < 2; ++side) {
+        const int extra = routing_.blend_extra[side];
+        validate_optional(extra);
+        if (extra >= 0 && routing_.side_backgame[side] < 0) {
+            throw std::invalid_argument("A backgame blend requires a base slot for the same side");
+        }
+    }
+    categorized_backgame_ = std::any_of(routing_.backgame_categories.begin(),
+                                        routing_.backgame_categories.end(),
+                                        [](int slot) { return slot >= 0; });
     nns_.resize(n);
     for (int i = 0; i < n; ++i) {
+        if (hidden_sizes[i] <= 0 || hidden_sizes[i] > std::numeric_limits<int>::max() / (EXTENDED_CONTACT_INPUTS + 1)) {
+            throw std::invalid_argument("Invalid network hidden size");
+        }
         int n_inputs = (i == 0) ? TESAURO_INPUTS : EXTENDED_CONTACT_INPUTS;
         nns_[i] = std::make_shared<NeuralNetwork>(hidden_sizes[i], n_inputs);
         if (!nns_[i]->load_weights(weight_paths[i]))
@@ -2715,43 +2516,56 @@ BackgameAwarePairStrategy::BackgameAwarePairStrategy(
     }
 }
 
-int BackgameAwarePairStrategy::root_pin_for(const Board& root) const {
-    if (root_pinned_.empty()) return -1;
+std::array<float, NUM_OUTPUTS> RoutedStrategy::evaluate_pinned_probs(
+    const Board& board, bool race, int pinned) const
+{
+    if (pinned >= 0 && !race) return probs_with_nn(board, pinned);
+    return evaluate_probs(board, race);
+}
+
+RolloutVRNetwork RoutedStrategy::rollout_vr_network(const Board& board) const {
+    const int index = nn_index_for(board);
+    if (index >= BLENDED_SENTINEL_BASE) return {};
+    return {nns_[index].get(), index == 0};
+}
+
+int RoutedStrategy::root_pin_for(const Board& root) const {
+    if (routing_.root_pins.empty()) return -1;
     const int idx = select_nn_idx(root);
-    for (int p : root_pinned_) if (p == idx) return idx;
+    for (int p : routing_.root_pins) if (p == idx) return idx;
     return -1;
 }
 
-int BackgameAwarePairStrategy::select_nn_idx(const Board& board) const {
+int RoutedStrategy::select_nn_idx(const Board& board) const {
     if (is_race(board)) return 0;
     const Board opponent = flip(board);
-    if (snake_ && (p1_holds_snake(board) || p1_holds_snake(opponent))) return 22;
-    if (phase_containment_ && (p2_is_escaper(board) || p2_is_escaper(opponent))) return 21;
+    if (routing_.snake >= 0 && (p1_holds_snake(board) || p1_holds_snake(opponent)))
+        return routing_.snake;
+    if (routing_.containment >= 0 && (p2_is_escaper(board) || p2_is_escaper(opponent)))
+        return routing_.containment;
     const auto [player_pips, opp_pips] = pip_counts(board);
-    if (massive_ && ((player_pips > opp_pips && p1_has_massive_structure(board)) ||
-                     (opp_pips > player_pips && p1_has_massive_structure(opponent)))) return 23;
+    if (routing_.massive >= 0 &&
+        ((player_pips > opp_pips && p1_has_massive_structure(board)) ||
+         (opp_pips > player_pips && p1_has_massive_structure(opponent))))
+        return routing_.massive;
     const GamePlan player_gp = classify_contact_game_plan(board, player_pips, opp_pips);
     const GamePlan opponent_gp = classify_contact_game_plan(opponent, opp_pips, player_pips);
 
-    // Stage 11 (20 NNs): the same detection as below, but the backgame NN is
-    // picked by the backgame's CATEGORY — 17 deep, 18 middle, 19 double-anchor
-    // — the same NN whichever side holds it.
     if (categorized_backgame_) {
-        BackgameCategory cat =
+        const auto category =
             backgame_category_given_plans(board, player_gp, opponent_gp, player_pips, opp_pips);
-        if (cat != BackgameCategory::NONE)
-            return 17 + static_cast<int>(cat);
-        // Phased layout: a containment position the plan-pair gate rejected
-        // (the racer's block reads as priming, or the holder's) goes to the
-        // early-containment NN instead of the standard pair net.
-        if (phase_containment_ &&
-            backgame_phase(board, player_pips, opp_pips) == BackgamePhase::EARLY_CONTAINMENT)
-            return 20;
-        return 1 + game_plan_pair_index(player_gp, opponent_gp);
+        if (category != BackgameCategory::NONE) {
+            const int slot = routing_.backgame_categories[static_cast<int>(category)];
+            if (slot >= 0) return slot;
+        }
     }
+    if (routing_.early_containment >= 0 &&
+        backgame_phase(board, player_pips, opp_pips) == BackgamePhase::EARLY_CONTAINMENT)
+        return routing_.early_containment;
 
     // Player back game: (anchoring, racing) + player behind + 2+ anchors in opp home
-    if (player_gp == GamePlan::ANCHORING && opponent_gp == GamePlan::RACING) {
+    if (routing_.side_backgame[0] >= 0 &&
+        player_gp == GamePlan::ANCHORING && opponent_gp == GamePlan::RACING) {
         if (player_pips > opp_pips) {
             int anchors = 0, back = board[25];
             for (int pt = 19; pt <= 24; ++pt) {
@@ -2759,16 +2573,17 @@ int BackgameAwarePairStrategy::select_nn_idx(const Board& board) const {
                 if (board[pt] > 0) back += board[pt];
             }
             if (anchors >= 2) {
-                if (blended_backgame_ &&
+                if (routing_.blend_extra[0] >= 0 &&
                     backgame_gate(anchors, back, player_pips))
                     return BLENDED_PLAYER_BG_IDX;
-                return 17;
+                return routing_.side_backgame[0];
             }
         }
     }
 
     // Opponent back game: (racing, anchoring) + opp behind + 2+ opp anchors in player home
-    if (player_gp == GamePlan::RACING && opponent_gp == GamePlan::ANCHORING) {
+    if (routing_.side_backgame[1] >= 0 &&
+        player_gp == GamePlan::RACING && opponent_gp == GamePlan::ANCHORING) {
         if (opp_pips > player_pips) {
             int opp_anchors = 0, opp_back = board[0];
             for (int pt = 1; pt <= 6; ++pt) {
@@ -2776,23 +2591,24 @@ int BackgameAwarePairStrategy::select_nn_idx(const Board& board) const {
                 if (board[pt] < 0) opp_back -= board[pt];
             }
             if (opp_anchors >= 2) {
-                if (blended_backgame_ &&
+                if (routing_.blend_extra[1] >= 0 &&
                     backgame_gate(opp_anchors, opp_back, opp_pips))
                     return BLENDED_OPPONENT_BG_IDX;
-                return 18;
+                return routing_.side_backgame[1];
             }
         }
     }
 
-    return 1 + game_plan_pair_index(player_gp, opponent_gp);
+    return routing_.contact_pairs[game_plan_pair_index(player_gp, opponent_gp)];
 }
 
-std::array<float, NN_OUTPUTS> BackgameAwarePairStrategy::blended_backgame_probs(
+std::array<float, NN_OUTPUTS> RoutedStrategy::blended_backgame_probs(
     const Board& board, bool player_bg) const
 {
     auto inputs = compute_extended_contact_inputs(board);
-    auto base = nns_[player_bg ? 17 : 18]->forward(inputs.data());
-    auto extra = nns_[player_bg ? 19 : 20]->forward(inputs.data());
+    const int side = player_bg ? 0 : 1;
+    auto base = nns_[routing_.side_backgame[side]]->forward(inputs.data());
+    auto extra = nns_[routing_.blend_extra[side]]->forward(inputs.data());
     auto [player_pips, opp_pips] = pip_counts(board);
     int anchors = 0;
     if (player_bg) {
@@ -2810,7 +2626,7 @@ std::array<float, NN_OUTPUTS> BackgameAwarePairStrategy::blended_backgame_probs(
     return out;
 }
 
-double BackgameAwarePairStrategy::evaluate_with_nn(const Board& board, int nn_idx) const {
+double RoutedStrategy::evaluate_with_nn(const Board& board, int nn_idx) const {
     if (nn_idx >= BLENDED_SENTINEL_BASE)
         return NeuralNetwork::compute_equity(
             blended_backgame_probs(board, nn_idx == BLENDED_PLAYER_BG_IDX));
@@ -2826,7 +2642,7 @@ double BackgameAwarePairStrategy::evaluate_with_nn(const Board& board, int nn_id
     }
 }
 
-std::array<float, NN_OUTPUTS> BackgameAwarePairStrategy::probs_with_nn(
+std::array<float, NN_OUTPUTS> RoutedStrategy::probs_with_nn(
     const Board& board, int nn_idx) const
 {
     if (nn_idx >= BLENDED_SENTINEL_BASE)
@@ -2841,13 +2657,13 @@ std::array<float, NN_OUTPUTS> BackgameAwarePairStrategy::probs_with_nn(
     }
 }
 
-double BackgameAwarePairStrategy::evaluate(const Board& board, bool /*pre_move_is_race*/) const {
+double RoutedStrategy::evaluate(const Board& board, bool /*pre_move_is_race*/) const {
     GameResult result = check_game_over(board);
     if (result != GameResult::NOT_OVER) return terminal_equity(result);
     return evaluate_with_nn(board, select_nn_idx(board));
 }
 
-std::array<float, NN_OUTPUTS> BackgameAwarePairStrategy::evaluate_probs(
+std::array<float, NN_OUTPUTS> RoutedStrategy::evaluate_probs(
     const Board& board, bool /*pre_move_is_race*/) const
 {
     GameResult result = check_game_over(board);
@@ -2855,7 +2671,7 @@ std::array<float, NN_OUTPUTS> BackgameAwarePairStrategy::evaluate_probs(
     return probs_with_nn(board, select_nn_idx(board));
 }
 
-std::array<float, NN_OUTPUTS> BackgameAwarePairStrategy::evaluate_probs(
+std::array<float, NN_OUTPUTS> RoutedStrategy::evaluate_probs(
     const Board& board, const Board& pre_move_board) const
 {
     GameResult result = check_game_over(board);
@@ -2863,7 +2679,7 @@ std::array<float, NN_OUTPUTS> BackgameAwarePairStrategy::evaluate_probs(
     return probs_with_nn(board, select_nn_idx(pre_move_board));
 }
 
-int BackgameAwarePairStrategy::best_move_index(const std::vector<Board>& candidates,
+int RoutedStrategy::best_move_index(const std::vector<Board>& candidates,
                                                 bool pre_move_is_race) const {
     int nn_idx = pre_move_is_race ? 0 : 6;  // fallback: purerace or att_att
     const int n = static_cast<int>(candidates.size());
@@ -2880,7 +2696,7 @@ int BackgameAwarePairStrategy::best_move_index(const std::vector<Board>& candida
     return best_idx;
 }
 
-int BackgameAwarePairStrategy::best_move_index(const std::vector<Board>& candidates,
+int RoutedStrategy::best_move_index(const std::vector<Board>& candidates,
                                                 const Board& pre_move_board) const {
     const int n = static_cast<int>(candidates.size());
     if (n == 1) return 0;
@@ -2897,7 +2713,7 @@ int BackgameAwarePairStrategy::best_move_index(const std::vector<Board>& candida
     return best_idx;
 }
 
-int BackgameAwarePairStrategy::evaluate_candidates_equity(
+int RoutedStrategy::evaluate_candidates_equity(
     const std::vector<Board>& candidates,
     const Board& pre_move_board,
     double* equities) const
@@ -2919,247 +2735,37 @@ int BackgameAwarePairStrategy::evaluate_candidates_equity(
     return best_idx;
 }
 
-int BackgameAwarePairStrategy::batch_evaluate_candidates_equity(
-    const std::vector<Board>& candidates,
-    const Board& pre_move_board,
-    double* equities) const
+int RoutedStrategy::batch_evaluate_candidates_equity(
+    const std::vector<Board>& candidates, const Board& pre_move_board, double* equities) const
 {
-    const int n = static_cast<int>(candidates.size());
-    if (n == 0) return -1;
-    if (n == 1) {
-        if (equities) {
-            GameResult result = check_game_over(candidates[0]);
-            equities[0] = (result != GameResult::NOT_OVER)
-                ? terminal_equity(result)
-                : evaluate_with_nn(candidates[0], select_nn_idx(pre_move_board));
-        }
-        return 0;
-    }
-
-    int nn_idx = select_nn_idx(pre_move_board);
-    if (nn_idx >= BLENDED_SENTINEL_BASE) {
-        // Blended backgame: candidates cannot share a delta-eval base (each
-        // gets its own pip-ramped mix), so use the plain per-candidate loop.
-        return evaluate_candidates_equity(candidates, pre_move_board, equities);
-    }
-    const auto& nn = *nns_[nn_idx];
-    bool is_pr = (nn_idx == 0);
-
-    thread_local std::vector<int> nn_indices;
-    nn_indices.clear();
-    nn_indices.reserve(n);
-
-    double best_val = -1e30;
-    int best_idx = 0;
-
-    for (int i = 0; i < n; ++i) {
-        GameResult result = check_game_over(candidates[i]);
-        if (result != GameResult::NOT_OVER) {
-            double val = terminal_equity(result);
-            if (equities) equities[i] = val;
-            if (val > best_val) { best_val = val; best_idx = i; }
-        } else {
-            nn_indices.push_back(i);
-        }
-    }
-    if (nn_indices.empty()) return best_idx;
-
-    const int nn_count = static_cast<int>(nn_indices.size());
-    thread_local std::vector<std::array<float, NUM_OUTPUTS>> group_out;
-    group_out.resize(nn_count);
-    evaluate_board_group(nn, is_pr, candidates, nn_indices.data(), nn_count,
-                         group_out.data());
-
-    for (int j = 0; j < nn_count; ++j) {
-        const auto& out = group_out[j];
-        double val = NeuralNetwork::compute_equity(out);
-        if (equities) equities[nn_indices[j]] = val;
-        if (val > best_val) { best_val = val; best_idx = nn_indices[j]; }
-    }
-    return best_idx;
+    return score_candidate_batch(candidates, pre_move_board, equities, nullptr, nullptr);
 }
 
-int BackgameAwarePairStrategy::batch_evaluate_candidates_equity_probs(
-    const std::vector<Board>& candidates,
-    const Board& pre_move_board,
-    double* equities,
-    std::array<float, NUM_OUTPUTS>* probs_out) const
+int RoutedStrategy::batch_evaluate_candidates_equity_probs(
+    const std::vector<Board>& candidates, const Board& pre_move_board,
+    double* equities, std::array<float, NUM_OUTPUTS>* probs_out) const
 {
-    const int n = static_cast<int>(candidates.size());
-    if (n == 0) return -1;
-    if (n == 1) {
-        if (equities || probs_out) {
-            GameResult result = check_game_over(candidates[0]);
-            if (result != GameResult::NOT_OVER) {
-                if (probs_out) probs_out[0] = terminal_probs(result);
-                if (equities) equities[0] = terminal_equity(result);
-            } else {
-                int nn_idx = select_nn_idx(pre_move_board);
-                auto probs = probs_with_nn(candidates[0], nn_idx);
-                if (probs_out) probs_out[0] = probs;
-                if (equities) equities[0] = NeuralNetwork::compute_equity(probs);
-            }
-        }
-        return 0;
-    }
-
-    int nn_idx = select_nn_idx(pre_move_board);
-    if (nn_idx >= BLENDED_SENTINEL_BASE) {
-        // Blended backgame: no shared delta-eval base; plain per-candidate loop.
-        double bv = -1e30;
-        int bi = 0;
-        for (int i = 0; i < n; ++i) {
-            GameResult result = check_game_over(candidates[i]);
-            std::array<float, NUM_OUTPUTS> p;
-            double val;
-            if (result != GameResult::NOT_OVER) {
-                p = terminal_probs(result);
-                val = terminal_equity(result);
-            } else {
-                p = probs_with_nn(candidates[i], nn_idx);
-                val = NeuralNetwork::compute_equity(p);
-            }
-            if (probs_out) probs_out[i] = p;
-            if (equities) equities[i] = val;
-            if (val > bv) { bv = val; bi = i; }
-        }
-        return bi;
-    }
-    const auto& nn = *nns_[nn_idx];
-    bool is_pr = (nn_idx == 0);
-
-    thread_local std::vector<int> nn_indices;
-    nn_indices.clear();
-    nn_indices.reserve(n);
-
-    double best_val = -1e30;
-    int best_idx = 0;
-
-    for (int i = 0; i < n; ++i) {
-        GameResult result = check_game_over(candidates[i]);
-        if (result != GameResult::NOT_OVER) {
-            double val = terminal_equity(result);
-            if (probs_out) probs_out[i] = terminal_probs(result);
-            if (equities) equities[i] = val;
-            if (val > best_val) { best_val = val; best_idx = i; }
-        } else {
-            nn_indices.push_back(i);
-        }
-    }
-    if (nn_indices.empty()) return best_idx;
-
-    const int nn_count = static_cast<int>(nn_indices.size());
-    thread_local std::vector<std::array<float, NUM_OUTPUTS>> group_out;
-    group_out.resize(nn_count);
-    evaluate_board_group(nn, is_pr, candidates, nn_indices.data(), nn_count,
-                         group_out.data());
-
-    for (int j = 0; j < nn_count; ++j) {
-        const auto& out = group_out[j];
-        if (probs_out) probs_out[nn_indices[j]] = out;
-        double val = NeuralNetwork::compute_equity(out);
-        if (equities) equities[nn_indices[j]] = val;
-        if (val > best_val) {
-            best_val = val; best_idx = nn_indices[j];
-        }
-    }
-    return best_idx;
+    return score_candidate_batch(candidates, pre_move_board, equities, probs_out, nullptr);
 }
 
-int BackgameAwarePairStrategy::batch_evaluate_candidates_best_prob(
-    const std::vector<Board>& candidates,
-    const Board& pre_move_board,
-    double* equities,
-    std::array<float, NUM_OUTPUTS>* best_probs_out) const
+int RoutedStrategy::batch_evaluate_candidates_best_prob(
+    const std::vector<Board>& candidates, const Board& pre_move_board,
+    double* equities, std::array<float, NUM_OUTPUTS>* best_probs_out) const
 {
-    const int n = static_cast<int>(candidates.size());
-    if (n == 0) return -1;
-    if (n == 1) {
-        if (equities || best_probs_out) {
-            GameResult result = check_game_over(candidates[0]);
-            if (result != GameResult::NOT_OVER) {
-                if (equities) equities[0] = terminal_equity(result);
-                if (best_probs_out) *best_probs_out = terminal_probs(result);
-            } else {
-                int nn_idx = select_nn_idx(pre_move_board);
-                auto probs = probs_with_nn(candidates[0], nn_idx);
-                if (best_probs_out) *best_probs_out = probs;
-                if (equities) equities[0] = NeuralNetwork::compute_equity(probs);
-            }
-        }
-        return 0;
-    }
+    return score_candidate_batch(candidates, pre_move_board, equities, nullptr, best_probs_out);
+}
 
-    int nn_idx = select_nn_idx(pre_move_board);
-    if (nn_idx >= BLENDED_SENTINEL_BASE) {
-        // Blended backgame: no shared delta-eval base; plain per-candidate loop.
-        double bv = -1e30;
-        int bi = 0;
-        std::array<float, NUM_OUTPUTS> bp{};
-        for (int i = 0; i < n; ++i) {
-            GameResult result = check_game_over(candidates[i]);
-            std::array<float, NUM_OUTPUTS> p;
-            double val;
-            if (result != GameResult::NOT_OVER) {
-                p = terminal_probs(result);
-                val = terminal_equity(result);
-            } else {
-                p = probs_with_nn(candidates[i], nn_idx);
-                val = NeuralNetwork::compute_equity(p);
-            }
-            if (equities) equities[i] = val;
-            if (val > bv) { bv = val; bi = i; bp = p; }
-        }
-        if (best_probs_out) *best_probs_out = bp;
-        return bi;
-    }
-    const auto& nn = *nns_[nn_idx];
-    bool is_pr = (nn_idx == 0);
-
-    thread_local std::vector<int> nn_indices;
-    nn_indices.clear();
-    nn_indices.reserve(n);
-
-    double best_val = -1e30;
-    int best_idx = 0;
-    std::array<float, NUM_OUTPUTS> best_probs{};
-
-    for (int i = 0; i < n; ++i) {
-        GameResult result = check_game_over(candidates[i]);
-        if (result != GameResult::NOT_OVER) {
-            double val = terminal_equity(result);
-            if (equities) equities[i] = val;
-            if (val > best_val) {
-                best_val = val; best_idx = i;
-                if (best_probs_out) best_probs = terminal_probs(result);
-            }
-        } else {
-            nn_indices.push_back(i);
-        }
-    }
-    if (nn_indices.empty()) {
-        if (best_probs_out) *best_probs_out = best_probs;
-        return best_idx;
-    }
-
-    const int nn_count = static_cast<int>(nn_indices.size());
-    thread_local std::vector<std::array<float, NUM_OUTPUTS>> group_out;
-    group_out.resize(nn_count);
-    evaluate_board_group(nn, is_pr, candidates, nn_indices.data(), nn_count,
-                         group_out.data());
-
-    for (int j = 0; j < nn_count; ++j) {
-        const auto& out = group_out[j];
-        double val = NeuralNetwork::compute_equity(out);
-        if (equities) equities[nn_indices[j]] = val;
-        if (val > best_val) {
-            best_val = val; best_idx = nn_indices[j];
-            if (best_probs_out) best_probs = out;
-        }
-    }
-
-    if (best_probs_out) *best_probs_out = best_probs;
-    return best_idx;
+int RoutedStrategy::score_candidate_batch(
+    const std::vector<Board>& candidates, const Board& pre_move_board, double* equities,
+    std::array<float, NUM_OUTPUTS>* per_move_probs,
+    std::array<float, NUM_OUTPUTS>* best_probs) const
+{
+    return score_game_plan_candidates(candidates, equities, per_move_probs, best_probs, [&] {
+        const int index = select_nn_idx(pre_move_board);
+        const auto* network = index >= BLENDED_SENTINEL_BASE ? nullptr : nns_[index].get();
+        return std::tuple{network, index == 0,
+                          [this, index](const Board& board) { return probs_with_nn(board, index); }};
+    });
 }
 
 } // namespace bgbot

@@ -152,13 +152,6 @@ struct SharedPosCache {
         entry->state.store(STATE_READY, std::memory_order_release);
     }
 
-    void abandon(Entry* entry) {
-        if (!entry) return;
-        entry->hash = 0;
-        entry->plies = 0;
-        entry->state.store(STATE_EMPTY, std::memory_order_release);
-    }
-
     void insert(std::size_t h, int plies, const Board& board,
                 const std::array<float, NUM_OUTPUTS>& probs) {
         ensure_entries();
@@ -320,7 +313,10 @@ public:
         int* out_indices) const override;
 
     // Cache management.
-    void clear_cache() const;
+    void clear_cache() const override;
+
+    int rollout_cubeless_move(const std::vector<Board>& candidates,
+                              const Board& pre_move_board) const override;
     size_t cache_size() const;
     size_t cache_hits() const;
     size_t cache_misses() const;
@@ -336,12 +332,12 @@ public:
     // filter_strat_ in BearoffStrategy so leaf evaluations short-circuit
     // through the DB at any depth (including the plies==2 fast path that
     // calls base_->batch_evaluate_candidates_best_prob directly).
-    void set_bearoff_db(const BearoffDB* db);
+    void set_bearoff_db(const BearoffDB* db) override;
     const BearoffDB* bearoff_db() const { return bearoff_db_; }
 
     // Set a cheap filter strategy (e.g. PubEval) for pre-filtering opponent
     // candidates in N-ply evaluation before full-model scoring.
-    void set_move_prefilter(std::shared_ptr<Strategy> filter) { move_prefilter_ = std::move(filter); }
+    void set_move_prefilter(std::shared_ptr<Strategy> filter) override { move_prefilter_ = std::move(filter); }
 
     // PubEval prefilter parameters for N-ply evaluation. When the number of
     // opponent candidates exceeds prefilter_threshold, PubEval narrows them to

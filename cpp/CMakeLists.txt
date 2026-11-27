@@ -10,6 +10,8 @@ option(BGBOT_BUILD_PYTHON "Build the pybind11 Python extension" ON)
 # benchmark & profiler executables. The wheel build in ../CMakeLists.txt sets
 # this to OFF to keep the pybind11 module as the only compiled target.
 option(BGBOT_BUILD_APPS "Build benchmark/profiler executables" ON)
+option(BGBOT_BUILD_EXPERIMENTS "Build experimental benchmark and profiler programs" OFF)
+option(BGBOT_BUILD_MOVE_ARRAY_PROBE "Build the private move generator comparison module" OFF)
 
 # Paths are written relative to this listfile's directory so the file can be
 # either used as the top-level CMakeLists (cmake -S cpp) or include()'d from
@@ -112,8 +114,29 @@ if(BGBOT_BUILD_APPS)
     target_link_libraries(profile_cube_benchmark PRIVATE bgbot_lib)
 endif()
 
+if(BGBOT_BUILD_EXPERIMENTS)
+    foreach(app IN ITEMS
+            benchmark_3t_experiment benchmark_3t_profile profile_0ply
+            profile_nn_inference profile_training test_benchmark_crash)
+        add_executable(${app} ${BGBOT_CPU_ROOT}/src/${app}.cpp)
+        target_link_libraries(${app} PRIVATE bgbot_lib)
+    endforeach()
+    add_executable(bgbot_pubeval_demo ${BGBOT_CPU_ROOT}/src/main.cpp)
+    target_link_libraries(bgbot_pubeval_demo PRIVATE bgbot_lib)
+endif()
+
+if(BGBOT_BUILD_MOVE_ARRAY_PROBE)
+    add_subdirectory("${BGBOT_CPU_ROOT}/move_array_probe" move_array_probe)
+endif()
+
 if(BGBOT_BUILD_PYTHON)
     find_package(pybind11 CONFIG REQUIRED)
-    pybind11_add_module(bgbot_cpp ${BGBOT_CPU_ROOT}/pybind/bindings.cpp)
+    pybind11_add_module(bgbot_cpp
+        ${BGBOT_CPU_ROOT}/pybind/bindings.cpp
+        ${BGBOT_CPU_ROOT}/pybind/bindings_core.cpp
+        ${BGBOT_CPU_ROOT}/pybind/bindings_eval.cpp
+        ${BGBOT_CPU_ROOT}/pybind/bindings_rollout.cpp
+        ${BGBOT_CPU_ROOT}/pybind/bindings_training.cpp
+    )
     target_link_libraries(bgbot_cpp PRIVATE bgbot_lib)
 endif()
