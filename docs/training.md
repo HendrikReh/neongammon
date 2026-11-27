@@ -16,6 +16,10 @@
 
 ## Training Pipeline
 
+Stage-specific training and benchmark recipes for Stages 4–10 live in
+[`scripts/archive/`](../scripts/archive/README.md). Their existing script paths
+also work. Archived recipes write their default experiment reports under `logs/`.
+
 **CRITICAL: TD pre-training is required before SL.** SL from random init finds
 unnatural minima. TD gives realistic probability distributions that SL refines.
 
@@ -44,7 +48,8 @@ The update rules are upstream's CUDA trainer's: sigmoid-MSE delta
 `(t-p)·p·(1-p)` (times the per-sample weight), backprop through the
 pre-update output weights, SGD at `alpha / batch_rows` (the partial last batch
 uses its own row count), one epoch = one shuffled pass (NumPy draws it), CPU
-benchmark scoring after every epoch with best-score weights saved as `.best`,
+benchmark scoring directly from in-memory weights after every epoch, with
+best-score weights saved as `.best`,
 and random init from `bgbot_cpp.NeuralNetwork(nh, ni, 0.1, seed)`.
 `tests/test_sl_train.py` holds the MLX weights to a float64 NumPy
 transcription of the update rules (2e-5).

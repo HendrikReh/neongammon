@@ -32,6 +32,11 @@ def test_modules_and_model_files_belong_to_the_installed_wheel():
     assert ng.BgBotAnalyzer().epc(one_checker_each) > 0
 
 
+def test_wheel_declares_optional_training_and_dev_extras():
+    dist = distribution("neongammon")
+    assert set(dist.metadata.get_all("Provides-Extra", [])) >= {"mlx", "dev"}
+
+
 def test_wheel_bundles_exact_weights_for_supported_models():
     required = set()
     for model in (ng.PRODUCTION_MODEL, "stage9"):

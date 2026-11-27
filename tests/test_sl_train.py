@@ -8,6 +8,7 @@ float64 NumPy implementation of the same update rules, using the same shuffle.
 
 import os
 import sys
+import tempfile
 
 import numpy as np
 import pytest
@@ -67,9 +68,13 @@ def test_weights_file_roundtrip(tmp_path):
     assert out.read_bytes() == open(WEIGHTS, 'rb').read()
 
 
-def test_random_init_matches_neural_network(tmp_path):
+def test_random_init_matches_neural_network(tmp_path, monkeypatch):
     ref = tmp_path / 'ref.weights'
     bgbot_cpp.NeuralNetwork(40, 196, 0.1, 7).save_weights(str(ref))
+    def reject_temporary_file(*args, **kwargs):
+        pytest.fail("random initialization wrote an intermediate weight file")
+
+    monkeypatch.setattr(tempfile, "mkstemp", reject_temporary_file)
     for a, b in zip(sl_train._initial_weights('', 40, 196, 7), sl_train.read_weights(str(ref))):
         np.testing.assert_array_equal(a, b)
 
@@ -109,3 +114,32 @@ def test_random_init_training_runs(tmp_path):
 def test_backend_reports_a_trainer():
     assert sl_train.backend() in ('mlx', None)
     assert sl_train.gpu_available() == (sl_train.backend() is not None)
+
+
+@needs_mlx
+@pytest.mark.parametrize("use_scenario_set", [False, True])
+def test_mlx_benchmarks_in_memory_and_keeps_file_scoring_parity(monkeypatch, use_scenario_set):
+    from neongammon.board import STARTING_BOARD, possible_moves
+
+    board = STARTING_BOARD
+    endpoints = possible_moves(board, 3, 1)
+    errors = [0.01 * idx for idx in range(len(endpoints))]
+    if use_scenario_set:
+        scenarios = bgbot_cpp.ScenarioSet()
+        scenarios.add(board, 3, 1, endpoints, errors)
+    else:
+        scenarios = [bgbot_cpp.make_scenario(board, 3, 1, endpoints, errors)]
+
+    def reject_weight_file(*args, **kwargs):
+        pytest.fail("benchmarking wrote an intermediate weight file")
+
+    monkeypatch.setattr(sl_train, "write_weights", reject_weight_file)
+    x, y, _ = _data(40, 244)
+    result = sl_train.supervised_train_preencoded(
+        x, y, WEIGHTS, 400, 244, alpha=0.0, epochs=2, batch_size=20,
+        benchmark_scenarios=scenarios,
+    )
+    expected = bgbot_cpp.score_benchmarks_nn(scenarios, WEIGHTS, 400, 244).score()
+    assert result["best_score"] == expected
+    assert result["best_epoch"] == 0
+    assert result["epochs_completed"] == 2

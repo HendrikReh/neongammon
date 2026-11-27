@@ -27,8 +27,8 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 
-def _is_die(value: int) -> bool:
-    return isinstance(value, int) and 1 <= value <= 6
+def _is_die(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 6
 
 
 def _legal_single_die_moves(
@@ -105,11 +105,10 @@ def _resolve_legal_steps(
     diff pairing always produced where it was right. Steps come back in the
     order they were played.
 
-    Returns ``None`` when no legal sequence reaches ``after`` — the dice are
-    missing or the boards were not produced by this roll — so the caller can
-    fall back to the diff pairing rather than return nothing.
+    Returns ``None`` when no legal sequence reaches ``after``, so the caller
+    can fall back to the diff pairing.
     """
-    if not (_is_die(die1) and _is_die(die2)) or len(before) != 26 or len(after) != 26:
+    if len(before) != 26 or len(after) != 26:
         return None
     start = list(before)
     target = list(after)
@@ -292,7 +291,10 @@ def compute_move_notation(
 
     The steps come from a legal play of the dice (:func:`_resolve_legal_steps`);
     boards no play of the roll connects fall back to pairing the board diff.
+    Invalid dice values raise ``ValueError``.
     """
+    if not (_is_die(die1) and _is_die(die2)):
+        raise ValueError("dice must be integers from 1 to 6")
     moves = _resolve_legal_steps(before, after, die1, die2)
     if moves is None:
         moves = _pair_by_board_diff(before, after, die1, die2)
@@ -397,10 +399,9 @@ def _move_action_text(turn: dict[str, Any]) -> str | None:
     dice = turn.get("dice")
     if not isinstance(dice, list) or len(dice) != 2:
         return None
-    try:
-        d1 = int(dice[0])
-        d2 = int(dice[1])
-    except Exception:
+    # Older history records can store dice as strings.
+    d1, d2 = (_coerce_int(die) if isinstance(die, str) else die for die in dice)
+    if not (_is_die(d1) and _is_die(d2)):
         return None
     move_txt = _display_move_notation(turn.get("move"))
     if move_txt:
@@ -507,13 +508,13 @@ def export_history_to_txt(record_dict: dict[str, Any]) -> bytes:
       ``"no double"`` / ``"resign"`` / ``None``
     """
     p1 = (record_dict.get("player1_name") or "").strip() or "You"
-    p2 = (record_dict.get("player2_name") or "").strip() or "Neongammon"
+    p2 = (record_dict.get("player2_name") or "").strip() or "NeonGammon"
     mode = (record_dict.get("mode") or "unlimited").strip().lower()
     started = _parse_iso(record_dict.get("started_at"))
     history_id = (record_dict.get("history_id") or "").strip()
 
     lines: list[str] = [
-        '; [Site "BackgammonSage"]',
+        '; [Site "NeonGammon"]',
     ]
     if history_id:
         lines.append(f'; [Match ID "{history_id}"]')
