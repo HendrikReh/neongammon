@@ -3,6 +3,7 @@
 """The cube policy and the cubeless probability policy may share NN work."""
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
 
 import pytest
 
@@ -17,6 +18,9 @@ SCORE = dict(cube_value=2, cube_owner="player", away1=1, away2=4)
 # This position exercises the specialist root routing and large doubles pools.
 SNAKE = [0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
          1, 0, 1, 0, 2, 3, 3, 2, 2, 1, -7, -7, 0]
+# The #63 latency fixture has many candidates with a live owned cube.
+OWNED_MONEY = [0, 0, 0, 1, 2, -2, 3, 2, 3, 0, 0, 0, -3,
+               4, 0, 0, 0, -3, 0, -3, -2, -2, 0, 0, 0, 0]
 
 
 @pytest.mark.parametrize("eval_level", ["2ply", "3ply"])
@@ -30,6 +34,21 @@ def test_cube_probabilities_match_independent_cubeless_tree(eval_level, board, o
     assert plain.probs == independent.probs
     assert plain.cubeless_equity == independent.cubeless_equity
     assert independent.details is not None
+
+
+@pytest.mark.parametrize("eval_level", ["3ply", "4ply"])
+def test_owned_money_cube_matches_both_independent_searches(eval_level):
+    analyzer = BgBotAnalyzer(eval_level=eval_level, parallel_threads=4)
+    options = dict(cube_value=2, cube_owner="player", jacoby=True, beaver=False)
+    rich = analyzer.cube_action(OWNED_MONEY, **options)
+    decision = analyzer.cube_decision(OWNED_MONEY, **options)
+    independent = analyzer.cube_action(OWNED_MONEY, incl_2ply_details=True, **options)
+
+    rich_fields = asdict(rich)
+    decision_fields = asdict(decision)
+    assert {key: rich_fields[key] for key in decision_fields} == decision_fields
+    assert rich.probs == independent.probs
+    assert rich.cubeless_equity == independent.cubeless_equity
 
 
 def test_concurrent_cube_calls_keep_ordered_batches_local():
