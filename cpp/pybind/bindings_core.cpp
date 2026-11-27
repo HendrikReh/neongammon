@@ -3,6 +3,7 @@
 #include "bindings_common.h"
 #include <pybind11/numpy.h>
 #include <limits>
+#include <optional>
 #include "move_arrays.h"
 #include "bgbot/analyzer_session.h"
 #include "bgbot/board.h"
@@ -1593,18 +1594,20 @@ void bind_core(py::module_& m) {
     m.def("create_strategy", [](const std::string& strategy_type,
                                  const std::vector<std::string>& weight_paths,
                                  const std::vector<int>& hidden_sizes,
-                                 const RoutingManifest* routing) -> std::shared_ptr<Strategy> {
+                                 std::optional<RoutingManifest> routing) -> std::shared_ptr<Strategy> {
+        // Python can mutate its manifest while weights load. The binding
+        // owns this copy before releasing the GIL.
         py::gil_scoped_release release;
         if (routing) {
             if (strategy_type != "backgame_pair" && strategy_type != "backgame_pair_phased") {
                 throw std::invalid_argument("Routing manifests require a backgame-pair strategy");
             }
-            return std::make_shared<RoutedStrategy>(weight_paths, hidden_sizes, *routing);
+            return std::make_shared<RoutedStrategy>(weight_paths, hidden_sizes, std::move(*routing));
         }
         return make_strategy_from_type(strategy_type, weight_paths, hidden_sizes);
     }, "Create a base Strategy with optional explicit backgame-pair routing.",
        py::arg("strategy_type"), py::arg("weight_paths"), py::arg("hidden_sizes"),
-       py::arg("routing") = nullptr);
+       py::arg("routing") = py::none());
 
     m.def("create_multipy", [](const std::string& strategy_type,
                                               const std::vector<std::string>& weight_paths,
