@@ -106,7 +106,7 @@ void get_ecf3_local(
                 rDT = arCf[i + 1];
             }
 
-            if (is_money && aci[i].beaver && rDT < 0.0f) {
+            if (can_beaver_after_double(aci[i]) && rDT < 0.0f) {
                 rDT = 2.0f * rDT;
             }
 
@@ -1517,7 +1517,7 @@ static void opponent_roll_equities(
         float rDP = is_money ? 1.0f
                              : dp_mwc(nd.match.away1, nd.match.away2,
                                       nd.cube_value, nd.match.is_crawford);
-        if (is_money && nd.beaver && rDT < 0.0f) rDT = 2.0f * rDT;
+        if (can_beaver_after_double(nd) && rDT < 0.0f) rDT = 2.0f * rDT;
         const bool doubles = (rDT >= rND && rDP >= rND);
         if (doubles && rDT > rDP) {
             detail.opponent_dp = true;

@@ -549,7 +549,7 @@ CubeDecision decision_from_raw_equities(
         const float actual_dt = dt_is_basis_scaled ? dt_raw : (2.0f * dt_raw);
         result.equity_dp = 1.0f;
 
-        if (cube.beaver && actual_dt < 0.0f) {
+        if (can_beaver_after_double(cube) && actual_dt < 0.0f) {
             result.equity_dt = 2.0f * actual_dt;  // DB equity
             result.is_beaver = true;
         } else {
@@ -712,7 +712,10 @@ CubeDecision cube_decision_1ply(
 
     if (cube.is_money()) {
         const float nd_raw = cl2cf_money(probs, cube.owner, cube_x, cube.jacoby_active());
-        const float dt_raw = cl2cf_money(probs, CubeOwner::OPPONENT, cube_x, false);
+        CubeInfo taken = cube;
+        taken.cube_value = 2 * cube.cube_value;
+        taken.owner = CubeOwner::OPPONENT;
+        const float dt_raw = cl2cf(probs, taken, cube_x);
         return decision_from_raw_equities(cube, nd_raw, dt_raw, /*dt_is_basis_scaled=*/false);
     }
 

@@ -286,7 +286,7 @@ for each pair i:
         else (match):
             rDT = expanded_equities[2i + 1]        // MWC space, no scaling
 
-        if beaver enabled and rDT < 0:
+        if beaver enabled and 4 * current cube is within the cap and rDT < 0:
             rDT = 2 * rDT                          // Double/Beaver = 2 * Double/Take
 
         if money:
@@ -474,7 +474,7 @@ E_ND = results[0]
 E_DT = 2 * results[1]     // scale from doubled-cube to original cube
 E_DP = 1.0
 
-if beaver enabled and E_DT < 0:
+if beaver enabled and 4 * current cube is within the cap and E_DT < 0:
     E_DT = 2 * E_DT       // Double/Beaver equity
     is_beaver = true
 
@@ -1362,7 +1362,9 @@ because `owner ≠ CENTERED`. No explicit deactivation needed.
 ### Beaver Rule
 
 After being doubled, the opponent can immediately redouble (beaver) while retaining
-cube ownership. Applied when DT equity < 0 from the doubler's perspective.
+cube ownership. The engine considers a beaver when DT equity is negative from
+the doubler's perspective and the redoubled cube fits within the cap. When
+accepting a double reaches the cap, the take is valued at dead-cube equity.
 
 ```
 DB equity = 2 * DT equity
