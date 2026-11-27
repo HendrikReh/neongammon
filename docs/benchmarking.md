@@ -676,6 +676,15 @@ Saved-baseline regression scripts (each supports `--save`/`--compare` with a mat
 - `scripts/bench_3t_cubeless.py` — cubeless rollout of post-move positions
 - `scripts/bench_nply_cubeless.py` — standalone N-ply cubeless (post-move probs at 2–4 ply + contact/race benchmark ER)
 
+### Fixed Open Sage corpus on Apple Silicon
+
+The fixed corpus covers 100 checker decisions, 100 cube decisions and the 100
+corresponding post-move positions. It includes money games and five-point
+matches, with frozen full-game rollout references. The M4 Pro baseline records
+public API timings and full outputs at 1–4 ply and 1T–3T.
+[Corpus and reproduction command](../data/multi_ply_benchmark/README.md) ·
+[M4 Pro baseline and rollout comparisons](../data/multi_ply_benchmark/baselines/m4-pro-20261127/README.md)
+
 ### Apple Silicon Timing Baselines (v3.1.1, M4 Pro)
 
 For fast local latency checks without external position files, run
