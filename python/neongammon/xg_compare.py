@@ -11,45 +11,45 @@ PR = sum(equity errors) / decision count * 500.
 
 Public API:
 - ``parse_xg_game(xg_bytes)`` — parse a single-game .xg file into turn dicts.
+- ``parse_xg_match(xg_bytes)`` — parse a multi-game .xg match file.
 - ``compute_game_pr_stats(turns)`` — sum errors + decisions across both players
   for one game and report PR.
 - ``apply_decision_flags(turns)`` — annotate turns with ``is_cube_decision`` /
   ``is_checker_decision`` / ``cube_error`` / ``opp_cube_error`` / ``checker_error``
   using the same filters XG uses to count "real" decisions.
 
-The module reads .xg binary files only; it does not call XG and does not
-require XG to be running.
+The module reads .xg binary files only via :mod:`neongammon.xg_file`; it does
+not call XG and does not require XG or ``bgbot_cpp`` to be loaded.
 """
 
 from __future__ import annotations
 
-import struct
-import zlib
 from collections import Counter
-from datetime import datetime, timezone
 from typing import Any
 
-from .board import flip_board
+from ._primitives import cubeless_equity, flip_board
+from .xg_file import (
+    MAGIC_DMLI as MAGIC_DMLI,
+    MAGIC_RGMH as MAGIC_RGMH,
+    RICH_HEADER_SIZE as RICH_HEADER_SIZE,
+    TSAVEREC_SIZE as TSAVEREC_SIZE,
+    TS_CUBE as TS_CUBE,
+    TS_FOOTER_GAME as TS_FOOTER_GAME,
+    TS_FOOTER_MATCH as TS_FOOTER_MATCH,
+    TS_HEADER_GAME as TS_HEADER_GAME,
+    TS_HEADER_MATCH as TS_HEADER_MATCH,
+    TS_MOVE as TS_MOVE,
+    XgArchive,
+    iter_records,
+    parse_cube_record,
+    parse_game_footer,
+    parse_game_header,
+    parse_header,
+    parse_match_footer,
+    parse_move_record,
+    xg_eval_to_probs,
+)
 
-
-# ---------------------------------------------------------------------------
-# XG binary format constants
-# ---------------------------------------------------------------------------
-
-TSAVEREC_SIZE = 2560
-RICH_HEADER_SIZE = 8232
-MAGIC_RGMH = 0x484D4752  # 'RGMH'
-MAGIC_DMLI = 0x494C4D44  # 'DMLI'
-
-TS_HEADER_MATCH = 0
-TS_HEADER_GAME = 1
-TS_CUBE = 2
-TS_MOVE = 3
-TS_FOOTER_GAME = 4
-TS_FOOTER_MATCH = 5
-
-# XG comp_level (header) -> our label
-_XG_LEVEL_MAP = {0: "1ply", 1: "2ply", 2: "3ply", 3: "4ply", 4: "5ply", 100: "rollout"}
 
 # XG analyze_m / analyze_c (per-record) -> our label
 _XG_ANALYZE_LEVEL_MAP = {
@@ -59,38 +59,8 @@ _XG_ANALYZE_LEVEL_MAP = {
 
 
 # ---------------------------------------------------------------------------
-# Low-level binary helpers
+# Perspective helpers
 # ---------------------------------------------------------------------------
-
-
-def _xg_eval_to_probs(xg_eval: tuple | list) -> list[float]:
-    """Convert XG 7-element eval to our 5-element probs.
-
-    XG order: ``[p_bg_loss, p_gam_loss, p_loss, p_win, p_gam_win, p_bg_win, equity]``
-    Ours:     ``[p_win, p_gam_win, p_bg_win, p_gam_loss, p_bg_loss]``
-    """
-    return [
-        float(xg_eval[3]),  # p_win
-        float(xg_eval[4]),  # p_gam_win
-        float(xg_eval[5]),  # p_bg_win
-        float(xg_eval[1]),  # p_gam_loss
-        float(xg_eval[0]),  # p_bg_loss
-    ]
-
-
-def _read_position(data: bytes, offset: int) -> list[int]:
-    """Read a 26-byte signed position from binary data."""
-    return [struct.unpack_from('<b', data, offset + i)[0] for i in range(26)]
-
-
-def _flip_board_to_user(board: list[int]) -> list[int]:
-    """Flip an XG-perspective board to player-1 (user) perspective."""
-    flipped = [0] * 26
-    flipped[0] = board[25]
-    flipped[25] = board[0]
-    for i in range(1, 25):
-        flipped[i] = -board[25 - i]
-    return flipped
 
 
 def _mover_to_user_board(board: list[int], actif: int) -> list[int]:
@@ -98,10 +68,8 @@ def _mover_to_user_board(board: list[int], actif: int) -> list[int]:
 
     actif: 1 = player1 (user); 2 or any negative value = player2 (bot).
     """
-    if actif == 1:
-        return list(board)
     if actif < 0 or actif == 2:
-        return _flip_board_to_user(board)
+        return flip_board(board)
     return list(board)
 
 
@@ -115,308 +83,40 @@ def _active_player_from_actif(actif: int) -> str:
     return "user"
 
 
-def _read_pascal_string(data: bytes, offset: int, max_len: int) -> str:
-    """Read a Delphi short string[N]: 1 length byte + N char bytes."""
-    length = data[offset]
-    length = min(length, max_len)
-    return data[offset + 1:offset + 1 + length].decode('ascii', errors='replace').strip()
-
-
-def _read_short_unicode_string(data: bytes, offset: int) -> str:
-    """Read a TShortUnicodeString (258 bytes = 128 wchars + null)."""
-    raw = data[offset:offset + 256]
-    try:
-        text = raw.decode('utf-16-le')
-        return text.split('\x00')[0].strip()
-    except Exception:
-        return ""
-
-
 # ---------------------------------------------------------------------------
-# Archive extraction
+# Archive & record decoding (delegated to neongammon.xg_file)
 # ---------------------------------------------------------------------------
 
 
-def _extract_game_data(xg_bytes: bytes) -> bytes:
-    """Extract the temp.xg game data blob from the XG ZlibArchive container."""
-    if len(xg_bytes) < RICH_HEADER_SIZE + 36:
-        raise ValueError("File too small to be a valid XG file")
-
-    magic = struct.unpack_from('<I', xg_bytes, 0)[0]
-    if magic != MAGIC_RGMH:
-        raise ValueError(f"Invalid XG file: bad magic 0x{magic:08X}, expected RGMH")
-
-    # ArchiveRecord is the last 36 bytes
-    arc_start = len(xg_bytes) - 36
-    (_crc, file_count, _version, reg_size,
-     data_size, comp_reg) = struct.unpack_from('<iiiiii', xg_bytes, arc_start)
-
-    # Layout: [RichHeader][file_data][compressed_registry][ArchiveRecord]
-    reg_end = arc_start
-    reg_start = reg_end - reg_size
-    data_start = reg_start - data_size
-
-    if data_start < RICH_HEADER_SIZE:
-        raise ValueError("Invalid archive layout")
-
-    reg_compressed = xg_bytes[reg_start:reg_end]
-    if comp_reg and reg_size > 0:
-        index_data = zlib.decompress(reg_compressed)
-    else:
-        index_data = reg_compressed
-
-    for i in range(file_count):
-        rec_off = i * 532
-        if rec_off + 532 > len(index_data):
-            break
-        rec = index_data[rec_off:rec_off + 532]
-        name_len = rec[0]
-        name = rec[1:1 + name_len].decode('ascii', errors='replace')
-        # osize at +512 (unused), csize at +516, start at +520, compressed flag at +528
-        csize = struct.unpack_from('<i', rec, 516)[0]
-        start = struct.unpack_from('<i', rec, 520)[0]
-        is_compressed = (rec[528] == 0)
-
-        if name == 'temp.xg':
-            file_data = xg_bytes[data_start + start:data_start + start + csize]
-            if is_compressed and csize > 0:
-                return zlib.decompress(file_data)
-            return file_data
-
-    raise ValueError("temp.xg not found in XG archive")
+_RECORD_PARSERS = {
+    TS_HEADER_MATCH: parse_header,
+    TS_HEADER_GAME: parse_game_header,
+    TS_CUBE: parse_cube_record,
+    TS_MOVE: parse_move_record,
+    TS_FOOTER_GAME: parse_game_footer,
+    TS_FOOTER_MATCH: parse_match_footer,
+}
 
 
-# ---------------------------------------------------------------------------
-# Record parsers
-# ---------------------------------------------------------------------------
+def _decode_records(xg_bytes: bytes) -> list[dict[str, Any]]:
+    """Extract ``temp.xg`` with CRC-32 verification and decode all TSaveRecs."""
+    archive = XgArchive.from_bytes(xg_bytes)
+    game_data = archive.get("temp.xg")
+    if game_data is None:
+        raise ValueError("temp.xg not found in XG archive")
 
-
-def _delphi_date_to_iso(delphi_date: float) -> str:
-    """Convert Delphi TDateTime (days since 12/30/1899) to ISO string."""
-    try:
-        from datetime import timedelta
-        epoch = datetime(1899, 12, 30, tzinfo=timezone.utc)
-        return (epoch + timedelta(seconds=delphi_date * 86400)).isoformat()
-    except Exception:
-        return datetime.now(timezone.utc).isoformat()
-
-
-def _parse_header_match(rec: bytes) -> dict[str, Any]:
-    splayer1 = _read_pascal_string(rec, 9, 40)
-    splayer2 = _read_pascal_string(rec, 50, 40)
-
-    match_length = struct.unpack_from('<i', rec, 92)[0]
-    jacoby = bool(rec[101]) if len(rec) > 103 else True
-    beaver = bool(rec[102]) if len(rec) > 103 else True
-    delphi_date = struct.unpack_from('<d', rec, 128)[0]
-    date_iso = _delphi_date_to_iso(delphi_date) if delphi_date > 0 else ""
-
-    version = 0
-    for off in range(136, min(600, len(rec) - 8)):
-        if struct.unpack_from('<I', rec, off + 4)[0] == MAGIC_DMLI:
-            version = struct.unpack_from('<i', rec, off)[0]
-            break
-
-    comp_level1 = 0
-    if len(rec) > 280:
-        comp_level1 = struct.unpack_from('<i', rec, 272)[0]
-
-    # Optional unicode names (XG v24+); fall back to ASCII pascal strings.
-    player1 = splayer1
-    player2 = splayer2
-    for base_off in [558, 560, 562]:
-        if base_off + 5 * 258 > len(rec):
-            continue
-        p1 = _read_short_unicode_string(rec, base_off + 258)
-        p2 = _read_short_unicode_string(rec, base_off + 258 * 2)
-        if p1 and len(p1) > 1 and p1 != "!":
-            player1 = p1
-            player2 = p2 if (p2 and p2 != "!") else splayer2
-            break
-
-    return {
-        "type": TS_HEADER_MATCH,
-        "player1": player1 or "Player 1",
-        "player2": player2 or "Player 2",
-        "match_length": match_length,
-        "date_iso": date_iso,
-        "version": version,
-        "comp_level": comp_level1,
-        "jacoby": jacoby,
-        "beaver": beaver,
-    }
-
-
-def _parse_header_game(rec: bytes) -> dict[str, Any]:
-    score1 = struct.unpack_from('<i', rec, 12)[0]
-    score2 = struct.unpack_from('<i', rec, 16)[0]
-    crawford = rec[20]
-    game_number = struct.unpack_from('<i', rec, 48)[0]
-    return {
-        "type": TS_HEADER_GAME,
-        "score1": score1,
-        "score2": score2,
-        "crawford_apply": bool(crawford),
-        "game_number": game_number,
-    }
-
-
-def _parse_engine_double_action(data: bytes) -> dict[str, Any] | None:
-    """Parse the 132-byte EngineStructDoubleAction sub-record of a CUBE record."""
-    if len(data) < 132:
-        return None
-    flag_double = struct.unpack_from('<h', data, 56)[0]
-    xg_eval = struct.unpack_from('<7f', data, 60)
-    eq_nd = struct.unpack_from('<f', data, 88)[0]
-    eq_dt = struct.unpack_from('<f', data, 92)[0]
-    eq_dp = struct.unpack_from('<f', data, 96)[0]
-
-    if all(abs(v) < 1e-10 for v in xg_eval[:6]):
-        return None
-
-    # flag_double is XG's cube-action recommendation:
-    #   0 = no double
-    #   1 = double (take recommended)
-    #   2 = double, pass (probably)
-    #   -1 = too good to double (still NOT recommending double)
-    #   -100 = no analysis (record skipped)
-    # The naive bool(flag_double) misreads -1 as "double", which is wrong —
-    # treat only positive values as a recommendation to double.
-    return {
-        "probs": _xg_eval_to_probs(xg_eval),
-        "equity_nd": eq_nd,
-        "equity_dt": eq_dt,
-        "equity_dp": eq_dp,
-        "should_double": flag_double > 0,
-    }
-
-
-def _parse_engine_best_move(
-    data: bytes, actif: int
-) -> dict[str, Any] | None:
-    """Parse the 2184-byte EngineStructBestMove sub-record of a MOVE record."""
-    if len(data) < 2184:
-        return None
-
-    n_moves = struct.unpack_from('<i', data, 64)[0]
-    if n_moves <= 0:
-        return None
-    n_moves = min(n_moves, 32)
-
-    positions = []
-    for i in range(n_moves):
-        pos = _read_position(data, 68 + i * 26)
-        positions.append(_mover_to_user_board(pos, actif))
-
-    evals = []
-    for i in range(n_moves):
-        eval_offset = 1284 + i * 28
-        evals.append(struct.unpack_from('<7f', data, eval_offset))
-
-    is_forced = (data[2180] == 1)
-    return {
-        "n_moves": n_moves,
-        "positions": positions,
-        "evals": evals,
-        "is_forced": is_forced,
-    }
-
-
-def _parse_cube_record(rec: bytes) -> dict[str, Any]:
-    actif = struct.unpack_from('<i', rec, 12)[0]
-    doubled = struct.unpack_from('<i', rec, 16)[0]
-    take = struct.unpack_from('<i', rec, 20)[0]
-    cube_b = struct.unpack_from('<i', rec, 32)[0]
-    double_action = _parse_engine_double_action(rec[64:64 + 132])
-    err_cube = struct.unpack_from('<d', rec, 200)[0]
-    analyze_c = struct.unpack_from('<i', rec, 232)[0]
-    return {
-        "type": TS_CUBE,
-        "actif": actif,
-        "doubled": doubled,
-        "take": take,
-        "cube_b": cube_b,
-        "double_action": double_action,
-        "err_cube": err_cube if err_cube > -999 else None,
-        "analyze_c": analyze_c,
-    }
-
-
-def _parse_move_record(rec: bytes) -> dict[str, Any]:
-    position_i = _read_position(rec, 9)
-    position_end = _read_position(rec, 35)
-    actif = struct.unpack_from('<i', rec, 64)[0]
-    die1 = struct.unpack_from('<i', rec, 100)[0]
-    die2 = struct.unpack_from('<i', rec, 104)[0]
-    cube_a = struct.unpack_from('<i', rec, 108)[0]
-    n_move_eval = struct.unpack_from('<i', rec, 120)[0]
-    best_move = _parse_engine_best_move(rec[124:124 + 2184], actif)
-    err_move = struct.unpack_from('<d', rec, 2312)[0]
-    analyze_m = struct.unpack_from('<i', rec, 2472)[0]
-    return {
-        "type": TS_MOVE,
-        "position_i": position_i,
-        "position_end": position_end,
-        "actif": actif,
-        "die1": die1,
-        "die2": die2,
-        "cube_a": cube_a,
-        "n_move_eval": n_move_eval,
-        "best_move": best_move,
-        "err_move": err_move if err_move > -999 else None,
-        "analyze_m": analyze_m,
-    }
-
-
-def _parse_footer_game(rec: bytes) -> dict[str, Any]:
-    return {
-        "type": TS_FOOTER_GAME,
-        "score1": struct.unpack_from('<i', rec, 12)[0],
-        "score2": struct.unpack_from('<i', rec, 16)[0],
-        "crawford_next": bool(rec[20]),
-        "winner": struct.unpack_from('<i', rec, 24)[0],
-        "points_won": struct.unpack_from('<i', rec, 28)[0],
-        "termination": struct.unpack_from('<i', rec, 32)[0],
-    }
-
-
-def _parse_footer_match(rec: bytes) -> dict[str, Any]:
-    return {
-        "type": TS_FOOTER_MATCH,
-        "score1": struct.unpack_from('<i', rec, 12)[0],
-        "score2": struct.unpack_from('<i', rec, 16)[0],
-        "winner": struct.unpack_from('<i', rec, 20)[0],
-    }
-
-
-def _parse_records(game_data: bytes) -> list[dict[str, Any]]:
-    """Split the inflated game data into typed records."""
     records: list[dict[str, Any]] = []
-    offset = 0
-    while offset + TSAVEREC_SIZE <= len(game_data):
-        rec = game_data[offset:offset + TSAVEREC_SIZE]
-        entry_type = rec[8]
-
-        if entry_type == TS_HEADER_MATCH:
-            records.append(_parse_header_match(rec))
-        elif entry_type == TS_HEADER_GAME:
-            records.append(_parse_header_game(rec))
-        elif entry_type == TS_CUBE:
-            records.append(_parse_cube_record(rec))
-        elif entry_type == TS_MOVE:
-            records.append(_parse_move_record(rec))
-        elif entry_type == TS_FOOTER_GAME:
-            records.append(_parse_footer_game(rec))
-        elif entry_type == TS_FOOTER_MATCH:
-            records.append(_parse_footer_match(rec))
-        # Unknown record types silently ignored.
-
-        offset += TSAVEREC_SIZE
-
+    for off, entry_type in iter_records(game_data):
+        parser = _RECORD_PARSERS.get(entry_type)
+        if parser is None:
+            continue
+        parsed = parser(game_data, off)
+        parsed["type"] = entry_type
+        records.append(parsed)
     return records
 
 
-def _infer_analysis_level(records: list[dict]) -> str:
+def _infer_analysis_level(records: list[dict[str, Any]]) -> str:
     """Infer the analysis level from per-record analyze_m / analyze_c values."""
     levels: Counter[int] = Counter()
     for r in records:
@@ -435,10 +135,10 @@ def _infer_analysis_level(records: list[dict]) -> str:
     return f"xg-{base}"
 
 
-def _group_records_by_game(records: list[dict]) -> list[list[dict]]:
+def _group_records_by_game(records: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     """Partition records into per-game lists (HEADER_GAME .. FOOTER_GAME)."""
-    games: list[list[dict]] = []
-    current_game: list[dict] = []
+    games: list[list[dict[str, Any]]] = []
+    current_game: list[dict[str, Any]] = []
     in_game = False
     for rec in records:
         if rec["type"] == TS_HEADER_GAME:
@@ -460,27 +160,35 @@ def _group_records_by_game(records: list[dict]) -> list[list[dict]]:
 # ---------------------------------------------------------------------------
 
 
-def _build_cube_analysis(da: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Convert a parsed EngineStructDoubleAction to the analyzer-style dict."""
-    if not da:
+def _build_cube_analysis(cube_rec: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Convert a parsed tsCube record to the analyzer-style cube dict."""
+    if not cube_rec:
         return None
-    nd = da["equity_nd"]
-    dt = da["equity_dt"]
-    dp = da["equity_dp"]
-    probs = da["probs"]
-    should_double = da["should_double"]
+    eval_nd = cube_rec["eval_nd"]
+    if all(abs(v) < 1e-10 for v in eval_nd[:6]):
+        return None
+
+    # flag_double is XG's cube-action recommendation:
+    #   0 = no double
+    #   1 = double (take recommended)
+    #   2 = double, pass (probably)
+    #   -1 = too good to double (still NOT recommending double)
+    #   -100 = no analysis (record skipped)
+    # Treat only positive values as a recommendation to double.
+    should_double = cube_rec["flag_double"] > 0
+    nd = cube_rec["equity_nd"]
+    dt = cube_rec["equity_dt"]
+    dp = cube_rec["equity_dp"]
+    probs = xg_eval_to_probs(eval_nd)
     should_take = dt <= dp
     if should_double:
         optimal_action = "double/take" if should_take else "double/pass"
     else:
         optimal_action = "no double"
     optimal = max(nd, min(dt, dp)) if should_double else nd
-    p_win, p_gw, p_bw, p_gl, p_bl = probs
-    p_loss = 1.0 - p_win
-    cubeless_eq = (p_win - p_loss) + (p_gw - p_gl) + (p_bw - p_bl)
     return {
         "probs": probs,
-        "cubeless_equity": cubeless_eq,
+        "cubeless_equity": cubeless_equity(probs),
         "cubeful_equity": nd,
         "equity_nd": nd,
         "equity_dt": dt,
@@ -493,41 +201,59 @@ def _build_cube_analysis(da: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def _build_checker_analysis(
-    bm: dict[str, Any] | None,
+    move_rec: dict[str, Any],
 ) -> list[dict[str, Any]] | None:
-    """Convert a parsed EngineStructBestMove to a list of move dicts.
+    """Convert a parsed tsMove record to a list of move dicts (mover's frame).
 
     XG stores moves in its own recommendation order (sorted by eval level
-    first, then by cubeful equity within the same level), so positions[0]
-    is XG's #1 recommendation. We trust that order — do NOT re-sort by the
+    first, then by cubeful equity within the same level), so ``moves[0]`` is
+    XG's #1 recommendation. We trust that order — do NOT re-sort by the
     stored ``equity`` field, since the cubeful equity at offset 6 doesn't
-    capture eval-level priority and naive sorting can promote a deeply-
-    evaluated lower-cubeful move above XG's actual recommendation.
+    capture eval-level priority and naive sorting can promote a shallowly-
+    evaluated higher-cubeful move above XG's actual recommendation.
     """
-    if not bm or bm["n_moves"] == 0:
+    raw_moves = move_rec.get("moves")
+    if not raw_moves:
         return None
     moves: list[dict[str, Any]] = []
-    for i in range(bm["n_moves"]):
-        xg_eval = bm["evals"][i]
-        probs = _xg_eval_to_probs(xg_eval)
-        equity = float(xg_eval[6])
+    for m in raw_moves:
+        xg_eval = m["eval"]
         moves.append({
-            "board": bm["positions"][i],
-            "equity": equity,
-            "probs": probs,
+            "board": list(m["board"]),
+            "equity": float(xg_eval[6]),
+            "probs": xg_eval_to_probs(xg_eval),
         })
-    # Compute equity_diff vs XG's #1 (= moves[0]). Note this can be POSITIVE
-    # for moves that have higher cubeful equity than XG's recommendation —
-    # those are typically moves XG evaluated at a lower level and thus
-    # didn't rank first despite the higher raw cubeful number.
     best_eq = moves[0]["equity"]
     for m in moves:
         m["equity_diff"] = m["equity"] - best_eq
     return moves
 
 
+def _make_double_pass_turn(
+    turn_number: int,
+    pending_cube: dict[str, Any],
+    analysis_level: str,
+) -> dict[str, Any]:
+    """Build a turn dict for a double/pass (no checker play occurred)."""
+    return {
+        "turn_number": turn_number,
+        "player": _active_player_from_actif(pending_cube["actif"]),
+        "board_before": None,
+        "board_after": None,
+        "dice": None,
+        "move": None,
+        "cube_action": "double/pass",
+        "cube_analysis": _build_cube_analysis(pending_cube),
+        "checker_analysis": None,
+        "analysis_level": analysis_level if pending_cube.get("analyze_c", 0) > 0 else None,
+        "checker_error": None,
+        "cube_error": pending_cube.get("err_cube"),
+        "opp_cube_error": None,
+    }
+
+
 def _assemble_turns(
-    game_records: list[dict],
+    game_records: list[dict[str, Any]],
     analysis_level: str,
 ) -> list[dict[str, Any]]:
     """Assemble cube + move records into per-turn dicts.
@@ -542,24 +268,11 @@ def _assemble_turns(
     for rec in game_records:
         if rec["type"] == TS_CUBE:
             # Trailing cube + new cube => the prior was a double/pass.
-            if pending_cube is not None and pending_cube["doubled"] == 1:
+            if pending_cube is not None and pending_cube["double"] == 1:
                 turn_number += 1
-                player = _active_player_from_actif(pending_cube["actif"])
-                turns.append({
-                    "turn_number": turn_number,
-                    "player": player,
-                    "board_before": None,
-                    "board_after": None,
-                    "dice": None,
-                    "move": None,
-                    "cube_action": "double/pass",
-                    "cube_analysis": _build_cube_analysis(pending_cube["double_action"]),
-                    "checker_analysis": None,
-                    "analysis_level": analysis_level if pending_cube.get("analyze_c", 0) > 0 else None,
-                    "checker_error": pending_cube.get("err_cube"),
-                    "cube_error": pending_cube.get("err_cube"),
-                    "opp_cube_error": None,
-                })
+                turns.append(
+                    _make_double_pass_turn(turn_number, pending_cube, analysis_level)
+                )
             pending_cube = rec
 
         elif rec["type"] == TS_MOVE:
@@ -574,21 +287,22 @@ def _assemble_turns(
             cube_analysis: dict[str, Any] | None = None
             cube_error = None
             if pending_cube is not None:
-                if pending_cube["doubled"] == 1:
+                if pending_cube["double"] == 1:
                     cube_action = "double/take" if pending_cube["take"] == 1 else "double/pass"
-                elif pending_cube["doubled"] == 0:
+                elif pending_cube["double"] == 0:
                     cube_action = "no double"
                 else:
                     cube_action = None
                 if cube_action is not None:
-                    cube_analysis = _build_cube_analysis(pending_cube["double_action"])
+                    cube_analysis = _build_cube_analysis(pending_cube)
                     cube_error = pending_cube.get("err_cube")
                 pending_cube = None
 
-            checker_analysis = _build_checker_analysis(rec["best_move"])
+            checker_analysis = _build_checker_analysis(rec)
             checker_error = rec.get("err_move")
 
-            dice = None if (rec["die1"] == 0 and rec["die2"] == 0) else [rec["die1"], rec["die2"]]
+            die1, die2 = rec["dice"]
+            dice = None if (die1 == 0 and die2 == 0) else [die1, die2]
             has_checker_analysis = rec.get("analyze_m", 0) > 0
             has_cube_analysis = cube_analysis is not None
 
@@ -609,24 +323,11 @@ def _assemble_turns(
             })
 
     # Trailing pending cube => game-ending double/pass.
-    if pending_cube is not None and pending_cube["doubled"] == 1:
+    if pending_cube is not None and pending_cube["double"] == 1:
         turn_number += 1
-        player = _active_player_from_actif(pending_cube["actif"])
-        turns.append({
-            "turn_number": turn_number,
-            "player": player,
-            "board_before": None,
-            "board_after": None,
-            "dice": None,
-            "move": None,
-            "cube_action": "double/pass",
-            "cube_analysis": _build_cube_analysis(pending_cube["double_action"]),
-            "checker_analysis": None,
-            "analysis_level": analysis_level if pending_cube.get("analyze_c", 0) > 0 else None,
-            "checker_error": None,
-            "cube_error": pending_cube.get("err_cube"),
-            "opp_cube_error": None,
-        })
+        turns.append(
+            _make_double_pass_turn(turn_number, pending_cube, analysis_level)
+        )
 
     # Fill in board_before for double/pass turns from the previous turn.
     for i, turn in enumerate(turns):
@@ -634,14 +335,6 @@ def _assemble_turns(
             prev = turns[i - 1]
             if prev.get("board_after"):
                 turn["board_before"] = list(prev["board_after"])
-
-    # XG stores PosPlayed from a fixed (player-1) view; flip bot turns'
-    # checker_analysis boards back to mover's perspective so checker-error
-    # board matching against ``board_after`` works correctly.
-    for turn in turns:
-        if turn["player"] == "bot" and turn.get("checker_analysis"):
-            for m in turn["checker_analysis"]:
-                m["board"] = list(flip_board(m["board"]))
 
     return turns
 
@@ -753,9 +446,8 @@ def compute_checker_error(entry: dict[str, Any]) -> float:
 
     Looks up ``board_after`` in ``checker_analysis`` and returns the equity gap
     vs the best move. Bot turns have ``board_after`` in user perspective; the
-    analysis boards in turn dicts have already been flipped to mover's
-    perspective during turn assembly, so we need to flip ``board_after`` for
-    bot turns to match.
+    analysis boards in turn dicts are in mover's perspective, so we flip
+    ``board_after`` for bot turns to match.
     """
     analysis = entry.get("checker_analysis")
     if not analysis or len(analysis) < 2:
@@ -883,7 +575,7 @@ def compute_game_pr_stats(turns: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Public entry point
+# Public entry points
 # ---------------------------------------------------------------------------
 
 
@@ -893,8 +585,7 @@ def parse_xg_game(xg_bytes: bytes) -> list[dict[str, Any]]:
     Raises ``ValueError`` if the file is not a valid XG archive or contains
     more than one game.
     """
-    game_data = _extract_game_data(xg_bytes)
-    records = _parse_records(game_data)
+    records = _decode_records(xg_bytes)
     games = _group_records_by_game(records)
     if len(games) != 1:
         raise ValueError(
@@ -931,8 +622,7 @@ def parse_xg_match(xg_bytes: bytes) -> dict[str, Any]:
     Single-game .xg files parse fine too (``games`` will be a list of one).
     Raises ``ValueError`` if the file isn't a valid XG archive.
     """
-    game_data = _extract_game_data(xg_bytes)
-    records = _parse_records(game_data)
+    records = _decode_records(xg_bytes)
     analysis_level = _infer_analysis_level(records)
 
     match_header: dict[str, Any] | None = None
@@ -953,7 +643,7 @@ def parse_xg_match(xg_bytes: bytes) -> dict[str, Any]:
             "game_number": header.get("game_number", len(games_out) + 1),
             "score1_start": header.get("score1", 0),
             "score2_start": header.get("score2", 0),
-            "crawford_apply": header.get("crawford_apply", False),
+            "crawford_apply": header.get("crawford", False),
             "turns": turns,
         })
 

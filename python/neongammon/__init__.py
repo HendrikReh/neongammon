@@ -19,6 +19,7 @@ from importlib import import_module as _import_module
 from typing import TYPE_CHECKING
 
 from . import settings as settings
+from ._primitives import validate_board as validate_board
 from .types import (
     CheckerPlayResult as CheckerPlayResult,
     CubeActionResult as CubeActionResult,
@@ -229,6 +230,7 @@ __all__ = [
     "is_crashed",
     "invert_probs",
     "can_double_match",
+    "validate_board",
     "settings",
     "TrialEvalConfig",
 ]

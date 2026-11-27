@@ -19,6 +19,7 @@ Match-play reference:
 from dataclasses import dataclass, asdict
 from typing import Optional, Sequence
 
+from ._primitives import flip_owner as _flip_owner_str, resolve_owner as _resolve_owner_name
 from .matchinfo import _mwc
 
 
@@ -366,15 +367,7 @@ def _owner_enum(owner: str):
         "centered": bgbot_cpp.CubeOwner.CENTERED,
         "player": bgbot_cpp.CubeOwner.PLAYER,
         "opponent": bgbot_cpp.CubeOwner.OPPONENT,
-    }[owner]
-
-
-def _flip_owner_str(owner: str) -> str:
-    if owner == "player":
-        return "opponent"
-    if owner == "opponent":
-        return "player"
-    return "centered"
+    }[_resolve_owner_name(owner)]
 
 
 def _binary_transition(predicate, lo: float = 0.0, hi: float = 1.0,
@@ -515,8 +508,7 @@ def cube_action_points(
 
     Returns a :class:`PlayerCubePoints`.
     """
-    if cube_owner not in ("centered", "player", "opponent"):
-        raise ValueError(f"invalid cube_owner: {cube_owner!r}")
+    cube_owner = _resolve_owner_name(cube_owner)
 
     is_money = (away1 <= 0 or away2 <= 0)
 

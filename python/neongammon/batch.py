@@ -50,7 +50,8 @@ import bgbot_cpp
 from .cubeful import CUBEFUL_FILTERED_PLIES
 from .facade import BgBotAnalyzer, _optimal_action
 from .strategies import (
-    _contact_cube_life, _contact_cube_slope, _extension_constant, _validate_cube_limit,
+    _contact_cube_life, _contact_cube_slope, _extension_constant,
+    _normalize_cube_context, _validate_cube_limit,
     load_bearoff_db, resolve_owner,
 )
 from .types import CheckerPlayResult, CubeActionResult, CubeDecisionResult, MoveAnalysis, PostMoveAnalysis, Probabilities
@@ -528,13 +529,15 @@ def batch_cube_action_nply(
     inputs = []
     for p in positions:
         value, cap = p.get("cube_value", 1), p.get("max_cube_value", 0)
-        _validate_cube_limit(value, cap)
         a1, a2 = p.get("away1", 0), p.get("away2", 0)
+        row_jacoby, row_beaver = _normalize_cube_context(
+            value, a1, a2, p.get("jacoby", jacoby), p.get("beaver", beaver), cap
+        )
         money = a1 == a2 == 0
         info = bgbot_cpp.CubeInfo(
             value, resolve_owner(p.get("cube_owner", "centered")), a1, a2,
-            p.get("is_crawford", False), money and p.get("jacoby", jacoby),
-            money and p.get("beaver", beaver), cap,
+            p.get("is_crawford", False), row_jacoby,
+            row_beaver, cap,
             p.get("contact_x", _contact_cube_life(ply, a1, a2)) if money else -1.0,
             p.get("contact_x_pip_slope", _contact_cube_slope(ply, a1, a2)) if money else 0.0,
         )

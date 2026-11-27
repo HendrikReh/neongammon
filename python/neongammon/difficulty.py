@@ -9,6 +9,7 @@ from math import exp
 from random import Random
 from typing import Protocol
 
+from ._primitives import resolve_owner as _resolve_owner_name
 from .facade import BgBotAnalyzer
 from .board import can_double_match, possible_moves
 from .types import CubeDecisionResult
@@ -73,22 +74,61 @@ class DifficultyPolicy:
     Use BgBotAnalyzer separately to rank moves or review the game.
     """
 
-    def __init__(self, difficulty: Difficulty | str, *, seed: int = 42, parallel_threads: int = 1,
-                 analyzer: BgBotAnalyzer | None = None, cube_analyzer: BgBotAnalyzer | None = None):
+    def __init__(
+        self,
+        difficulty: Difficulty | str,
+        *,
+        seed: int = 42,
+        parallel_threads: int = 1,
+        analyzer: BgBotAnalyzer | None = None,
+        checker_analyzer: BgBotAnalyzer | None = None,
+        cube_analyzer: BgBotAnalyzer | None = None,
+        models: BatchModels | None = None,
+    ):
+        if (
+            analyzer is not None
+            and checker_analyzer is not None
+            and analyzer is not checker_analyzer
+        ):
+            raise ValueError("pass analyzer or checker_analyzer, not both")
         self.difficulty = Difficulty(difficulty)
         self._profile = _PROFILES.get(self.difficulty)
-        self._analyzer = analyzer if analyzer is not None else BgBotAnalyzer(
-            eval_level="1ply" if self._profile else "3ply",
-            models=BatchModels.from_analyzer(cube_analyzer) if cube_analyzer is not None else None,
-            parallel_threads=parallel_threads,
-        )
+        resolved_checker = checker_analyzer if checker_analyzer is not None else analyzer
+        if resolved_checker is None:
+            checker_models = models if models is not None else (
+                BatchModels.from_analyzer(cube_analyzer) if cube_analyzer is not None else None
+            )
+            resolved_checker = BgBotAnalyzer(
+                eval_level="1ply" if self._profile else "3ply",
+                models=checker_models,
+                parallel_threads=parallel_threads,
+            )
         if cube_analyzer is None:
-            cube_analyzer = self._analyzer
-            if self._profile is None and self._analyzer._eval_level != "2ply":
-                cube_analyzer = BgBotAnalyzer(eval_level="2ply", parallel_threads=parallel_threads,
-                                               models=BatchModels.from_analyzer(self._analyzer))
+            if self._profile is None and resolved_checker._eval_level != "2ply":
+                cube_models = (
+                    models if models is not None
+                    else BatchModels.from_analyzer(resolved_checker)
+                )
+                cube_analyzer = BgBotAnalyzer(
+                    eval_level="2ply",
+                    parallel_threads=parallel_threads,
+                    models=cube_models,
+                )
+            else:
+                cube_analyzer = resolved_checker
+        self._analyzer = resolved_checker
         self._cube_analyzer = cube_analyzer
         self._rng = Random(seed)
+
+    @property
+    def checker_analyzer(self) -> BgBotAnalyzer:
+        """Analyzer used for checker play."""
+        return self._analyzer
+
+    @property
+    def cube_analyzer(self) -> BgBotAnalyzer:
+        """Analyzer used for cube decisions."""
+        return self._cube_analyzer
 
     def reseed(self, seed: int) -> None:
         """Restart this policy's random stream while retaining its models."""
@@ -114,7 +154,7 @@ class DifficultyPolicy:
         The board and equities are from the doubler's perspective even when
         the caller reads the responder's ``should_take`` flag.
         """
-        cube_owner = cube_owner.lower()
+        cube_owner = _resolve_owner_name(cube_owner)
         decision = self._cube_analyzer.cube_decision(board, cube_value, cube_owner, **context)
         profile = self._profile
         if profile is None or decision.is_beaver:

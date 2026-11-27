@@ -11,6 +11,11 @@ from dataclasses import dataclass
 import random
 from typing import Callable
 
+from ._primitives import (
+    flip_owner as _flip_owner_name,
+    resolve_owner as _resolve_owner_name,
+    validate_board,
+)
 from .board import STARTING_BOARD, can_double_match, check_game_over, flip_board, possible_moves
 
 
@@ -60,8 +65,7 @@ class GameConfig:
                 raise ValueError(f'{name} must be a power of two')
         if self.cube_value > self.max_cube_value:
             raise ValueError('cube_value exceeds max_cube_value')
-        if self.cube_owner not in ('centered', 'player', 'opponent'):
-            raise ValueError('invalid cube_owner')
+        object.__setattr__(self, 'cube_owner', _resolve_owner_name(self.cube_owner))
         if type(self.jacoby) is not bool or type(self.is_crawford) is not bool:
             raise ValueError('jacoby and is_crawford must be booleans')
         for name in ('score1', 'score2'):
@@ -74,17 +78,9 @@ class GameConfig:
             if self.cube_value != 1 or self.cube_owner != 'centered':
                 raise ValueError('a standard opening starts with a centered cube at 1')
         else:
-            board = tuple(self.start_board)
+            board = validate_board(self.start_board, nonterminal=True)
             object.__setattr__(self, 'start_board', board)
-            if len(board) != 26 or any(type(p) is not int for p in board):
-                raise ValueError('start_board must contain 26 integers')
-            if board[0] < 0 or board[25] < 0 or (
-                    board[25] + sum(max(0, p) for p in board[1:25]) > 15 or
-                    board[0] + sum(max(0, -p) for p in board[1:25]) > 15):
-                raise ValueError('invalid checker counts')
-            if (not (board[25] + sum(max(0, p) for p in board[1:25])) or
-                    not (board[0] + sum(max(0, -p) for p in board[1:25])) or
-                    check_game_over(list(board))):
+            if check_game_over(list(board)):
                 raise ValueError('start_board must be nonterminal')
 
 
@@ -206,7 +202,7 @@ def _play_game(seed, cfg, players, cancel):
             return finish(active if outcome > 0 else 3 - active, abs(outcome), 'bearoff')
         board = flip_board(post)
         active = 3 - active
-        owner = {'centered': 'centered', 'player': 'opponent', 'opponent': 'player'}[owner]
+        owner = _flip_owner_name(owner)
     raise SimulationLimitExceeded(f'game exceeded {cfg.max_turns} turns')
 
 

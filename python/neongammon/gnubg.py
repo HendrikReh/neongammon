@@ -20,6 +20,15 @@ import subprocess
 import tempfile
 
 from . import settings
+from ._primitives import (
+    _normalize_cube_context,
+    cubeless_equity,
+    flip_board as _flip_board,
+    flip_owner as _flip_cube_owner,
+    invert_probs,
+    resolve_owner as _resolve_owner_name,
+    validate_board,
+)
 from .types import (
     CheckerPlayResult,
     CubeActionResult,
@@ -42,28 +51,6 @@ _EVAL_LEVELS = {'1ply': 0, '2ply': 1, '3ply': 2, '4ply': 3}
 # ---------------------------------------------------------------------------
 # Low-level helpers
 # ---------------------------------------------------------------------------
-
-def _flip_board(checkers):
-    """Flip a board to the other player's perspective."""
-    flipped = [0] * 26
-    flipped[0] = checkers[25]
-    flipped[25] = checkers[0]
-    for i in range(1, 25):
-        flipped[i] = -checkers[25 - i]
-    return flipped
-
-
-def _flip_cube_owner(cube_owner):
-    """Flip cube ownership to the opponent's perspective."""
-    if cube_owner == "player":
-        return "opponent"
-    if cube_owner == "opponent":
-        return "player"
-    if cube_owner == "centered":
-        return "centered"
-    raise ValueError(
-        f"cube_owner must be 'centered', 'player', or 'opponent', got {cube_owner!r}"
-    )
 
 
 def _run_gnubg(cmd, timeout=60, gnubg_path=None):
@@ -173,8 +160,7 @@ def _parse_cube_analytics(output, n_plies=0):
     p_bl = float(bits[6])
 
     # Verify cubeless equity matches
-    # gnubg's cubeless equity = 2*p_win - 1 + p_gw - p_gl + p_bw - p_bl
-    eq_computed = 2.0 * p_win - 1.0 + p_gw - p_gl + p_bw - p_bl
+    eq_computed = cubeless_equity((p_win, p_gw, p_bw, p_gl, p_bl))
 
     if abs(eq_computed - eq_cubeless) > 0.005:
         raise ValueError(
@@ -427,8 +413,7 @@ def post_move_analytics(checkers, n_plies=0, timeout=60, jacoby=True, gnubg_path
             probs: [P(win), P(gw), P(bw), P(gl), P(bl)] from mover's perspective
             equity: cubeless equity from mover's perspective
     """
-    if len(checkers) != 26:
-        raise ValueError(f"checkers must have 26 elements, got {len(checkers)}")
+    checkers = list(validate_board(checkers))
 
     # Check for game-over: if the mover has no checkers left, they've won
     n_mover = sum(c for c in checkers[1:25] if c > 0) + checkers[25]
@@ -481,17 +466,16 @@ def post_move_analytics(checkers, n_plies=0, timeout=60, jacoby=True, gnubg_path
     opp_result = _parse_cube_analytics(output, n_plies)
 
     # Invert probabilities: opponent's perspective -> mover's perspective
-    # Opponent's P(win) = mover's P(loss) = 1 - mover's P(win)
-    mover_p_win = 1.0 - opp_result['p_win']
-    mover_p_gw = opp_result['p_gl']
-    mover_p_bw = opp_result['p_bl']
-    mover_p_gl = opp_result['p_gw']
-    mover_p_bl = opp_result['p_bw']
-
+    mover_probs = invert_probs((
+        opp_result['p_win'],
+        opp_result['p_gw'],
+        opp_result['p_bw'],
+        opp_result['p_gl'],
+        opp_result['p_bl'],
+    ))
     mover_eq = -opp_result['equity_cubeless']
 
-    probs = Probabilities.clamp_list(
-        [mover_p_win, mover_p_gw, mover_p_bw, mover_p_gl, mover_p_bl])
+    probs = Probabilities.clamp_list(mover_probs)
     return {
         'probs': probs,
         'equity': mover_eq,
@@ -579,12 +563,11 @@ class GnuBgAnalyzer:
             jacoby: Override the instance default. None = use self.jacoby.
                 Auto-disabled for match play.
         """
-        if len(board) != 26:
-            raise ValueError(f"board must have 26 elements, got {len(board)}")
+        board = list(validate_board(board))
 
-        j = self.jacoby if jacoby is None else jacoby
-        if away1 > 0 or away2 > 0:
-            j = False
+        j, _ = _normalize_cube_context(
+            cube_value, away1, away2, self.jacoby if jacoby is None else jacoby, False
+        )
         cmd = self._build_preroll_command(board, cube_value, cube_owner,
                                           away1=away1, away2=away2,
                                           is_crawford=is_crawford, jacoby=j)
@@ -641,12 +624,11 @@ class GnuBgAnalyzer:
             jacoby: Override the instance default. None = use self.jacoby.
                 Auto-disabled for match play.
         """
-        if len(board) != 26:
-            raise ValueError(f"board must have 26 elements, got {len(board)}")
+        board = list(validate_board(board))
 
-        j = self.jacoby if jacoby is None else jacoby
-        if away1 > 0 or away2 > 0:
-            j = False
+        j, _ = _normalize_cube_context(
+            cube_value, away1, away2, self.jacoby if jacoby is None else jacoby, False
+        )
 
         # Flip board, cube ownership, and match scores to opponent's perspective
         # (opponent is about to roll).
@@ -661,13 +643,9 @@ class GnuBgAnalyzer:
         r = _parse_eval_single(output, n_plies=self.n_plies)
 
         # Invert to mover's perspective
-        probs = Probabilities(
-            win=1.0 - r['p_win'],
-            gammon_win=r['p_gl'],
-            backgammon_win=r['p_bl'],
-            gammon_loss=r['p_gw'],
-            backgammon_loss=r['p_bw'],
-        )
+        probs = Probabilities.from_list(invert_probs((
+            r['p_win'], r['p_gw'], r['p_bw'], r['p_gl'], r['p_bl'],
+        )))
         cubeless_eq = -r['equity_cubeless']
         cubeful_eq = -r['equity_nd']
 
@@ -696,12 +674,11 @@ class GnuBgAnalyzer:
         """
         from .board import possible_moves
 
-        if len(board) != 26:
-            raise ValueError(f"board must have 26 elements, got {len(board)}")
+        board = list(validate_board(board))
 
-        j = self.jacoby if jacoby is None else jacoby
-        if away1 > 0 or away2 > 0:
-            j = False
+        j, _ = _normalize_cube_context(
+            cube_value, away1, away2, self.jacoby if jacoby is None else jacoby, False
+        )
 
         candidates = possible_moves(board, die1, die2)
 
@@ -726,10 +703,9 @@ class GnuBgAnalyzer:
         move_analyses = []
         for cand_board, r in zip(candidates, eval_results):
             # Invert to mover's perspective
-            probs = Probabilities(
-                win=1.0 - r['p_win'], gammon_win=r['p_gl'],
-                backgammon_win=r['p_bl'], gammon_loss=r['p_gw'],
-                backgammon_loss=r['p_bw'])
+            probs = Probabilities.from_list(invert_probs((
+                r['p_win'], r['p_gw'], r['p_bw'], r['p_gl'], r['p_bl'],
+            )))
             cubeless_eq = -r['equity_cubeless']
             cubeful_eq = -r['optimal_equity']
 
@@ -785,15 +761,12 @@ class GnuBgAnalyzer:
         In GNUbg, player 1 is on roll (``set turn 1``) and player 0 is the
         opponent.
         """
-        if cube_owner == "player":
+        owner = _resolve_owner_name(cube_owner)
+        if owner == "player":
             return 'set cube owner 1\n'
-        if cube_owner == "opponent":
+        if owner == "opponent":
             return 'set cube owner 0\n'
-        if cube_owner == "centered":
-            return 'set cube centre\n'
-        raise ValueError(
-            f"cube_owner must be 'centered', 'player', or 'opponent', got {cube_owner!r}"
-        )
+        return 'set cube centre\n'
 
     def _build_preroll_command(self, checkers, cube_value=1, cube_owner="centered",
                                *, away1=0, away2=0, is_crawford=False, jacoby=True):

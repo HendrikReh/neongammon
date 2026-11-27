@@ -10,6 +10,13 @@ from typing import TYPE_CHECKING, Any
 
 import bgbot_cpp
 
+from ._primitives import (
+    _normalize_cube_context as _normalize_cube_context,
+    _validate_cube_limit as _validate_cube_limit,
+    cubeless_equity,
+    resolve_owner as _resolve_owner_name,
+)
+
 if TYPE_CHECKING:
     from .batch import BatchModels
 
@@ -33,27 +40,14 @@ _FLIP_OWNER: dict[bgbot_cpp.CubeOwner, bgbot_cpp.CubeOwner] = {
 
 def resolve_owner(cube_owner: object) -> bgbot_cpp.CubeOwner:
     """Resolve a case-insensitive owner name or a valid native cube owner."""
-    if isinstance(cube_owner, str):
-        owner = OWNER_MAP.get(cube_owner.lower())
-        if owner is not None:
-            return owner
-    elif isinstance(cube_owner, bgbot_cpp.CubeOwner) and cube_owner in _FLIP_OWNER:
+    if isinstance(cube_owner, bgbot_cpp.CubeOwner) and cube_owner in _FLIP_OWNER:
         return cube_owner
-    raise ValueError(f"Invalid cube owner {cube_owner!r}. Expected centered, player, or opponent.")
+    return OWNER_MAP[_resolve_owner_name(cube_owner)]
 
 
 def flip_owner(cube_owner: object) -> bgbot_cpp.CubeOwner:
     """Return the native cube owner from the other player's perspective."""
     return _FLIP_OWNER[resolve_owner(cube_owner)]
-
-
-def _validate_cube_limit(cube_value: int, max_cube_value: int) -> None:
-    if (not isinstance(max_cube_value, int) or isinstance(max_cube_value, bool)
-            or max_cube_value < 0 or max_cube_value == 1
-            or (max_cube_value and max_cube_value & (max_cube_value - 1))):
-        raise ValueError("max_cube_value must be 0 or a power of two >= 2")
-    if max_cube_value and cube_value > max_cube_value:
-        raise ValueError("cube_value exceeds max_cube_value")
 
 
 def _cube_limit_kwargs(max_cube_value: int) -> dict:
@@ -64,7 +58,7 @@ def _dead_cube_equity(probs, cube_value, away1, away2, is_crawford):
     if away1 > 0 or away2 > 0:
         mwc = bgbot_cpp.cubeless_mwc(probs, away1, away2, cube_value, is_crawford)
         return bgbot_cpp.mwc2eq(mwc, away1, away2, cube_value, is_crawford)
-    return 2 * probs[0] - 1 + probs[1] - probs[3] + probs[2] - probs[4]
+    return cubeless_equity(probs)
 
 
 def _default_parallel_threads() -> int:
@@ -174,6 +168,31 @@ def _janowski_x(probs, board, n_plies: int | None, away1: int = 0, away2: int = 
     return bgbot_cpp.cube_efficiency(probs, race, pp, op)
 
 
+def _janowski_1ply_equity(
+    probs,
+    post_move_board,
+    owner: bgbot_cpp.CubeOwner,
+    *,
+    cube_value: int = 1,
+    away1: int = 0,
+    away2: int = 0,
+    is_crawford: bool = False,
+    jacoby: bool = True,
+    max_cube_value: int = 0,
+) -> float:
+    """1-ply Janowski cubeful equity for a post-move board (or dead-cube equity at cap)."""
+    if max_cube_value and cube_value >= max_cube_value:
+        return _dead_cube_equity(probs, cube_value, away1, away2, is_crawford)
+    x = _janowski_x(probs, post_move_board, 1, away1, away2)
+    if away1 > 0 or away2 > 0:
+        return bgbot_cpp.cl2cf(
+            probs, cube_value, owner, x,
+            away1, away2, is_crawford, jacoby=jacoby,
+        )
+    jacoby_active = jacoby and owner == bgbot_cpp.CubeOwner.CENTERED
+    return bgbot_cpp.cl2cf_money(probs, owner, x, jacoby_active=jacoby_active)
+
+
 class _CubelessBase:
     """Shared infrastructure for cubeless analyzers."""
 
@@ -199,7 +218,6 @@ class _CubelessBase:
         if strategy is None:
             strategy = self._strategy_1ply
         owner = resolve_owner(cube_owner) if cube_owner is not None else None
-        is_match = away1 > 0 or away2 > 0
         scored = []
         for b in candidates:
             bl = list(b)
@@ -207,19 +225,12 @@ class _CubelessBase:
             cl_eq = r["equity"]
             probs = list(r["probs"])
             if owner is not None:
-                x = _janowski_x(probs, bl, 1, away1, away2)
-                if max_cube_value and cube_value >= max_cube_value:
-                    cf_eq = _dead_cube_equity(probs, cube_value, away1, away2, is_crawford)
-                elif is_match:
-                    cf_eq = bgbot_cpp.cl2cf(probs, cube_value, owner, x,
-                                            away1, away2, is_crawford,
-                                            jacoby=jacoby)
-                else:
-                    jacoby_active = (
-                        jacoby and owner == bgbot_cpp.CubeOwner.CENTERED
-                    )
-                    cf_eq = bgbot_cpp.cl2cf_money(probs, owner, x,
-                                                  jacoby_active=jacoby_active)
+                cf_eq = _janowski_1ply_equity(
+                    probs, bl, owner,
+                    cube_value=cube_value, away1=away1, away2=away2,
+                    is_crawford=is_crawford, jacoby=jacoby,
+                    max_cube_value=max_cube_value,
+                )
             else:
                 cf_eq = cl_eq
             scored.append((cf_eq, cl_eq, bl, probs))
