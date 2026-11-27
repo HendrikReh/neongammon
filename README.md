@@ -47,6 +47,9 @@ preset_game = simulate_game(players=(DifficultyPolicy(Difficulty.INTERMEDIATE), 
 
 Prebuilt macOS arm64 wheels (Python 3.10–3.14) are published on [GitHub Releases](https://github.com/HendrikReh/neongammon/releases).
 
+For GPU training, select the `mlx` extra when installing the wheel or when running
+`pip install '.[mlx]'` from a checkout. The `dev` extra adds the build and test tools.
+
 To build from source, you need Xcode Command Line Tools (`xcode-select --install`) and Python 3.10+. From the repo root:
 
 ```bash

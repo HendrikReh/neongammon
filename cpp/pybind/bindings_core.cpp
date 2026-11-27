@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Mark Higgins
 #include "bindings_common.h"
 #include <pybind11/numpy.h>
+#include <limits>
 #include "move_arrays.h"
 #include "bgbot/analyzer_session.h"
 #include "bgbot/board.h"
@@ -207,6 +208,15 @@ void bind_core(py::module_& m) {
         .def("load_weights", &NeuralNetwork::load_weights)
         .def("n_hidden", &NeuralNetwork::n_hidden)
         .def("n_inputs", &NeuralNetwork::n_inputs)
+        .def("_get_weights", [](const NeuralNetwork& nn) {
+            py::array_t<float> hidden({nn.n_hidden(), nn.n_inputs() + 1});
+            py::array_t<float> output({NN_OUTPUTS, nn.n_hidden() + 1});
+            const auto& hidden_weights = nn.hidden_weights();
+            const auto& output_weights = nn.output_weights();
+            std::copy(hidden_weights.begin(), hidden_weights.end(), hidden.mutable_data());
+            std::copy(output_weights.begin(), output_weights.end(), output.mutable_data());
+            return py::make_tuple(hidden, output);
+        })
         .def_static("compute_equity", &NeuralNetwork::compute_equity);
 
     // --- NNStrategy ---
@@ -277,6 +287,40 @@ void bind_core(py::module_& m) {
        py::arg("weights_path"),
        py::arg("n_hidden") = 120,
        py::arg("n_inputs") = 196,
+       py::arg("n_threads") = 0);
+
+    // The MLX trainer already has the two bias-augmented matrices on the host.
+    m.def("_score_benchmarks_nn_arrays", [](
+        const py::object& scenarios,
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& hidden,
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& output,
+        int n_threads
+    ) {
+        if (hidden.ndim() != 2 || output.ndim() != 2) {
+            throw py::value_error("hidden and output weights must be matrices");
+        }
+        const auto n_hidden = hidden.shape(0);
+        const auto n_inputs = hidden.shape(1) - 1;
+        if ((n_inputs != NN_INPUTS && n_inputs != EXTENDED_CONTACT_INPUTS)
+            || n_hidden < 1 || n_hidden > std::numeric_limits<int>::max() / (n_inputs + 1)
+            || output.shape(0) != NN_OUTPUTS || output.shape(1) != n_hidden + 1) {
+            throw py::value_error("invalid benchmark network weight shapes");
+        }
+        auto nn = std::make_shared<NeuralNetwork>(static_cast<int>(n_hidden),
+                                                  static_cast<int>(n_inputs));
+        std::copy_n(hidden.data(), hidden.size(), nn->hidden_weights().begin());
+        std::copy_n(output.data(), output.size(), nn->output_weights().begin());
+        NNStrategy strat(std::move(nn));
+        if (py::isinstance<ScenarioSet>(scenarios)) {
+            const auto& ss = scenarios.cast<const ScenarioSet&>();
+            py::gil_scoped_release release;
+            return score_benchmarks(strat, ss.scenarios, n_threads);
+        }
+        const auto legacy_scenarios = scenarios.cast<std::vector<BenchmarkScenario>>();
+        py::gil_scoped_release release;
+        return score_benchmarks(strat, legacy_scenarios, n_threads);
+    }, "Score benchmark scenarios directly from weight matrices",
+       py::arg("scenarios"), py::arg("hidden"), py::arg("output"),
        py::arg("n_threads") = 0);
 
     // --- Benchmark scoring with MultiNNStrategy (2-NN: contact+race) ---

@@ -90,7 +90,7 @@ class GameConfig:
 
 def _players(players):
     if players is None:
-        from .analyzer import BgBotAnalyzer
+        from .facade import BgBotAnalyzer
         players = (BgBotAnalyzer(parallel_threads=1),) * 2
     if len(players) != 2:
         raise ValueError('players must contain two analyzer-compatible policies')

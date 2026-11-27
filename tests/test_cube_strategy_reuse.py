@@ -28,7 +28,7 @@ def test_cube_reuses_strategy_with_identical_results(level, binding):
 
 def test_one_ply_checker_conversion_uses_no_pool():
     analyzer = neongammon.BgBotAnalyzer(eval_level="1ply", parallel_threads=2)
-    with patch("neongammon.analyzer.ThreadPoolExecutor") as executor:
+    with patch("neongammon.cubeful.ThreadPoolExecutor") as executor:
         # A mock is sufficient to detect accidental pool creation before any
         # conversion. The successful path evaluates the real opening position.
         executor.side_effect = AssertionError("1-ply started a candidate pool")

@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import os
 import struct
-import tempfile
 import time
 
 import numpy as np
@@ -93,23 +92,32 @@ def read_weights(path: str):
             raise ValueError("Weight file size does not match its topology")
         hidden = np.frombuffer(f.read(hidden_bytes), dtype="<f4").reshape(nh, ni + 1)
         output = np.frombuffer(f.read(output_bytes), dtype="<f4").reshape(no, nh + 1)
-    return (hidden[:, :ni].copy(), hidden[:, ni].copy(),
-            output[:, :nh].copy(), output[:, nh].copy())
+    return _unpack_layers(hidden, output)
+
+
+def _unpack_layers(hidden, output):
+    return (hidden[:, :-1].copy(), hidden[:, -1].copy(),
+            output[:, :-1].copy(), output[:, -1].copy())
+
+
+def _pack_layers(w_h, b_h, w_o, b_o):
+    w_h, b_h, w_o, b_o = (np.asarray(a, dtype=np.float32) for a in (w_h, b_h, w_o, b_o))
+    return (np.concatenate([w_h, b_h[:, None]], axis=1),
+            np.concatenate([w_o, b_o[:, None]], axis=1))
 
 
 def write_weights(path: str, w_h, b_h, w_o, b_o, *, versioned: bool = False) -> None:
     """Write bias in the last column, with an optional versioned header."""
-    w_h, b_h, w_o, b_o = (np.asarray(a, dtype=np.float32) for a in (w_h, b_h, w_o, b_o))
-    nh, ni = w_h.shape
-    hidden = np.concatenate([w_h, b_h[:, None]], axis=1)
-    output = np.concatenate([w_o, b_o[:, None]], axis=1)
+    hidden, output = _pack_layers(w_h, b_h, w_o, b_o)
+    nh, columns = hidden.shape
+    ni = columns - 1
     if versioned:
         encoder = _ENCODERS.get(ni)
-        if encoder is None or nh < 1 or w_o.shape != (5, nh):
+        if encoder is None or nh < 1 or output.shape != (5, nh + 1):
             raise ValueError("Unsupported versioned weight topology")
         header = _WEIGHT_MAGIC + struct.pack("<5I", _WEIGHT_SCHEMA, encoder, nh, ni, 5)
     else:
-        header = struct.pack("<3i", nh, ni, w_o.shape[0])
+        header = struct.pack("<3i", nh, ni, output.shape[0])
     tmp = f"{path}.tmp{os.getpid()}"
     with open(tmp, "wb") as f:
         f.write(header)
@@ -128,14 +136,7 @@ def _initial_weights(weights_path: str, n_hidden: int, n_inputs: int, seed: int)
         return w
     # Random init: NeuralNetwork(nh, ni, eps=0.1, seed), as the C++ trainers use.
     nn = bgbot_cpp.NeuralNetwork(n_hidden, n_inputs, 0.1, seed)
-    fd, tmp = tempfile.mkstemp(suffix=".weights")
-    os.close(fd)
-    try:
-        if not nn.save_weights(tmp):
-            raise RuntimeError("could not write the initial random weights")
-        return read_weights(tmp)
-    finally:
-        os.remove(tmp)
+    return _unpack_layers(*nn._get_weights())
 
 
 # ---------------------------------------------------------------------------
@@ -189,10 +190,6 @@ def _mlx_supervised_train(inputs, targets, weights_path, n_hidden, n_inputs, alp
               "best_weights_path": best_path}
     scores: list[float] = []
     rng = np.random.default_rng(seed)
-    bench_tmp = None
-    if scenarios is not None:
-        fd, bench_tmp = tempfile.mkstemp(suffix=".weights")
-        os.close(fd)
 
     def host_weights():
         mx.eval(params)
@@ -205,49 +202,45 @@ def _mlx_supervised_train(inputs, targets, weights_path, n_hidden, n_inputs, alp
     lr_tail = mx.array(alpha / tail_rows, dtype=mx.float32) if tail_rows else lr_full
     n_steps = 0
 
-    try:
-        for epoch in range(epochs):
-            order = mx.array(rng.permutation(n_pos).astype(np.int32))
-            for start in range(0, n_pos, batch_size):
-                idx = order[start:start + batch_size]
-                x = mx.take(x_all, idx, axis=0)
-                y = mx.take(y_all, idx, axis=0)
-                sw = mx.take(sw_all, idx, axis=0) if sw_all is not None else dummy_sw
-                lr = lr_full if start + batch_size <= n_pos else lr_tail
-                params = list(step(*params, x, y, sw, lr))
-                n_steps += 1
-                if n_steps % _EVAL_EVERY == 0:
-                    mx.eval(params)
+    for epoch in range(epochs):
+        order = mx.array(rng.permutation(n_pos).astype(np.int32))
+        for start in range(0, n_pos, batch_size):
+            idx = order[start:start + batch_size]
+            x = mx.take(x_all, idx, axis=0)
+            y = mx.take(y_all, idx, axis=0)
+            sw = mx.take(sw_all, idx, axis=0) if sw_all is not None else dummy_sw
+            lr = lr_full if start + batch_size <= n_pos else lr_tail
+            params = list(step(*params, x, y, sw, lr))
+            n_steps += 1
+            if n_steps % _EVAL_EVERY == 0:
+                mx.eval(params)
 
-            score = -1.0
-            if scenarios is not None:
-                write_weights(bench_tmp, *host_weights())
-                score = bgbot_cpp.score_benchmarks_nn(
-                    scenarios, bench_tmp, n_hidden, n_inputs, 0).score()
-                scores.append(score)
+        report = epoch % print_interval == 0 or epoch == epochs - 1
+        checkpoint = save_path and report
+        weights = host_weights() if scenarios is not None or checkpoint else None
+        score = -1.0
+        if scenarios is not None:
+            score = bgbot_cpp._score_benchmarks_nn_arrays(scenarios, *_pack_layers(*weights)).score()
+            scores.append(score)
 
-            last = epoch == epochs - 1
-            if epoch % print_interval == 0 or last:
-                line = (f"Epoch {epoch:4d}  score={score:.2f}  "
-                        f"time={time.perf_counter() - t_start:.1f}s")
-                if len(scores) >= 10:
-                    avg = sum(scores[-10:]) / 10
-                    line += f"  avg10={avg:.2f}"
-                    if len(scores) >= 20:
-                        line += f" ({avg - sum(scores[-20:-10]) / 10:+.2f})"
-                print(line, flush=True)
+        if report:
+            line = (f"Epoch {epoch:4d}  score={score:.2f}  "
+                    f"time={time.perf_counter() - t_start:.1f}s")
+            if len(scores) >= 10:
+                avg = sum(scores[-10:]) / 10
+                line += f"  avg10={avg:.2f}"
+                if len(scores) >= 20:
+                    line += f" ({avg - sum(scores[-20:-10]) / 10:+.2f})"
+            print(line, flush=True)
 
-            if score >= 0 and score < result["best_score"]:
-                result["best_score"] = score
-                result["best_epoch"] = epoch
-                if best_path:
-                    write_weights(best_path, *host_weights())
-            if save_path and (epoch % print_interval == 0 or last):
-                write_weights(save_path, *host_weights())
-            result["epochs_completed"] = epoch + 1
-    finally:
-        if bench_tmp and os.path.exists(bench_tmp):
-            os.remove(bench_tmp)
+        if score >= 0 and score < result["best_score"]:
+            result["best_score"] = score
+            result["best_epoch"] = epoch
+            if best_path:
+                write_weights(best_path, *weights)
+        if checkpoint:
+            write_weights(save_path, *weights)
+        result["epochs_completed"] = epoch + 1
 
     result["total_seconds"] = time.perf_counter() - t_start
     return result
