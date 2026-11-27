@@ -85,6 +85,12 @@ const std::array<float, MAX_MATCH_LENGTH> MET_POST_CRAWFORD = {{
 // ---------------------------------------------------------------------------
 
 void validate_met_away_scores(int away1, int away2) {
+    if (away1 == 0 && away2 == 0) return;
+    if (away1 < 1 || away2 < 1) {
+        throw std::invalid_argument(
+            "Match away scores must both be 0 (money game) or both in [1, " +
+            std::to_string(MAX_MATCH_LENGTH) + "]");
+    }
     if (away1 > MAX_MATCH_LENGTH || away2 > MAX_MATCH_LENGTH) {
         throw std::invalid_argument(
             "Match equity requires each away score to be at most " +

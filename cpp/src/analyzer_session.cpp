@@ -56,6 +56,10 @@ CubeEvaluation evaluate_cube_tree(const Board& board, const CubeInfo& ci,
         const std::shared_ptr<Strategy>& base, const BearoffDB* db,
         int plies, MoveFilter filter, int threads, bool decision_only,
         TwoPlyDetails* details, const std::function<void()>& check_budget) {
+    struct ClearCubeEvalCacheOnExit {
+        ~ClearCubeEvalCacheOnExit() { clear_cubeful_eval_cache(); }
+    };
+    const ClearCubeEvalCacheOnExit clear_cube_cache;
     if (check_budget) check_budget();
     static PubEval pubeval;
     CubeEvaluation out;
@@ -70,6 +74,7 @@ CubeEvaluation evaluate_cube_tree(const Board& board, const CubeInfo& ci,
         const ClearSearchCacheOnExit cleanup{multipy};
         if (db && db->is_loaded()) multipy.set_bearoff_db(db);
         if (details) {
+            if (check_budget) check_budget();
             const Board flipped = flip(board);
             out.probs = invert_probs(multipy.evaluate_probs(flipped, flipped));
         } else {
@@ -267,7 +272,7 @@ std::vector<ScoredMove> AnalyzerSession::score_checker_position(
         const int roll_threads = candidate_threads > 1 ? std::min(candidate_threads, 21) : 1;
         auto r = cubeful_probs_and_equity_nply(
             flip(m.board), opp_ci, strategy_1ply, n_plies, filter,
-            roll_threads, /*move_filter=*/nullptr, &pos.board);
+            roll_threads, /*move_filter=*/nullptr, &pos.board, check_budget);
         apply_cube_tree(m, r);
     };
     // The cube tree for several moves, using dynamic work-stealing, cooperative

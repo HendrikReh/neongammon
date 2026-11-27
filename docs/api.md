@@ -1,8 +1,29 @@
 # Python and C++ API Reference
 
-The pure-Python `neongammon.weights`, `neongammon.text_export` and
-`neongammon.settings` modules can be imported without the native extension.
-Engine exports such as `BgBotAnalyzer` load the extension on first use.
+The pure-Python `neongammon.weights`, `neongammon.text_export`, `neongammon.settings`,
+`neongammon.runtime`, and `neongammon.sl_train` weight I/O helpers — as well as top-level
+`neongammon.__version__`, `STARTING_BOARD`, `invert_probs`, `runtime_info`, and
+`observe_thread_budgets` — can be imported without loading the native `bgbot_cpp` extension.
+Engine exports such as `BgBotAnalyzer` load and validate `bgbot_cpp.ABI_VERSION` on first use.
+
+### Runtime Introspection, Thread-Budget Observer & CLI
+
+```python
+import neongammon as ng
+
+print(ng.__version__)
+info = ng.runtime_info()  # JSON-serializable capabilities, ABI_VERSION, models, Accelerate
+
+analyzer = ng.BgBotAnalyzer(eval_level="2ply", parallel_threads=2)
+with ng.observe_thread_budgets() as events:
+    analyzer.checker_play(ng.STARTING_BOARD, 3, 1)
+# Covers cubeful (checker_play_nply, cube_decision_nply, ...) and cubeless (MultiPlyStrategy)
+```
+
+A lean CLI is exposed as both `python -m neongammon` and the `neongammon` console script:
+- `neongammon info [--json]` — print version, ABI, model, bearoff DB, and Accelerate status
+- `neongammon probe [--level 1ply|2ply] [--threads N] [--json]` — verify native extension, weights, and live evaluation
+- `neongammon eval [--board ... | --gnubg-id ...] [--dice D1 D2] [--level 2ply] [--json]` — evaluate cube action or checker play
 
 For game/match simulation (`simulate_game`, `simulate_match`, `PureTDPolicy`, `DifficultyPolicy`), see [docs/simulation.md](simulation.md) and [docs/engine.md](engine.md). For algorithmic details of multi-ply search and rollouts, see [docs/multi-ply.md](multi-ply.md) and [docs/rollout.md](rollout.md).
 

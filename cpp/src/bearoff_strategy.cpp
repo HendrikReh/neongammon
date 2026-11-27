@@ -231,6 +231,9 @@ int eval_candidates_impl(
 BearoffStrategy::BearoffStrategy(std::shared_ptr<Strategy> base, const BearoffDB* db)
     : base_(std::move(base)), db_(db)
 {
+    if (!base_) {
+        throw std::invalid_argument("base strategy must not be null");
+    }
     const auto inner = base_->bearoff_layer();
     wraps_same_db_ = inner.base && inner.db == db_;
 }

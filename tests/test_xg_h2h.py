@@ -56,6 +56,7 @@ def test_duplicate_pairs_share_dice_and_opening():
             [xg_h2h.dice_for(5, pair, t) for t in range(30)]
 
 
+@pytest.mark.external_data
 def test_round_writes_verified_shards_and_waits_for_xg(tmp_path):
     template = next((p for p in xg_h2h.DEFAULT_TEMPLATES if p.exists()), None)
     if template is None:

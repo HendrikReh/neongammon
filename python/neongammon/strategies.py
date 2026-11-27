@@ -8,14 +8,16 @@ import functools
 import os
 from typing import TYPE_CHECKING, Any
 
-import bgbot_cpp
-
+from ._native import extension_constant as _extension_constant, load_native
 from ._primitives import (
     _normalize_cube_context as _normalize_cube_context,
     _validate_cube_limit as _validate_cube_limit,
     cubeless_equity,
     resolve_owner as _resolve_owner_name,
 )
+from .runtime import _notify_thread_budget
+
+bgbot_cpp = load_native()
 
 if TYPE_CHECKING:
     from .batch import BatchModels
@@ -91,18 +93,6 @@ def _move_order_key(m: dict):
     so batch_checker_play can agree with this path exactly.
     """
     return (-m["equity"], -m.get("cubeless_equity", m["equity"]), tuple(m["board"]))
-
-
-def _extension_constant(name: str) -> Any:
-    try:
-        return getattr(bgbot_cpp, name)
-    except AttributeError as exc:
-        location = getattr(bgbot_cpp, "__file__", "<unknown location>")
-        raise ImportError(
-            "NeonGammon requires a matching bgbot_cpp extension. "
-            f"The extension at {location} is missing {name}. "
-            "Rebuild the local extension or reinstall the NeonGammon wheel."
-        ) from exc
 
 
 #: Janowski cube life for CONTACT positions in money-game cube analysis, by
@@ -362,6 +352,8 @@ class _OnePlyAnalyzer(_CubelessBase):
         # ``finalize_progress`` — only the cubeful wrapper has a finalizing
         # phase to report.
         del force_boards, finalize_progress
+        if cube_owner is not None:
+            resolve_owner(cube_owner)
         candidates = bgbot_cpp.possible_moves(board, die1, die2)
         if not candidates:
             return []
@@ -432,6 +424,8 @@ class _MultiPlyAnalyzer(_CubelessBase):
         # Only the cubeful wrapper runs the finalizing (promotion) phase, so
         # there is nothing here to report against ``finalize_progress``.
         del finalize_progress
+        if cube_owner is not None:
+            resolve_owner(cube_owner)
         candidates = bgbot_cpp.possible_moves(board, die1, die2)
         if not candidates:
             return []
@@ -450,7 +444,12 @@ class _MultiPlyAnalyzer(_CubelessBase):
         self._force_include(scored_1ply, survivors, survivor_set, force_boards)
 
         results = []
+        effective_threads = self._strategy_nply.effective_parallel_threads()
         for feq, cleq, b, p0 in survivors:
+            _notify_thread_budget(
+                "multipy_evaluate", effective_threads,
+                plies=self._n_plies, cubeful=False,
+            )
             r = self._strategy_nply.evaluate_board(b, board)
             results.append({
                 "board": b,
@@ -473,6 +472,10 @@ class _MultiPlyAnalyzer(_CubelessBase):
         strategy = self._strategy_nply
 
         def _nply_eval(b, board_ref):
+            _notify_thread_budget(
+                "multipy_evaluate", effective_threads,
+                plies=n_plies, cubeful=False,
+            )
             r = strategy.evaluate_board(b, board_ref)
             return r["equity"], list(r["probs"]), f"{n_plies}-ply", {}
 
@@ -487,6 +490,10 @@ class _MultiPlyAnalyzer(_CubelessBase):
         incl_2ply_details=False, decision_only=False,
     ) -> dict:
         owner = resolve_owner(cube_owner)
+        _notify_thread_budget(
+            "cube_decision_nply", self._parallel_threads or 1,
+            plies=self._n_plies, cubeful=True,
+        )
         r = bgbot_cpp.cube_decision_nply_unified(
             board, cube_value, owner, self._n_plies,
             self._weights.strategy_type,

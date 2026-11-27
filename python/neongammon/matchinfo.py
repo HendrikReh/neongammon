@@ -18,11 +18,11 @@ For money games (no match context):
 """
 
 
+from ._primitives import _validate_away_scores, _validate_cube_limit
+
+
 def _validate_met_away_scores(away1, away2):
-    if away1 == away2 == 0:
-        return
-    import bgbot_cpp
-    bgbot_cpp._validate_met_away_scores(away1, away2)
+    _validate_away_scores(away1, away2)
 
 
 def _lookup(table, default, away1, away2):
@@ -44,7 +44,6 @@ def _lookup(table, default, away1, away2):
 # Take points keyed by (leader_away, trailer_away)
 # Values: (leader_take_point, trailer_take_point)
 _TAKE_POINTS_CV1 = {
-    (2, 2): (0.32, 0.32),
     (2, 3): (0.26, 0.25),
     (3, 3): (0.25, 0.25),
     (2, 4): (0.20, 0.19),
@@ -101,10 +100,11 @@ def take_points(away1, away2, cube_value=1, *, is_crawford=False):
     Returns:
         Tuple of (take_point_for_player1, take_point_for_player2).
     """
+    _validate_met_away_scores(away1, away2)
+    _validate_cube_limit(cube_value, 0)
     c = cube_value
     if away1 == away2 == 0:
         return (0.22, 0.22)
-    _validate_met_away_scores(away1, away2)
     # Check for automatic redouble cases
     p1_auto = away2 - 2 * c <= 0  # player 2 doubles, player 1 has auto-redouble
     p2_auto = away1 - 2 * c <= 0  # player 1 doubles, player 2 has auto-redouble
@@ -151,7 +151,9 @@ def _get_single_take_point(away_taker, away_doubler, cube_value, is_crawford):
 
 def _gammonless_take_point(away1, away2, pass_points, taken_cube, is_crawford):
     """Solve MWC(pass) = P(win) * MWC(win) + P(loss) * MWC(loss)."""
-    from bgbot_cpp import _get_met_after
+    from ._native import load_native
+
+    _get_met_after = load_native()._get_met_after
 
     loss = _get_met_after(away1, away2, taken_cube, False, is_crawford)
     den = _get_met_after(away1, away2, taken_cube, True, is_crawford) - loss
@@ -171,7 +173,9 @@ def _janowski_take_point(away1, away2, cube_value, x, is_crawford):
     If the taker (player 1) can't survive a redouble (away1 - 2*cube_value <= 0),
     the cube is dead after taking and the dead cube take point is returned directly.
     """
-    from bgbot_cpp import _get_met_after
+    from ._native import load_native
+
+    _get_met_after = load_native()._get_met_after
 
     c = cube_value
     t_dead = _gammonless_take_point(away1, away2, c, 2 * c, is_crawford)
@@ -208,8 +212,11 @@ def take_points_janowski(away1, away2, cube_value=1, x=0.68, *, is_crawford=Fals
     Returns:
         Tuple of (take_point_for_player1, take_point_for_player2).
     """
+    _validate_met_away_scores(away1, away2)
+    _validate_cube_limit(cube_value, 0)
     if away1 == away2 == 0:
-        return (0.25, 0.25)
+        tp = 0.5 / (2.0 + 0.5 * x)
+        return (tp, tp)
     tp1 = _janowski_take_point(away1, away2, cube_value, x, is_crawford)
     tp2 = _janowski_take_point(away2, away1, cube_value, x, is_crawford)
     return (tp1, tp2)
@@ -230,6 +237,8 @@ def take_points_dead_cube(away1, away2, cube_value=1, *, is_crawford=False):
     Returns:
         Tuple of (take_point_for_player1, take_point_for_player2).
     """
+    _validate_met_away_scores(away1, away2)
+    _validate_cube_limit(cube_value, 0)
     if away1 == away2 == 0:
         return (0.25, 0.25)
     take_cube = 2 * cube_value
@@ -252,10 +261,14 @@ def gammon_prices(away1, away2, cube_value=1, *, is_crawford=False):
     Returns:
         Tuple of (gammon_price_for_player1, gammon_price_for_player2).
     """
+    _validate_met_away_scores(away1, away2)
+    _validate_cube_limit(cube_value, 0)
     if away1 == away2 == 0:
         return (0.5, 0.5)
 
-    from bgbot_cpp import _get_met_after
+    from ._native import load_native
+
+    _get_met_after = load_native()._get_met_after
 
     c = cube_value
     win = _get_met_after(away1, away2, 2 * c, True, is_crawford)

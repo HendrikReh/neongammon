@@ -49,14 +49,46 @@ jobs:
           python -m pip install --upgrade build
           python -m build --sdist
 
+      - name: Verify sdist manifest and size
+        run: python tests/sdist_contents.py
+
       - uses: actions/upload-artifact@v4
         with:
           name: cibw-sdist
           path: dist/*.tar.gz
 
+  verify_sdist_build:
+    name: Build and test wheel from sdist (macOS arm64)
+    needs: [build_sdist]
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cibw-sdist
+          path: dist
+
+      - name: Build wheel from sdist and smoke-test installed package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip wheel --no-deps dist/*.tar.gz -w sdist-wheelhouse
+          python -m venv /tmp/sdist-venv
+          /tmp/sdist-venv/bin/python -m pip install --no-deps sdist-wheelhouse/*.whl
+          /tmp/sdist-venv/bin/python -m pip install 'numpy>=1.24' pytest
+          /tmp/sdist-venv/bin/python -I -m pytest -q tests/wheel_contents.py
+          /tmp/sdist-venv/bin/python -I -m neongammon info --json
+          /tmp/sdist-venv/bin/python -I -m neongammon probe --json
+
   release_github:
     name: Attach wheels to the GitHub release
-    needs: [build_wheels, build_sdist]
+    needs: [build_wheels, build_sdist, verify_sdist_build]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:

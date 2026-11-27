@@ -45,15 +45,18 @@ import os
 import threading
 from dataclasses import dataclass
 
-import bgbot_cpp
-
+from ._native import load_native
+from ._primitives import _validate_away_scores
 from .cubeful import CUBEFUL_FILTERED_PLIES
 from .facade import BgBotAnalyzer, _optimal_action
+from .runtime import _notify_thread_budget
 from .strategies import (
     _contact_cube_life, _contact_cube_slope, _extension_constant,
     _normalize_cube_context, _validate_cube_limit,
     load_bearoff_db, resolve_owner,
 )
+
+bgbot_cpp = load_native()
 from .types import CheckerPlayResult, CubeActionResult, CubeDecisionResult, MoveAnalysis, PostMoveAnalysis, Probabilities
 from .weights import WeightConfig, WeightConfigPair, bearoff_db_path, default_weights
 
@@ -238,10 +241,11 @@ def batch_evaluate(
         cube_value: int   — current cube value (1, 2, 4, ...)
         cube_owner: str   — "centered", "player", or "opponent"
 
-    Optional match play fields:
-        away1: int        — points player needs (0 = money game)
-        away2: int        — points opponent needs (0 = money game)
-        is_crawford: bool — True if Crawford game
+    Optional match play and cube cap fields:
+        away1: int           — points player needs (0 = money game)
+        away2: int           — points opponent needs (0 = money game)
+        is_crawford: bool    — True if Crawford game
+        max_cube_value: int  — maximum cube (0 = unlimited, or power of two >= 2)
 
     Args:
         positions: List of position dicts.
@@ -268,7 +272,7 @@ def batch_evaluate(
     if not positions:
         return []
 
-    # Build (board, cube_value, CubeOwner[, away1, away2, is_crawford]) tuples for C++
+    # Build (board, cube_value, CubeOwner[, away1, away2, is_crawford[, max_cube_value]]) tuples for C++
     cpp_positions = []
     for p in positions:
         board = list(p["board"])
@@ -277,7 +281,13 @@ def batch_evaluate(
         away1 = p.get("away1", 0)
         away2 = p.get("away2", 0)
         is_crawford = p.get("is_crawford", False)
-        if away1 > 0 or away2 > 0:
+        max_cube_value = p.get("max_cube_value", 0)
+        _validate_away_scores(away1, away2)
+        _validate_cube_limit(cube_value, max_cube_value)
+        if max_cube_value:
+            cpp_positions.append((board, cube_value, cube_owner,
+                                  away1, away2, is_crawford, max_cube_value))
+        elif away1 != 0 or away2 != 0:
             cpp_positions.append((board, cube_value, cube_owner,
                                   away1, away2, is_crawford))
         else:
@@ -290,8 +300,14 @@ def batch_evaluate(
 
     strategy = (models.base() if n_plies == 1 else
                 models.multipy(n_plies, filter_max_moves, filter_threshold))
+    threads = _auto_threads(n_threads, len(cpp_positions), n_plies)
+    _notify_thread_budget(
+        "batch_evaluate",
+        threads if threads > 0 else (os.cpu_count() or 1),
+        plies=n_plies, cubeful=True,
+    )
     raw_results = bgbot_cpp.batch_evaluate_positions(
-        cpp_positions, strategy, _auto_threads(n_threads, len(cpp_positions), n_plies),
+        cpp_positions, strategy, threads,
         jacoby=jacoby, beaver=beaver, **_root_cube_life_kwargs(),
     )
 
@@ -374,11 +390,12 @@ def batch_post_move_evaluate(
         is_crawford = p.get("is_crawford", False)
         cube_value = p.get("cube_value", 1)
         max_cube_value = p.get("max_cube_value", 0)
+        _validate_away_scores(away1, away2)
         _validate_cube_limit(cube_value, max_cube_value)
         if max_cube_value:
             cpp_positions.append((board, cube_owner, cube_value,
                                   away1, away2, is_crawford, max_cube_value))
-        elif away1 > 0 or away2 > 0:
+        elif away1 != 0 or away2 != 0:
             cpp_positions.append((board, cube_owner, cube_value,
                                   away1, away2, is_crawford))
         else:
@@ -390,8 +407,14 @@ def batch_post_move_evaluate(
 
     strategy = (models.base() if n_plies == 1 else
                 models.multipy(n_plies, filter_max_moves, filter_threshold))
+    threads = _auto_threads(n_threads, len(cpp_positions), n_plies)
+    _notify_thread_budget(
+        "batch_post_move_evaluate",
+        threads if threads > 0 else (os.cpu_count() or 1),
+        plies=n_plies, cubeful=True,
+    )
     raw_results = bgbot_cpp.batch_evaluate_post_move(
-        cpp_positions, strategy, _auto_threads(n_threads, len(cpp_positions), n_plies),
+        cpp_positions, strategy, threads,
         jacoby=jacoby, **_root_cube_life_kwargs(),
     )
     level_label = f"{n_plies}-ply"
@@ -439,10 +462,11 @@ def batch_cube_action(
         cube_value: int   — current cube value (1, 2, 4, ...)
         cube_owner: str   — "centered", "player", or "opponent"
 
-    Optional match play fields:
-        away1: int        — points player needs (0 = money game)
-        away2: int        — points opponent needs (0 = money game)
-        is_crawford: bool — True if Crawford game
+    Optional match play and cube cap fields:
+        away1: int           — points player needs (0 = money game)
+        away2: int           — points opponent needs (0 = money game)
+        is_crawford: bool    — True if Crawford game
+        max_cube_value: int  — maximum cube (0 = unlimited, or power of two >= 2)
 
     Args:
         positions: List of position dicts.
@@ -542,6 +566,11 @@ def batch_cube_action_nply(
             p.get("contact_x_pip_slope", _contact_cube_slope(ply, a1, a2)) if money else 0.0,
         )
         inputs.append((p["board"], info))
+    _notify_thread_budget(
+        "batch_cube_action_nply",
+        n_threads if n_threads > 0 else (os.cpu_count() or 1),
+        plies=ply, cubeful=True,
+    )
     raw = bgbot_cpp.batch_cube_action_nply(
         inputs, models.base(), models.bearoff_db, ply, n_threads, decision_only,
         filter_max_moves, filter_threshold,
@@ -645,7 +674,8 @@ def batch_checker_play(
         away1 = p.get("away1", 0)
         away2 = p.get("away2", 0)
         is_crawford = p.get("is_crawford", False)
-        if away1 > 0 or away2 > 0:
+        _validate_away_scores(away1, away2)
+        if away1 != 0 or away2 != 0:
             d["away1"] = away1
             d["away2"] = away2
             d["is_crawford"] = is_crawford
@@ -662,6 +692,11 @@ def batch_checker_play(
     # checks each position's match state, so a match row never switches them
     # off for the money rows of the same batch.
 
+    _notify_thread_budget(
+        "batch_checker_play",
+        n_threads if n_threads > 0 else (os.cpu_count() or 1),
+        plies=n_plies, cubeful=True,
+    )
     if n_plies == 1:
         raw_results = bgbot_cpp.batch_checker_play(
             cpp_inputs, strategy_1ply,

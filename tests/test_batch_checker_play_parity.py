@@ -75,11 +75,19 @@ def _batch_moves(level, positions, n_threads=4, bearoff_db=None):
                                         bearoff_db=bearoff_db)]
 
 
+@pytest.fixture(scope="module")
+def _lists_cache():
+    return {}
+
+
 @pytest.fixture(scope="module", params=["1ply", "2ply", "3ply"])
-def lists(request):
+def lists(request, _lists_cache):
     level = request.param
-    positions = POSITIONS[level]
-    return level, _batch_moves(level, positions), _analyzer_moves(level, positions)
+    if level not in _lists_cache:
+        positions = POSITIONS[level]
+        _lists_cache[level] = (_batch_moves(level, positions), _analyzer_moves(level, positions))
+    batch, analyzer = _lists_cache[level]
+    return level, batch, analyzer
 
 
 def _assert_moves_match(level, batch_moves, analyzer_moves, *, tol=1e-5):
@@ -121,12 +129,13 @@ def test_two_ply_searches_only_the_filtered_moves(lists):
         assert all(m["eval_level"] == f"{level[0]}-ply" for m in moves[:2])
 
 
-def test_the_fixture_exercises_promotion(lists):
+def test_the_fixture_exercises_promotion(_lists_cache):
     # The parity above covers the promotion loops only if moves outside the
     # 1-ply filter get searched: here several do, and some end up best.
-    level, batch, _ = lists
-    if level != "2ply":
-        pytest.skip("only 2-ply filters and promotes")
+    if "2ply" not in _lists_cache:
+        positions = POSITIONS["2ply"]
+        _lists_cache["2ply"] = (_batch_moves("2ply", positions), _analyzer_moves("2ply", positions))
+    batch, _ = _lists_cache["2ply"]
     inner = BgBotAnalyzer(eval_level="2ply", cubeful=True, parallel_threads=2)._analyzer._inner
     promoted_best = promoted_any = 0
     for p, moves in zip(POSITIONS["2ply"], batch):

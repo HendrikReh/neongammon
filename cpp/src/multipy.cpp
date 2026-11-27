@@ -311,7 +311,8 @@ MultiPlyStrategy::MultiPlyStrategy(std::shared_ptr<Strategy> base_strategy,
                                    bool full_depth_opponent,
                                    bool parallel_evaluate,
                                    int parallel_threads)
-    : base_(std::move(base_strategy))
+    : raw_base_(std::move(base_strategy))
+    , base_(raw_base_)
     , n_plies_(std::max(1, n_plies))
     , move_filter_(filter)
     , full_depth_opponent_(full_depth_opponent)
@@ -331,8 +332,10 @@ MultiPlyStrategy::MultiPlyStrategy(std::shared_ptr<Strategy> base_strategy,
                                    bool full_depth_opponent,
                                    bool parallel_evaluate,
                                    int parallel_threads)
-    : base_(std::move(base_strategy))
-    , filter_strat_(std::move(filter_strategy))
+    : raw_base_(std::move(base_strategy))
+    , base_(raw_base_)
+    , raw_filter_strat_(std::move(filter_strategy))
+    , filter_strat_(raw_filter_strat_)
     , n_plies_(std::max(1, n_plies))
     , move_filter_(filter)
     , full_depth_opponent_(full_depth_opponent)
@@ -349,29 +352,25 @@ MultiPlyStrategy::MultiPlyStrategy(std::shared_ptr<Strategy> base_strategy,
 
 // ======================== Bearoff DB ========================
 //
-// Setting the bearoff DB wraps base_ (and filter_strat_, when present) in a
-// BearoffStrategy so that any leaf evaluation through these strategies —
+// Setting the bearoff DB wraps raw_base_ (and raw_filter_strat_, when present)
+// in a BearoffStrategy so that any leaf evaluation through these strategies —
 // including the plies==2 fast path which calls
 // base_->batch_evaluate_candidates_best_prob directly and the 1-ply leaf in
 // evaluate_probs_nply_impl — short-circuits to the exact DB lookup whenever
-// the candidate position is in the bearoff range. Without the wrap, the
-// MultiPlyStrategy member bearoff_db_ alone is not sufficient: only
-// evaluate_probs_nply_impl's entry-level check would consult it, and the
-// plies==2 fast path bypasses that entry check on its leaves.
+// the candidate position is in the bearoff range. Passing nullptr restores
+// the unwrapped raw strategies, and swapping DBs re-wraps from raw_base_.
 
 void MultiPlyStrategy::set_bearoff_db(const BearoffDB* db) {
     bearoff_db_ = db;
-    if (db) {
-        if (!std::dynamic_pointer_cast<BearoffStrategy>(base_)) {
-            base_ = std::make_shared<BearoffStrategy>(base_, db);
-        }
-        if (filter_strat_ &&
-            !std::dynamic_pointer_cast<BearoffStrategy>(filter_strat_)) {
-            filter_strat_ = std::make_shared<BearoffStrategy>(filter_strat_, db);
-        }
-        cache_salt_.store(base_ ? static_cast<std::uint64_t>(base_->eval_identity()) : 0,
-                          std::memory_order_relaxed);
-    }
+    auto wrap_strategy = [db](const std::shared_ptr<Strategy>& raw) -> std::shared_ptr<Strategy> {
+        if (!raw || !db) return raw;
+        if (raw->bearoff_layer().db == db) return raw;
+        return std::make_shared<BearoffStrategy>(raw, db);
+    };
+    base_ = wrap_strategy(raw_base_);
+    filter_strat_ = wrap_strategy(raw_filter_strat_);
+    cache_salt_.store(base_ ? static_cast<std::uint64_t>(base_->eval_identity()) : 0,
+                      std::memory_order_relaxed);
 }
 
 int MultiPlyStrategy::rollout_cubeless_move(
@@ -551,7 +550,7 @@ std::array<float, NUM_OUTPUTS> MultiPlyStrategy::evaluate_probs_nply_impl(
         PosCache::global_misses.fetch_add(1, std::memory_order_relaxed);
     }
 
-    SharedPosCache::Entry* shared_reservation = nullptr;
+    SharedPosCache::ReservationGuard shared_reservation;
 
     // Check shared cross-thread cache (active during parallel rollouts)
     if (cache_enabled_ && tl_shared_cache) {
@@ -560,7 +559,10 @@ std::array<float, NUM_OUTPUTS> MultiPlyStrategy::evaluate_probs_nply_impl(
             cache.insert(bh, 0, board, *shared_result.probs);  // promote to thread-local
             return *shared_result.probs;
         }
-        shared_reservation = shared_result.reservation;
+        if (shared_result.reservation) {
+            shared_reservation = SharedPosCache::ReservationGuard(
+                tl_shared_cache, shared_result.reservation);
+        }
     }
 
     // Flip to opponent's perspective. The opponent is now "player 1" on this board.
@@ -763,7 +765,7 @@ std::array<float, NUM_OUTPUTS> MultiPlyStrategy::evaluate_probs_nply_impl(
     // Also insert into shared cross-thread cache if active
     if (cache_enabled_ && tl_shared_cache) {
         if (shared_reservation) {
-            tl_shared_cache->publish(shared_reservation, avg);
+            shared_reservation.publish(avg);
         } else {
             tl_shared_cache->insert(bh, 0, board, avg);
         }

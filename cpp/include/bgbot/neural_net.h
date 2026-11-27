@@ -714,7 +714,16 @@ public:
     std::array<float, NUM_OUTPUTS> evaluate_pinned_probs(
         const Board& board, bool race, int pinned) const override;
     RolloutVRNetwork rollout_vr_network(const Board& board) const override;
-    void set_root_pinned(std::vector<int> nn_indices) override { routing_.root_pins = std::move(nn_indices); }
+    void set_root_pinned(std::vector<int> nn_indices) override {
+        const int n = static_cast<int>(nns_.size());
+        for (int slot : nn_indices) {
+            if (slot <= 0 || slot >= n) {
+                throw std::invalid_argument(
+                    "Root pin slot must refer to an existing non-race network slot");
+            }
+        }
+        routing_.root_pins = std::move(nn_indices);
+    }
     const std::vector<int>& root_pinned() const override { return routing_.root_pins; }
 
 private:
@@ -736,5 +745,8 @@ private:
 };
 
 using BackgameAwarePairStrategy = RoutedStrategy;
+
+// True when compiled with Apple Accelerate batched BLAS NN evaluation.
+bool accelerate_enabled() noexcept;
 
 } // namespace bgbot

@@ -10,13 +10,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import bgbot_cpp
-
+from ._native import load_native
 from ._primitives import (
+    STARTING_BOARD as STARTING_BOARD,
+    _validate_away_scores,
+    _validate_cube_limit,
     invert_probs as invert_probs,
     resolve_owner as _resolve_owner_name,
     validate_board as validate_board,
 )
+
+bgbot_cpp = load_native()
 
 if TYPE_CHECKING:
     from .types import GamePlanResult
@@ -27,12 +31,6 @@ _OWNER_ENUM_MAP = {
     "opponent": bgbot_cpp.CubeOwner.OPPONENT,
 }
 _VALID_NATIVE_OWNERS = frozenset(_OWNER_ENUM_MAP.values())
-
-#: Standard backgammon starting position.
-STARTING_BOARD: list[int] = [
-    0, -2, 0, 0, 0, 0, 5, 0, 3, 0, 0, 0, -5,
-    5, 0, 0, 0, -3, 0, -5, 0, 0, 0, 0, 2, 0,
-]
 
 
 def flip_board(board: list[int]) -> list[int]:
@@ -136,6 +134,8 @@ def can_double_match(
     games (both away values zero), eligibility depends on ownership. The
     maximum cube value applies to both kinds of game.
     """
+    _validate_away_scores(away1, away2)
+    _validate_cube_limit(cube_value, max_cube_value)
     if isinstance(owner, bgbot_cpp.CubeOwner) and owner in _VALID_NATIVE_OWNERS:
         cpp_owner = owner
     else:

@@ -16,10 +16,22 @@ Quick start::
 """
 
 from importlib import import_module as _import_module
+import importlib.metadata as _metadata
+from pathlib import Path as _Path
+import re as _re
 from typing import TYPE_CHECKING
 
 from . import settings as settings
-from ._primitives import validate_board as validate_board
+from ._primitives import (
+    STARTING_BOARD as STARTING_BOARD,
+    invert_probs as invert_probs,
+    validate_board as validate_board,
+)
+from .runtime import (
+    ThreadBudgetEvent as ThreadBudgetEvent,
+    observe_thread_budgets as observe_thread_budgets,
+    runtime_info as runtime_info,
+)
 from .types import (
     CheckerPlayResult as CheckerPlayResult,
     CubeActionResult as CubeActionResult,
@@ -40,6 +52,25 @@ from .weights import (
     WeightConfigPair as WeightConfigPair,
     default_weights as default_weights,
 )
+
+
+def _resolve_version() -> str:
+    try:
+        return _metadata.version("neongammon")
+    except _metadata.PackageNotFoundError:
+        pyproject = _Path(__file__).resolve().parents[2] / "pyproject.toml"
+        if pyproject.is_file():
+            match = _re.search(
+                r'^version\s*=\s*"([^"]+)"',
+                pyproject.read_text(encoding="utf-8"),
+                _re.M,
+            )
+            if match:
+                return match.group(1)
+        return "0.0.0+unknown"
+
+
+__version__: str = _resolve_version()
 
 if TYPE_CHECKING:
     from bgbot_cpp import TrialEvalConfig as TrialEvalConfig
@@ -118,13 +149,11 @@ _ENGINE_MODULES = {
         "batch_post_move_evaluate",
     ),
     "board": (
-        "STARTING_BOARD",
         "can_double_match",
         "check_game_over",
         "classify_game_plan",
         "classify_game_plans",
         "flip_board",
-        "invert_probs",
         "is_crashed",
         "is_race",
         "possible_moves",
@@ -161,7 +190,8 @@ def __getattr__(name: str):
     if name == "TrialEvalConfig":
         # Older extensions do not expose the trial configuration.
         try:
-            value = _import_module("bgbot_cpp").TrialEvalConfig
+            from ._native import load_native
+            value = load_native().TrialEvalConfig
         except (ImportError, AttributeError):
             value = None
     elif name in _ENGINE_EXPORTS:
@@ -233,4 +263,8 @@ __all__ = [
     "validate_board",
     "settings",
     "TrialEvalConfig",
+    "__version__",
+    "runtime_info",
+    "observe_thread_budgets",
+    "ThreadBudgetEvent",
 ]

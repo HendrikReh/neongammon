@@ -28,7 +28,24 @@ def analyzers():
         "cf2": BgBotAnalyzer(eval_level="2ply", cubeful=True),
         "cl2": BgBotAnalyzer(eval_level="2ply", cubeful=False),
         "cf1": BgBotAnalyzer(eval_level="1ply", cubeful=True),
+        "cl1": BgBotAnalyzer(eval_level="1ply", cubeful=False),
     }
+
+
+def _filter_pruned(one_ply_moves, max_moves=5, threshold=0.08):
+    best = one_ply_moves[0].equity
+    survivors = {
+        tuple(m.board)
+        for m in one_ply_moves
+        if (best - m.equity) < threshold
+    }
+    if len(survivors) > max_moves:
+        survivors = {
+            tuple(m.board)
+            for m in one_ply_moves[:max_moves]
+            if (best - m.equity) < threshold
+        }
+    return {tuple(m.board) for m in one_ply_moves} - survivors
 
 
 @pytest.mark.parametrize("cube_value,cube_owner", [(1, "centered"), (2, "player")])
@@ -37,13 +54,13 @@ def test_pruned_moves_stay_1ply_and_never_lead(analyzers, cube_value, cube_owner
     for board, d1, d2 in _positions():
         kw = dict(cube_value=cube_value, cube_owner=cube_owner)
         cf = analyzers["cf2"].checker_play(board, d1, d2, **kw).moves
-        cl = analyzers["cl2"].checker_play(board, d1, d2, **kw).moves
-        one = {tuple(m.board): m for m in analyzers["cf1"].checker_play(board, d1, d2, **kw).moves}
-        cl_pruned = {tuple(m.board) for m in cl if m.eval_level == "1-ply"}
+        cf1_moves = analyzers["cf1"].checker_play(board, d1, d2, **kw).moves
+        one = {tuple(m.board): m for m in cf1_moves}
+        cf1_pruned = _filter_pruned(cf1_moves)
         cf_pruned = {tuple(m.board) for m in cf if m.eval_level == "1-ply"}
-        # Only moves the cubeless filter pruned can be 1-ply here; a few of
-        # them may have been promoted into the search, none the other way.
-        assert cf_pruned <= cl_pruned
+        # Only moves the 1-ply cubeful filter pruned can stay 1-ply here; a few
+        # of them may have been promoted into the search, none the other way.
+        assert cf_pruned <= cf1_pruned
         # Nothing in the top two carries a 1-ply value.
         assert all(m.eval_level == "2-ply" for m in cf[:2])
         # A pruned move carries exactly the 1-ply analyzer's cubeful value.
@@ -57,16 +74,23 @@ def test_pruned_moves_stay_1ply_and_never_lead(analyzers, cube_value, cube_owner
 
 
 def test_best_move_comes_from_the_search(analyzers):
-    """The cubeful pick is a move the cubeless N-ply search also searched
-    (a survivor or promoted there) or one this path promoted itself."""
+    """Both cubeful and cubeless 2-ply pick from their searched candidates and
+    search every survivor of their respective 1-ply filter."""
     for board, d1, d2 in _positions():
         cf = analyzers["cf2"].checker_play(board, d1, d2).moves
+        cf1 = analyzers["cf1"].checker_play(board, d1, d2).moves
         cl = analyzers["cl2"].checker_play(board, d1, d2).moves
-        searched = {tuple(m.board) for m in cl if m.eval_level != "1-ply"}
+        cl1 = analyzers["cl1"].checker_play(board, d1, d2).moves
+
         cf_searched = {tuple(m.board) for m in cf if m.eval_level != "1-ply"}
+        cf1_survivors = {tuple(m.board) for m in cf1} - _filter_pruned(cf1)
         assert tuple(cf[0].board) in cf_searched
-        # Every cubeless survivor is searched here too.
-        assert searched <= cf_searched
+        assert cf1_survivors <= cf_searched
+
+        cl_searched = {tuple(m.board) for m in cl if m.eval_level != "1-ply"}
+        cl1_survivors = {tuple(m.board) for m in cl1} - _filter_pruned(cl1)
+        assert tuple(cl[0].board) in cl_searched
+        assert cl1_survivors <= cl_searched
 
 
 def test_3ply_still_scores_every_move():

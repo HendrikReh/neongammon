@@ -16,6 +16,14 @@ from numbers import Integral
 
 VALID_CUBE_OWNERS: frozenset[str] = frozenset(("centered", "player", "opponent"))
 
+MAX_MATCH_LENGTH: int = 25
+
+#: Standard backgammon starting position.
+STARTING_BOARD: list[int] = [
+    0, -2, 0, 0, 0, 0, 5, 0, 3, 0, 0, 0, -5,
+    5, 0, 0, 0, -3, 0, -5, 0, 0, 0, 0, 2, 0,
+]
+
 _FLIP_OWNER_NAME: dict[str, str] = {
     "centered": "centered",
     "player": "opponent",
@@ -108,13 +116,42 @@ def cubeless_equity(probs: Sequence[float]) -> float:
     )
 
 
+def _validate_away_scores(away1: int, away2: int) -> None:
+    """Validate away scores: (0, 0) for money play or both in [1, 25]."""
+    if (
+        isinstance(away1, bool)
+        or isinstance(away2, bool)
+        or not isinstance(away1, Integral)
+        or not isinstance(away2, Integral)
+    ):
+        raise ValueError("Match away scores must be integers")
+    a1, a2 = int(away1), int(away2)
+    if a1 == 0 and a2 == 0:
+        return
+    if a1 < 1 or a2 < 1:
+        raise ValueError(
+            f"Match away scores must both be 0 (money game) or both in [1, {MAX_MATCH_LENGTH}]"
+        )
+    if a1 > MAX_MATCH_LENGTH or a2 > MAX_MATCH_LENGTH:
+        raise ValueError(
+            f"Match equity requires each away score to be at most {MAX_MATCH_LENGTH}"
+        )
+
+
 def _validate_cube_limit(cube_value: int, max_cube_value: int) -> None:
     if (
-        not isinstance(max_cube_value, int)
-        or isinstance(max_cube_value, bool)
+        isinstance(cube_value, bool)
+        or not isinstance(cube_value, Integral)
+        or cube_value < 1
+        or (int(cube_value) & (int(cube_value) - 1))
+    ):
+        raise ValueError("cube_value must be a positive power of two")
+    if (
+        isinstance(max_cube_value, bool)
+        or not isinstance(max_cube_value, Integral)
         or max_cube_value < 0
         or max_cube_value == 1
-        or (max_cube_value and max_cube_value & (max_cube_value - 1))
+        or (max_cube_value and int(max_cube_value) & (int(max_cube_value) - 1))
     ):
         raise ValueError("max_cube_value must be 0 or a power of two >= 2")
     if max_cube_value and cube_value > max_cube_value:
@@ -129,8 +166,9 @@ def _normalize_cube_context(
     beaver: bool = True,
     max_cube_value: int = 0,
 ) -> tuple[bool, bool]:
-    """Validate cube limits and auto-disable Jacoby/beaver in match play."""
+    """Validate away scores and cube limits, and auto-disable Jacoby/beaver in match play."""
+    _validate_away_scores(away1, away2)
     _validate_cube_limit(cube_value, max_cube_value)
-    if away1 > 0 or away2 > 0:
+    if away1 > 0:
         return False, False
     return bool(jacoby), bool(beaver)

@@ -47,3 +47,30 @@ def test_dead_cube_take_points_from_the_crawford_game_use_post_crawford_outcomes
 def test_live_and_dead_money_take_points(cube):
     assert take_points(0, 0, cube) == (0.22, 0.22)
     assert take_points_dead_cube(0, 0, cube) == (0.25, 0.25)
+
+
+@pytest.mark.parametrize("x", [0.0, 0.5, 0.68, 1.0])
+def test_take_points_janowski_money_honors_cube_life_index(x):
+    expected = 0.5 / (2.0 + 0.5 * x)
+    assert take_points_janowski(0, 0, 1, x=x) == pytest.approx((expected, expected), abs=1e-9)
+
+
+def test_take_points_2a_2a_uses_auto_redouble_formula():
+    from neongammon import matchinfo
+
+    assert (2, 2) not in matchinfo._TAKE_POINTS_CV1
+    assert take_points(2, 2, 1) == pytest.approx((0.32264, 0.32264), abs=1e-5)
+
+
+@pytest.mark.parametrize("fn", [take_points, take_points_dead_cube, take_points_janowski, gammon_prices])
+@pytest.mark.parametrize("away1,away2", [(0, 5), (5, 0), (-1, 5), (-1, -2), (26, 5)])
+def test_matchinfo_rejects_invalid_away_scores(fn, away1, away2):
+    with pytest.raises(ValueError, match="away"):
+        fn(away1, away2)
+
+
+@pytest.mark.parametrize("fn", [take_points, take_points_dead_cube, take_points_janowski, gammon_prices])
+@pytest.mark.parametrize("cube_value", [0, -1, 3])
+def test_matchinfo_rejects_invalid_cube_value(fn, cube_value):
+    with pytest.raises(ValueError, match="cube_value"):
+        fn(5, 3, cube_value)

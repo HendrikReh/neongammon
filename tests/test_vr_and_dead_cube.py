@@ -329,3 +329,119 @@ def _clears_to_two_back_checkers(board):
     checkers left on the 19-point, three landed on 15 and one on 14."""
     return (board[20] == 0 and board[19] == 2
             and board[15] == 3 and board[14] == 1)
+
+
+# ---------------------------------------------------------------------------
+# 6. Dead/capped cubes in match rollouts and remaining max_cube_value paths
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("level", ["truncated1", "truncated2"])
+def test_match_rollout_with_capped_dead_cube_stays_in_mwc_space(level):
+    """Dead-cube match rollouts (cube_value == max_cube_value) must compute MWC,
+    not leak money equity into mwc2eq (which used to produce ~+10.0 equity)."""
+    analyzer = BgBotAnalyzer(eval_level=level, cubeful=True, parallel_threads=1)
+    res = analyzer.cube_action(
+        CONTACT, cube_value=2, cube_owner="player",
+        away1=5, away2=3, max_cube_value=2,
+    )
+    assert res.should_double is False
+    assert res.should_take is True
+    expected_mwc = bgbot_cpp.cubeless_mwc(res.probs.to_list(), 5, 3, 2, False)
+    expected_eq = bgbot_cpp.mwc2eq(expected_mwc, 5, 3, 2, False)
+    assert -2.5 < res.equity_nd < 2.5
+    assert res.equity_nd == pytest.approx(expected_eq, abs=1e-3)
+
+
+def test_match_rollout_max_cube_value_1_stays_in_mwc_space():
+    """Raw RolloutStrategy with max_cube_value=1 in match play stays in MWC space."""
+    ro = _rollout_1t(n_trials=72, enable_vr=True)
+    res = ro.cube_decision(CONTACT, 1, OWNERS["centered"], 5, 3, False, max_cube_value=1)
+    assert res["should_double"] is False
+    expected_mwc = bgbot_cpp.cubeless_mwc(res["probs"], 5, 3, 1, False)
+    expected_eq = bgbot_cpp.mwc2eq(expected_mwc, 5, 3, 1, False)
+    assert -2.5 < res["equity_nd"] < 2.5
+    assert res["equity_nd"] == pytest.approx(expected_eq, abs=1e-3)
+
+    # Post-move cubeful rollout at max_cube_value=1 in match play must also stay in MWC space.
+    pos = ro.cubeful_evaluate_board(
+        CONTACT, CONTACT, cube_value=1, owner=OWNERS["centered"],
+        away1=5, away2=3, is_crawford=False, max_cube_value=1,
+    )
+    pos_mwc = bgbot_cpp.cubeless_mwc(pos["probs"], 5, 3, 1, False)
+    pos_eq = bgbot_cpp.mwc2eq(pos_mwc, 5, 3, 1, False)
+    assert -2.5 < pos["cubeful_equity"] < 2.5
+    assert pos["cubeful_equity"] == pytest.approx(pos_eq, abs=1e-3)
+
+
+def test_money_1t_rollout_respects_max_cube_value_on_dt_branch():
+    """At cube_value=1, max_cube_value=2, the DT branch (cube=2) is dead,
+    so money 1T rollout must use cubeless equity on DT instead of live Janowski."""
+    ro = _rollout_1t(n_trials=72, enable_vr=True)
+    uncapped = ro.cube_decision(CONTACT, 1, OWNERS["centered"], jacoby=False, beaver=False, max_cube_value=0)
+    capped = ro.cube_decision(CONTACT, 1, OWNERS["centered"], jacoby=False, beaver=False, max_cube_value=2)
+    assert capped["equity_dt"] != pytest.approx(uncapped["equity_dt"], abs=1e-3)
+    # DT is a dead 2-cube, so its equity per basis 1-cube equals 2 * cubeless_equity.
+    assert capped["equity_dt"] == pytest.approx(2.0 * capped["cubeless_equity"], abs=1e-3)
+
+
+def test_1ply_eval_and_cube_decision_respect_max_cube_value():
+    """eval_pre_roll_1ply_multi (1-ply cubeful_equity_nply) and match
+    cube_decision_1ply must both honor max_cube_value."""
+    analyzer = BgBotAnalyzer(eval_level="1ply", cubeful=True)
+    strat = analyzer._models.base()
+    # 1-ply money dead cube: must equal cubeless equity, not live Janowski.
+    dead_eq = bgbot_cpp.cubeful_equity_nply(
+        CONTACT, OWNERS["centered"], strat, n_plies=1,
+        cube_value=1, jacoby=False, beaver=False, max_cube_value=1,
+    )
+    live_eq = bgbot_cpp.cubeful_equity_nply(
+        CONTACT, OWNERS["centered"], strat, n_plies=1,
+        cube_value=1, jacoby=False, beaver=False, max_cube_value=0,
+    )
+    cl_eq = analyzer.cube_action(CONTACT, cube_value=1, jacoby=False, beaver=False).cubeless_equity
+    assert dead_eq == pytest.approx(cl_eq, abs=1e-5)
+    assert dead_eq != pytest.approx(live_eq, abs=1e-3)
+
+    # 1-ply match cube_decision with cube_value=1, max_cube_value=2: DT is dead 2-cube.
+    capped = analyzer.cube_action(
+        CONTACT, cube_value=1, cube_owner="centered", away1=5, away2=5, max_cube_value=2,
+    )
+    uncapped = analyzer.cube_action(
+        CONTACT, cube_value=1, cube_owner="centered", away1=5, away2=5, max_cube_value=0,
+    )
+    expected_dt_mwc = bgbot_cpp.cubeless_mwc(capped.probs.to_list(), 5, 5, 2, False)
+    expected_dt = bgbot_cpp.mwc2eq(expected_dt_mwc, 5, 5, 1, False)
+    assert capped.equity_dt == pytest.approx(expected_dt, abs=1e-5)
+    assert capped.equity_dt != pytest.approx(uncapped.equity_dt, abs=1e-3)
+
+
+def test_batch_evaluate_and_roll_luck_forward_max_cube_value():
+    """batch_evaluate / batch_cube_action and BgBotAnalyzer.roll_luck honor max_cube_value."""
+    from neongammon import batch_evaluate, roll_luck
+
+    analyzer_1ply = BgBotAnalyzer(eval_level="1ply", cubeful=True)
+    ref_capped = analyzer_1ply.cube_action(
+        CONTACT, cube_value=2, cube_owner="player", max_cube_value=2,
+    )
+    ref_live = analyzer_1ply.cube_action(
+        CONTACT, cube_value=2, cube_owner="player", max_cube_value=0,
+    )
+    batch_capped = batch_evaluate(
+        [{"board": CONTACT, "cube_value": 2, "cube_owner": "player", "max_cube_value": 2}],
+        eval_level="1ply", n_threads=1,
+    )[0]
+    assert batch_capped.cubeful_equity == pytest.approx(ref_capped.equity_nd, abs=1e-6)
+    assert batch_capped.equity_nd == pytest.approx(ref_capped.equity_nd, abs=1e-6)
+    assert batch_capped.cubeful_equity != pytest.approx(ref_live.equity_nd, abs=1e-3)
+
+    analyzer_2ply = BgBotAnalyzer(eval_level="2ply", cubeful=True, parallel_threads=1)
+    luck_capped = analyzer_2ply.roll_luck(
+        CONTACT, 3, 1, cube_value=2, cube_owner="player", max_cube_value=2,
+    )
+    cube_capped = analyzer_2ply.cube_action(
+        CONTACT, cube_value=2, cube_owner="player", max_cube_value=2, incl_2ply_details=True,
+    )
+    luck_expected = roll_luck(cube_capped, 3, 1)
+    assert luck_capped is not None and luck_expected is not None
+    assert luck_capped.luck == pytest.approx(luck_expected.luck, abs=1e-6)
+    assert luck_capped.average_equity == pytest.approx(luck_expected.average_equity, abs=1e-6)

@@ -552,6 +552,7 @@ def test_compute_game_pr_stats_cube_ownership_and_idempotency():
     assert empty["total_dec"] == 0 and math.isnan(empty["pr"])
 
 
+@pytest.mark.external_data
 def test_real_pilot_xg_file_if_present():
     sample = Path(__file__).resolve().parent.parent / "logs" / "xg_pilot" / "seed_1.xg"
     if not sample.exists():

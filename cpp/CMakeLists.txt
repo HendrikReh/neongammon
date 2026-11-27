@@ -10,6 +10,8 @@ option(BGBOT_BUILD_PYTHON "Build the pybind11 Python extension" ON)
 # benchmark & profiler executables. The wheel build in ../CMakeLists.txt sets
 # this to OFF to keep the pybind11 module as the only compiled target.
 option(BGBOT_BUILD_APPS "Build benchmark/profiler executables" ON)
+option(BGBOT_BUILD_TESTS "Build standalone C++ unit tests" OFF)
+option(BGBOT_ENABLE_SANITIZERS "Enable ASan and UBSan on C++ targets" OFF)
 option(BGBOT_BUILD_EXPERIMENTS "Build experimental benchmark and profiler programs" OFF)
 option(BGBOT_BUILD_MOVE_ARRAY_PROBE "Build the private move generator comparison module" OFF)
 
@@ -61,6 +63,10 @@ add_library(bgbot_lib STATIC
 )
 target_include_directories(bgbot_lib PUBLIC ${BGBOT_CPU_ROOT}/include)
 target_compile_options(bgbot_lib PRIVATE ${BGBOT_OPT_FLAGS})
+if(BGBOT_ENABLE_SANITIZERS)
+    target_compile_options(bgbot_lib PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(bgbot_lib PUBLIC -fsanitize=address,undefined)
+endif()
 
 # Threading support
 find_package(Threads REQUIRED)
@@ -132,6 +138,11 @@ endif()
 
 if(BGBOT_BUILD_MOVE_ARRAY_PROBE)
     add_subdirectory("${BGBOT_CPU_ROOT}/move_array_probe" move_array_probe)
+endif()
+
+if(BGBOT_BUILD_TESTS)
+    add_executable(test_native_core ${BGBOT_CPU_ROOT}/tests/test_native_core.cpp)
+    target_link_libraries(test_native_core PRIVATE bgbot_lib)
 endif()
 
 if(BGBOT_BUILD_PYTHON)

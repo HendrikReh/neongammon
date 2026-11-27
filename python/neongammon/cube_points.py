@@ -19,7 +19,11 @@ Match-play reference:
 from dataclasses import dataclass, asdict
 from typing import Optional, Sequence
 
-from ._primitives import flip_owner as _flip_owner_str, resolve_owner as _resolve_owner_name
+from ._primitives import (
+    _validate_cube_limit,
+    flip_owner as _flip_owner_str,
+    resolve_owner as _resolve_owner_name,
+)
 from .matchinfo import _validate_met_away_scores
 
 
@@ -45,7 +49,7 @@ class PlayerCubePoints:
     W: float
     L: float
     double_label: Optional[str]   # "Double" (centered) / "Redouble" (owns) / None
-    cannot_take: bool              # True when this player owns the cube
+    cannot_take: bool              # True when this player owns the cube or opponent's cube is dead
     cannot_double: bool            # True when the opponent owns or cube is dead
     cannot_cash: bool              # == cannot_double
     cannot_too_good: bool          # == cannot_double
@@ -222,7 +226,9 @@ def _money_points(
 def _dead_game_mwcs(away1: int, away2: int, cv: int, is_crawford: bool,
                     rG0: float, rBG0: float, rG1: float, rBG1: float) -> tuple[float, float]:
     """Match-winning chances conditional on winning or losing this game."""
-    from bgbot_cpp import _get_met_after
+    from ._native import load_native
+
+    _get_met_after = load_native()._get_met_after
 
     win = (
         (1.0 - rG0 - rBG0) * _get_met_after(away1, away2, cv, True, is_crawford)
@@ -252,7 +258,9 @@ def _dead_take(away1: int, away2: int, cv: int, is_crawford: bool,
                              + rG1*MWC(a1, a2-4cv)
                              + rBG1*MWC(a1, a2-6cv) )
     """
-    from bgbot_cpp import _get_met_after
+    from ._native import load_native
+
+    _get_met_after = load_native()._get_met_after
 
     pass_mwc = _get_met_after(away1, away2, cv, False, is_crawford)
     win_mwc, lose_mwc = _dead_game_mwcs(
@@ -288,7 +296,9 @@ def _dead_too_good(away1: int, away2: int, cv: int, is_crawford: bool,
 
     In the gammonless / money-like case ``win_mwc_cv == Cash`` so TG = 1.0.
     """
-    from bgbot_cpp import _get_met_after
+    from ._native import load_native
+
+    _get_met_after = load_native()._get_met_after
 
     cash = _get_met_after(away1, away2, cv, True, is_crawford)
     win_mwc, lose_mwc = _dead_game_mwcs(
@@ -338,7 +348,9 @@ def _live_cash_points(away1: int, away2: int, cv: int, is_crawford: bool,
                       rG0: float, rBG0: float,
                       rG1: float, rBG1: float) -> tuple[float, float]:
     """(player_cp, opp_cp) from the recursive C++ implementation."""
-    import bgbot_cpp
+    from ._native import load_native
+
+    bgbot_cpp = load_native()
     return bgbot_cpp.match_live_cash_points(
         away1, away2, cv, is_crawford, rG0, rBG0, rG1, rBG1
     )
@@ -369,7 +381,9 @@ def _probs_from_ratios(p_win: float,
 
 
 def _owner_enum(owner: str):
-    import bgbot_cpp
+    from ._native import load_native
+
+    bgbot_cpp = load_native()
     return {
         "centered": bgbot_cpp.CubeOwner.CENTERED,
         "player": bgbot_cpp.CubeOwner.PLAYER,
@@ -402,6 +416,9 @@ def _janowski_thresholds(
     cube_value: int, away1: int, away2: int, is_crawford: bool,
     cube_life_index: float,
     rG0: float, rBG0: float, rG1: float, rBG1: float,
+    *,
+    cannot_take: bool | None = None,
+    cannot_decide: bool | None = None,
 ) -> dict:
     """Return {tp, cp, dp, tg} at the user's cube_life_index via binary search.
 
@@ -412,13 +429,19 @@ def _janowski_thresholds(
     cl2cf_match equity curves.
 
     Returns NaN for action rows that are not applicable under the current
-    ownership (e.g. TP when the player owns the cube).
+    ownership or score (e.g. TP when the player owns the cube or cube is dead).
     """
-    import bgbot_cpp
+    from ._native import load_native
+
+    bgbot_cpp = load_native()
     x = _clamp01(cube_life_index)
     player_owner = _owner_enum(cube_owner)
     opp_owner_str = _flip_owner_str(cube_owner)
     opp_owner = _owner_enum(opp_owner_str)
+    if cannot_take is None:
+        cannot_take = cube_owner == "player" or cube_value >= away2
+    if cannot_decide is None:
+        cannot_decide = cube_owner == "opponent" or cube_value >= away1
 
     def player_cd(p: float):
         probs = _probs_from_ratios(p, rG0, rBG0, rG1, rBG1)
@@ -439,12 +462,12 @@ def _janowski_thresholds(
     # From opp's cube_decision, should_take transitions False → True as p_player
     # increases (opp's DT decreases faster than their DP).
     tp = NAN
-    if cube_owner != "player":
+    if not cannot_take:
         tp = _binary_transition(lambda p: opp_cd(p).should_take)
 
     # ── Cash point: opp would pass when should_take flips True → False ──
     cp = NAN
-    if cube_owner != "opponent":
+    if not cannot_decide:
         cp = _binary_transition(lambda p: not player_cd(p).should_take)
 
     # ── Double point: should_double False → True inside [0, cp] ──
@@ -456,7 +479,7 @@ def _janowski_thresholds(
     # strictly and the binary search returns cp (DP collapses to CP, same as
     # money-game Janowski at x=1).
     dp_p = NAN
-    if cube_owner != "opponent":
+    if not cannot_decide:
         dp_p = _binary_transition(
             lambda p: player_cd(p).should_double,
             lo=0.0, hi=max(cp, 1e-6) if cp == cp else 1.0,
@@ -466,7 +489,7 @@ def _janowski_thresholds(
     # Defined by equity_nd > equity_dp; search [cp, 1]. If the player is
     # never "too good" (gammonless money-style), return 1.0.
     tg = NAN
-    if cube_owner != "opponent":
+    if not cannot_decide:
         def too_good_at(p: float) -> bool:
             cd = player_cd(p)
             return cd.equity_nd > cd.equity_dp
@@ -517,8 +540,9 @@ def cube_action_points(
     """
     cube_owner = _resolve_owner_name(cube_owner)
     _validate_met_away_scores(away1, away2)
+    _validate_cube_limit(cube_value, 0)
 
-    is_money = (away1 <= 0 or away2 <= 0)
+    is_money = (away1 == 0 and away2 == 0)
 
     if no_gammons:
         # Zero gammon/backgammon components. Recall the cumulative convention:
@@ -542,8 +566,12 @@ def cube_action_points(
     W, L = _compute_wl(probs)
     rG0, rBG0, rG1, rBG1 = _gammon_ratios(probs)
 
-    # Cube is dead during Crawford; report all rows as N/A.
-    if is_crawford:
+    cv = cube_value
+    cannot_take = cube_owner == "player" or cv >= away2
+    cannot_decide = cube_owner == "opponent" or cv >= away1
+
+    # Cube is dead during Crawford, DMP, or when neither side can legally double.
+    if is_crawford or (cannot_take and cannot_decide):
         return PlayerCubePoints(
             W=W, L=L, double_label=None,
             cannot_take=True, cannot_double=True,
@@ -552,7 +580,6 @@ def cube_action_points(
             cash=_NA_TRIPLE, too_good=_NA_TRIPLE,
         )
 
-    cv = cube_value
     x = _clamp01(cube_life_index)
 
     # Cash points from recursive GetPoints. Passing gammon ratios from this
@@ -591,6 +618,7 @@ def cube_action_points(
         away1=away1, away2=away2, is_crawford=is_crawford,
         cube_life_index=x,
         rG0=rG0, rBG0=rBG0, rG1=rG1, rBG1=rBG1,
+        cannot_take=cannot_take, cannot_decide=cannot_decide,
     )
 
     def triple(dead: float, live: float, jan_val: float) -> CubePointTriple:
@@ -599,9 +627,6 @@ def cube_action_points(
             live=live,
             janowski=_clamp01(jan_val) if jan_val == jan_val else NAN,
         )
-
-    cannot_take = cube_owner == "player"
-    cannot_decide = cube_owner == "opponent"
 
     take = _NA_TRIPLE if cannot_take else triple(dead_tp, live_tp, jan["tp"])
     cash = _NA_TRIPLE if cannot_decide else triple(dead_cp, live_cp, jan["cp"])

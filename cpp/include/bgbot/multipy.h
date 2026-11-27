@@ -23,7 +23,8 @@ struct CubeDecision;
 
 // Lock-free shared position cache for cross-thread sharing during rollouts.
 // Multiple threads read/write concurrently using a per-entry state machine:
-// 0=empty, 1=writing (CAS-protected), 2=ready (safe to read).
+// 0=empty, 1=claimed (CAS-protected), 2=computing, 3=ready (safe to read),
+// 4=abandoned (tombstone preserving linear-probe chains after exceptions).
 struct SharedPosCache {
     static constexpr std::size_t CAPACITY = 2 * 1024 * 1024;  // 2M entries
     static constexpr std::size_t MASK = CAPACITY - 1;
@@ -32,6 +33,7 @@ struct SharedPosCache {
     static constexpr int STATE_CLAIMED = 1;
     static constexpr int STATE_COMPUTING = 2;
     static constexpr int STATE_READY = 3;
+    static constexpr int STATE_ABANDONED = 4;
     static constexpr int WAIT_SPINS = 256;
 
     struct Entry {
@@ -45,6 +47,59 @@ struct SharedPosCache {
     struct LookupResult {
         const std::array<float, NUM_OUTPUTS>* probs = nullptr;
         Entry* reservation = nullptr;
+    };
+
+    // RAII guard for a STATE_COMPUTING reservation. Normal completion calls
+    // publish(); any early exit or exception transitions the slot to
+    // STATE_ABANDONED so waiters unblock immediately without breaking linear
+    // probing.
+    class ReservationGuard {
+    public:
+        ReservationGuard() = default;
+        ReservationGuard(SharedPosCache* cache, Entry* entry) noexcept
+            : cache_(cache), entry_(entry) {}
+        ReservationGuard(const ReservationGuard&) = delete;
+        ReservationGuard& operator=(const ReservationGuard&) = delete;
+        ReservationGuard(ReservationGuard&& other) noexcept
+            : cache_(other.cache_), entry_(other.entry_) {
+            other.cache_ = nullptr;
+            other.entry_ = nullptr;
+        }
+        ReservationGuard& operator=(ReservationGuard&& other) noexcept {
+            if (this != &other) {
+                release_abandoned();
+                cache_ = other.cache_;
+                entry_ = other.entry_;
+                other.cache_ = nullptr;
+                other.entry_ = nullptr;
+            }
+            return *this;
+        }
+        ~ReservationGuard() { release_abandoned(); }
+
+        explicit operator bool() const noexcept {
+            return cache_ != nullptr && entry_ != nullptr;
+        }
+
+        void publish(const std::array<float, NUM_OUTPUTS>& probs) noexcept {
+            if (cache_ && entry_) {
+                cache_->publish(entry_, probs);
+                cache_ = nullptr;
+                entry_ = nullptr;
+            }
+        }
+
+    private:
+        void release_abandoned() noexcept {
+            if (cache_ && entry_) {
+                cache_->abandon(entry_);
+                cache_ = nullptr;
+                entry_ = nullptr;
+            }
+        }
+
+        SharedPosCache* cache_ = nullptr;
+        Entry* entry_ = nullptr;
     };
 
     mutable std::vector<Entry> entries;
@@ -118,6 +173,16 @@ struct SharedPosCache {
                 }
             }
 
+            if (s == STATE_ABANDONED &&
+                e.hash == key && e.plies == plies && e.board == board) {
+                int expected = STATE_ABANDONED;
+                if (e.state.compare_exchange_strong(expected, STATE_COMPUTING,
+                                                    std::memory_order_acq_rel)) {
+                    return {nullptr, &e};
+                }
+                s = expected;
+            }
+
             if ((s == STATE_COMPUTING || s == STATE_READY) &&
                 e.hash == key && e.plies == plies && e.board == board) {
                 if (s == STATE_READY) {
@@ -133,7 +198,7 @@ struct SharedPosCache {
                         hits.fetch_add(1, std::memory_order_relaxed);
                         return {&e.probs, nullptr};
                     }
-                    if (ready == STATE_EMPTY) break;
+                    if (ready == STATE_EMPTY || ready == STATE_ABANDONED) break;
                 }
                 misses.fetch_add(1, std::memory_order_relaxed);
                 return {};
@@ -146,10 +211,15 @@ struct SharedPosCache {
         return {};
     }
 
-    void publish(Entry* entry, const std::array<float, NUM_OUTPUTS>& probs) {
+    void publish(Entry* entry, const std::array<float, NUM_OUTPUTS>& probs) noexcept {
         if (!entry) return;
         entry->probs = probs;
         entry->state.store(STATE_READY, std::memory_order_release);
+    }
+
+    void abandon(Entry* entry) noexcept {
+        if (!entry) return;
+        entry->state.store(STATE_ABANDONED, std::memory_order_release);
     }
 
     void insert(std::size_t h, int plies, const Board& board,
@@ -170,6 +240,17 @@ struct SharedPosCache {
                     e.probs = probs;
                     e.state.store(STATE_READY, std::memory_order_release);
                     inserts.fetch_add(1, std::memory_order_relaxed);
+                    return;
+                }
+                s = expected;
+            }
+            if (s == STATE_ABANDONED &&
+                e.hash == key && e.plies == plies && e.board == board) {
+                int expected = STATE_ABANDONED;
+                if (e.state.compare_exchange_strong(expected, STATE_COMPUTING,
+                                                    std::memory_order_acq_rel)) {
+                    e.probs = probs;
+                    e.state.store(STATE_READY, std::memory_order_release);
                     return;
                 }
                 s = expected;
@@ -357,13 +438,20 @@ public:
     const MoveFilter& move_filter() const { return move_filter_; }
     const std::vector<MoveFilterStep>& filter_chain() const { return filter_chain_; }
     const Strategy& base_strategy() const { return *base_; }
+    bool parallel_evaluate() const { return parallel_evaluate_; }
+    int parallel_threads() const { return parallel_threads_; }
+    int effective_parallel_threads() const {
+        return (parallel_evaluate_ && n_plies_ >= 2) ? parallel_thread_count(n_plies_) : 1;
+    }
 
 private:
     static std::atomic<std::uint64_t> next_cache_salt_;
 
+    std::shared_ptr<Strategy> raw_base_;
     std::shared_ptr<Strategy> base_;
     // Optional separate filter strategy (for hybrid mode: fast filter + accurate leaf).
     // When null, base_ is used for filtering (standard behavior).
+    std::shared_ptr<Strategy> raw_filter_strat_;
     std::shared_ptr<Strategy> filter_strat_;
     const BearoffDB* bearoff_db_ = nullptr;
     std::shared_ptr<Strategy> move_prefilter_;  // Cheap filter (e.g. PubEval) for opponent candidate pruning

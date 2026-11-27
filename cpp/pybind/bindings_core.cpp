@@ -222,7 +222,9 @@ void bind_core(py::module_& m) {
 
     // --- NNStrategy ---
     py::class_<NNStrategy>(m, "NNStrategy")
-        .def(py::init<std::shared_ptr<NeuralNetwork>>())
+        .def(py::init([](std::shared_ptr<NeuralNetwork> nn) {
+            return NNStrategy(require_non_null(nn, "nn"));
+        }), py::arg("nn"))
         .def(py::init<const std::string&, int, int>(),
              py::arg("weights_path"),
              py::arg("n_hidden") = 120,
@@ -632,7 +634,7 @@ void bind_core(py::module_& m) {
        "the plan-pair gate: 'waiting', 'bear_in', 'early_containment', "
        "'late_containment', or 'none' when no side qualifies as the holder.",
        py::arg("board"));
-    m.def("classify_game_plans_batch", [](py::array_t<int32_t> boards_np) {
+    m.def("classify_game_plans_batch", [](CArray<int32_t> boards_np) {
         auto info = boards_np.request();
         if (info.ndim != 2 || info.shape[1] != 26) {
             throw std::runtime_error("boards must be shape [N, 26]");
@@ -657,7 +659,11 @@ void bind_core(py::module_& m) {
         return result;
     });
     // Batch encoding: boards [N, 26] int32 -> inputs [N, n_inputs] float32
-    m.def("encode_boards_batch", [](py::array_t<int32_t> boards_np, int n_inputs) {
+    m.def("encode_boards_batch", [](CArray<int32_t> boards_np, int n_inputs) {
+        if (n_inputs < 1 || n_inputs > EXTENDED_CONTACT_INPUTS) {
+            throw std::invalid_argument(
+                "n_inputs must be between 1 and " + std::to_string(EXTENDED_CONTACT_INPUTS));
+        }
         auto info = boards_np.request();
         if (info.ndim != 2 || info.shape[1] != 26)
             throw std::runtime_error("boards must be shape [N, 26]");
@@ -856,6 +862,9 @@ void bind_core(py::module_& m) {
     // --- Multi-Ply Strategy ---
     py::class_<MultiPlyStrategy, Strategy, std::shared_ptr<MultiPlyStrategy>>(m, "MultiPlyStrategy")
         .def("n_plies", &MultiPlyStrategy::n_plies)
+        .def("parallel_evaluate", &MultiPlyStrategy::parallel_evaluate)
+        .def("parallel_threads", &MultiPlyStrategy::parallel_threads)
+        .def("effective_parallel_threads", &MultiPlyStrategy::effective_parallel_threads)
         .def("clear_cache", &MultiPlyStrategy::clear_cache)
         .def("cache_size", &MultiPlyStrategy::cache_size)
         .def("cache_hits", &MultiPlyStrategy::cache_hits)
@@ -1055,6 +1064,7 @@ void bind_core(py::module_& m) {
     m.def("score_benchmarks_multipy", [](const ScenarioSet& ss,
                                           std::shared_ptr<MultiPlyStrategy> strat,
                                           int n_threads) {
+        require_non_null(strat, "strategy");
         strat->clear_cache();
         py::gil_scoped_release release;
         return score_benchmarks(*strat, ss.scenarios, n_threads);
@@ -1069,6 +1079,7 @@ void bind_core(py::module_& m) {
                                                uint32_t seed,
                                                PubEval::WeightSource pe_weights,
                                                int n_threads) {
+        require_non_null(strat, "strategy");
         strat->clear_cache();
         PubEval pe_strat(pe_weights);
         py::gil_scoped_release release;
@@ -1219,6 +1230,7 @@ void bind_core(py::module_& m) {
                                              int filter_max_moves,
                                              float filter_threshold,
                                              int n_threads) {
+        require_non_null(strategy, "strategy");
         std::vector<PRDecision> decisions = pr_decisions_from_py(decisions_py);
         MoveFilter filter{filter_max_moves, filter_threshold};
         PRResult result;
@@ -1305,7 +1317,8 @@ void bind_core(py::module_& m) {
     m.def("multipy_set_bearoff_db", [](MultiPlyStrategy& strat, const BearoffDB* db) {
         strat.set_bearoff_db(db);
     }, "Set bearoff DB on a MultiPlyStrategy for exact bearoff evaluation",
-       py::arg("strategy"), py::arg("db"));
+       py::arg("strategy"), py::arg("db"),
+       py::keep_alive<1, 2>());
 
     py::class_<GamePlanPairStrategy, Strategy, std::shared_ptr<GamePlanPairStrategy>>(m, "GamePlanPairStrategy")
         .def(py::init<const std::vector<std::string>&, const std::vector<int>&>(),
@@ -1372,7 +1385,7 @@ void bind_core(py::module_& m) {
        py::arg("parallel_threads") = 0);
 
     // --- Pair classification batch ---
-    m.def("classify_game_plan_pairs_batch", [](py::array_t<int32_t> boards_np) {
+    m.def("classify_game_plan_pairs_batch", [](CArray<int32_t> boards_np) {
         auto info = boards_np.request();
         if (info.ndim != 2 || info.shape[1] != 26)
             throw std::runtime_error("boards must be shape [N, 26]");
@@ -1519,7 +1532,7 @@ void bind_core(py::module_& m) {
                                           int filter_max_moves, float filter_threshold,
                                           bool full_depth_opponent,
                                           bool parallel_evaluate, int parallel_threads) {
-        if (!base) throw std::invalid_argument("base strategy is None");
+        require_non_null(base, "base");
         return make_multipy(std::move(base), n_plies, filter_max_moves,
                             filter_threshold, full_depth_opponent,
                             parallel_evaluate, parallel_threads);

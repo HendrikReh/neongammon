@@ -68,7 +68,8 @@ def load_benchmark_file(filepath: str, step: int = 1):
     Returns:
         A bgbot_cpp.ScenarioSet with all scenarios stored in C++.
     """
-    from bgbot_cpp import ScenarioSet
+    from ._native import load_native
+    ScenarioSet = load_native().ScenarioSet
 
     with open(filepath, 'r') as f:
         lines = f.readlines()
@@ -122,7 +123,8 @@ def load_benchmark_scenarios_by_indices(filepath: str, indices: list):
     Returns:
         A bgbot_cpp.ScenarioSet with only the requested scenarios.
     """
-    from bgbot_cpp import ScenarioSet
+    from ._native import load_native
+    ScenarioSet = load_native().ScenarioSet
 
     with open(filepath, 'r') as f:
         lines = f.readlines()
