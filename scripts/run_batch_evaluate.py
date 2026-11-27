@@ -13,11 +13,11 @@ import os
 import time
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(os.path.dirname(script_dir))
+project_dir = os.path.dirname(script_dir)
 build_dir = os.path.join(project_dir, 'build')
 
 sys.path.insert(0, build_dir)
-sys.path.insert(0, os.path.join(project_dir, 'neongammon', 'python'))
+sys.path.insert(0, os.path.join(project_dir, 'python'))
 
 from neongammon.batch import batch_evaluate
 from neongammon.weights import WeightConfig

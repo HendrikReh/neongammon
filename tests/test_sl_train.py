@@ -7,19 +7,16 @@ float64 NumPy implementation of the same update rules, using the same shuffle.
 """
 
 import os
-import sys
 import tempfile
 
+import bgbot_cpp
 import numpy as np
 import pytest
 
+from neongammon import sl_train
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_dir = os.path.dirname(script_dir)
-sys.path.insert(0, os.path.join(project_dir, 'build'))
-sys.path.insert(0, os.path.join(project_dir, 'python'))
-
-import bgbot_cpp  # noqa: E402
-from neongammon import sl_train  # noqa: E402
 
 needs_mlx = pytest.mark.skipif(not sl_train.mlx_available(), reason="MLX not available")
 WEIGHTS = os.path.join(project_dir, 'models', 'sl_s9_race_race.weights.best')

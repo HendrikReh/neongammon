@@ -13,29 +13,21 @@ create_strategy / create_multipy per call, no bearoff database) and count
 the factory calls.
 """
 
-import os
-import random
-import sys
 import threading
 from dataclasses import asdict
 from unittest.mock import patch
 
+import bgbot_cpp
 import pytest
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (os.path.join(_ROOT, "build"), os.path.join(_ROOT, "python")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-import bgbot_cpp  # noqa: E402
-
-from neongammon import (  # noqa: E402
-    BatchModels, STARTING_BOARD, batch_checker_play, batch_cube_action,
-    batch_evaluate, batch_post_move_evaluate, flip_board, possible_moves,
+from neongammon import (
+    BatchModels, batch_checker_play, batch_cube_action,
+    batch_evaluate, batch_post_move_evaluate, flip_board,
 )
-from neongammon.analyzer import CUBEFUL_FILTERED_PLIES, _contact_cube_life, _contact_cube_slope  # noqa: E402
-from neongammon.board import check_game_over  # noqa: E402
-from neongammon.weights import WeightConfig, default_weights  # noqa: E402
+from neongammon.analyzer import CUBEFUL_FILTERED_PLIES, _contact_cube_life, _contact_cube_slope
+from neongammon.weights import WeightConfig, default_weights
+
+from .batch_positions import random_positions
 
 CUBES = [
     dict(cube_value=1, cube_owner="centered"),
@@ -44,27 +36,7 @@ CUBES = [
 ]
 
 
-def _positions(n, seed):
-    rng = random.Random(seed)
-    out = []
-    while len(out) < n:
-        board = list(STARTING_BOARD)
-        for _ in range(rng.randint(4, 40)):
-            moves = possible_moves(board, rng.randint(1, 6), rng.randint(1, 6))
-            if moves:
-                board = list(rng.choice(moves))
-            if check_game_over(board):
-                break
-            board = list(flip_board(board))
-        else:
-            d1, d2 = rng.randint(1, 6), rng.randint(1, 6)
-            if len(possible_moves(board, d1, d2)) >= 2:
-                out.append(dict(board=board, die1=d1, die2=d2,
-                                **CUBES[len(out) % len(CUBES)]))
-    return out
-
-
-POSITIONS = _positions(12, seed=5)
+POSITIONS = random_positions(12, seed=5, contexts=CUBES)
 PRE_ROLL = [{k: v for k, v in p.items() if k not in ("die1", "die2")} for p in POSITIONS]
 
 MODELS = {"stage11": default_weights(), "stage5": WeightConfig.from_model("stage5")}

@@ -12,20 +12,14 @@ Tests:
 3. Compare gnubg 2-ply vs Stage 4 2-ply on top-100 worst 0-ply positions
 """
 
+import math
 import os
 import shutil
-import sys
 import time
-import math
 import unittest
 
-# Setup paths
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_dir = os.path.dirname(script_dir)  # the neongammon repo root
-build_dir = os.path.join(project_dir, 'build')
-
-sys.path.insert(0, build_dir)
-sys.path.insert(0, os.path.join(project_dir, 'python'))
 
 from neongammon.gnubg import (
     GnuBgAnalyzer,

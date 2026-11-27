@@ -24,15 +24,19 @@ import time
 from pathlib import Path
 
 # Setup paths
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "build"))
-sys.path.insert(0, str(_REPO_ROOT / "neongammon" / "python"))
+sys.path.insert(0, str(_REPO_ROOT / "python"))
 
 import bgbot_cpp  # noqa: E402
 from neongammon import BgBotAnalyzer  # noqa: E402
 
 
-REFPOS_PATH = _REPO_ROOT / "refpos.txt"
+REFPOS_PATH = (
+    (_REPO_ROOT / "refpos.txt")
+    if (_REPO_ROOT / "refpos.txt").exists()
+    else (_REPO_ROOT.parent / "refpos.txt")
+)
 
 LEVELS = ["3ply", "4ply", "truncated2", "truncated3"]
 LEVEL_DISPLAY = {"3ply": "3-ply", "4ply": "4-ply",

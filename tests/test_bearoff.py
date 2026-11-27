@@ -3,11 +3,6 @@
 """Tests for the one-sided bearoff database."""
 
 import sys
-import os
-
-_REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
-sys.path.insert(0, os.path.join(_REPO, 'build'))
-sys.path.insert(0, os.path.join(_REPO, 'python'))
 
 import bgbot_cpp
 from neongammon import BgBotAnalyzer

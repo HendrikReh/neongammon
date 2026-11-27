@@ -7,20 +7,13 @@
 - Batched 1-ply prefilter in RolloutStrategy::best_move_index_cubeful_multi
 """
 
-import os
-import sys
 import time
 
 import pytest
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (os.path.join(_ROOT, "build"), os.path.join(_ROOT, "python")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-import bgbot_cpp  # noqa: E402
-from neongammon import BgBotAnalyzer, STARTING_BOARD, possible_moves  # noqa: E402
-from neongammon.weights import WeightConfig, bearoff_db_path  # noqa: E402
+import bgbot_cpp
+from neongammon import BgBotAnalyzer, STARTING_BOARD, possible_moves
+from neongammon.weights import WeightConfig, bearoff_db_path
 
 
 # Standard contact opening (non-bearoff)

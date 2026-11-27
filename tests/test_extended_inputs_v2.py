@@ -12,17 +12,7 @@ Board convention:
   board[25]  = player 1 checkers on bar (always >= 0)
 """
 
-import os
-import sys
 import math
-
-# Setup import paths
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(os.path.dirname(script_dir))
-build_dir = os.path.join(project_dir, 'build')
-
-sys.path.insert(0, build_dir)
-sys.path.insert(0, os.path.join(project_dir, 'python'))
 
 import bgbot_cpp
 
@@ -448,57 +438,3 @@ class TestFullEncoding244:
         for j in range(3):
             assert abs(inputs_orig[122 + 97 + j] - inputs_flip[97 + j]) < 1e-5, \
                 f"Borne-off bucket {j} symmetry"
-
-
-def run_tests():
-    """Run all tests and report results."""
-    import traceback
-
-    test_classes = [
-        TestBreakContact, TestFreePip, TestTiming,
-        TestBackbone, TestBackg, TestBackg1, TestEnterLoss,
-        TestContainment, TestMobility, TestMoment2,
-        TestPiploss, TestBackRescueEscapes,
-        TestFullEncoding244,
-    ]
-
-    total = 0
-    passed = 0
-    failed = 0
-    errors = []
-
-    for cls in test_classes:
-        instance = cls()
-        methods = [m for m in dir(instance) if m.startswith('test_')]
-        for method_name in sorted(methods):
-            total += 1
-            method = getattr(instance, method_name)
-            try:
-                method()
-                passed += 1
-                print(f"  PASS: {cls.__name__}.{method_name}")
-            except AssertionError as e:
-                failed += 1
-                errors.append((cls.__name__, method_name, str(e)))
-                print(f"  FAIL: {cls.__name__}.{method_name}")
-                print(f"        {e}")
-            except Exception as e:
-                failed += 1
-                errors.append((cls.__name__, method_name, traceback.format_exc()))
-                print(f"  ERROR: {cls.__name__}.{method_name}")
-                print(f"         {e}")
-
-    print()
-    print(f"Results: {passed}/{total} passed, {failed} failed")
-
-    if errors:
-        print("\nFailed tests:")
-        for cls_name, method_name, msg in errors:
-            print(f"  {cls_name}.{method_name}: {msg[:200]}")
-
-    return failed == 0
-
-
-if __name__ == '__main__':
-    success = run_tests()
-    sys.exit(0 if success else 1)

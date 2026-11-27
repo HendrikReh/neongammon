@@ -30,7 +30,7 @@ def main():
 
     # Add the build dir and python dir to sys.path (before importing neongammon)
     project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    sys.path.insert(0, os.path.join(project_dir, 'neongammon', 'python'))
+    sys.path.insert(0, os.path.join(project_dir, 'python'))
 
     from neongammon.weights import WeightConfig
     WeightConfig.add_model_arg(parser)

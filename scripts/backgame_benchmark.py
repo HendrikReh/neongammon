@@ -108,19 +108,20 @@ from typing import Callable, NamedTuple, Optional
 # ---------------------------------------------------------------------------
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
-_PROJECT_ROOT = _SCRIPT_DIR.parent          # = neongammon repo root
-_NEONGAMMON_PYTHON = _PROJECT_ROOT / "python"   # = neongammon/python
-_BUILD_DIR = _PROJECT_ROOT / "build"        # = neongammon/build
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
 
-for _p in (_NEONGAMMON_PYTHON, _BUILD_DIR, _SCRIPT_DIR):
-    _sp = str(_p)
-    if _sp not in sys.path:
-        sys.path.insert(0, _sp)
-
-# The PR "does this count as a decision?" rules live in benchmark_money.py; import
-# them rather than restating them, so the two benchmarks can never drift apart on
-# what a decision is.
-from benchmark_money import TRIVIAL_SPREAD, _is_trivial_cube  # noqa: E402
+from benchmark_common import (  # noqa: E402
+    TRIVIAL_SPREAD,
+    _BUILD_DIR,
+    _NEONGAMMON_PYTHON,
+    _PROJECT_ROOT,
+    _is_trivial_cube,
+    atomic_write_text,
+    cube_decision_flags,
+    flip_owner as _flip_owner,
+    is_checker_decision,
+)
 
 # ---------------------------------------------------------------------------
 # Locations
@@ -183,15 +184,6 @@ class Decision(NamedTuple):
     cube_owner: str                    # "centered" | "player" | "opponent"
     dice: Optional[tuple[int, int]]    # None for a cube decision
     board: tuple[int, ...]             # 26 ints
-
-
-def _flip_owner(owner: str) -> str:
-    """Cube owner as seen from the other side of the board."""
-    if owner == "player":
-        return "opponent"
-    if owner == "opponent":
-        return "player"
-    return owner
 
 
 def _clamp_cube(cube_value: int, cube_owner: str) -> tuple[int, str]:
@@ -427,9 +419,7 @@ def read_xgp_position(path: Path) -> StartPosition:
 
 def _atomic_write(path: Path, text: str) -> bool:
     """Write ``text`` to ``path`` via a temp file + rename. True if it landed."""
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(path)
+    atomic_write_text(path, text)
     return True
 
 
@@ -684,12 +674,7 @@ def _play_game(
                 board, cube_value=cube_value, cube_owner=cube_owner,
                 jacoby=True, beaver=True,
             )
-            nd, dt, dp = cube.equity_nd, cube.equity_dt, cube.equity_dp
-            # The doubler's decision counts unless the position is trivial;
-            # the receiver's take/pass exists only once a double is offered.
-            has_double = not _is_trivial_cube(nd, dt, dp)
-            has_take = bool(cube.should_double) and (
-                abs(dt - dp) >= TRIVIAL_SPREAD or bool(getattr(cube, "is_beaver", False)))
+            has_double, has_take = cube_decision_flags(cube, allow_beaver=True)
             if on_backgame and (has_double or has_take):
                 if not record(Decision("cube", cube_value, cube_owner, None, board_key)):
                     return
@@ -709,8 +694,7 @@ def _play_game(
             )
             moves = result.moves
             # Counts as a decision: 2+ legal moves and a meaningful spread.
-            if (on_backgame and len(moves) >= 2
-                    and (moves[0].equity - moves[-1].equity) >= TRIVIAL_SPREAD):
+            if on_backgame and is_checker_decision([m.equity for m in moves]):
                 dice = tuple(sorted((die1, die2), reverse=True))
                 if not record(Decision("checker", cube_value, cube_owner, dice, board_key)):
                     return

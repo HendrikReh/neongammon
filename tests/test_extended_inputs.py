@@ -23,17 +23,11 @@ import os
 import sys
 import math
 
-# Setup import paths
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(os.path.dirname(script_dir))
-build_dir = os.path.join(project_dir, 'build')
-
-sys.path.insert(0, build_dir)
-sys.path.insert(0, os.path.join(project_dir, 'python'))
-
 import bgbot_cpp
 
-# Also load the old Python implementation for cross-validation
+# Optional legacy Python implementation for cross-validation (skipped if absent)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_dir = os.path.dirname(os.path.dirname(script_dir))
 old_src_dir = os.path.join(project_dir, 'old_src')
 if old_src_dir not in sys.path:
     sys.path.insert(0, old_src_dir)
@@ -878,57 +872,3 @@ class TestExtendedFeatureNormalization:
             assert 0 <= inputs[203] <= 7.5, f"Opp bar out of range: {inputs[203]}"
             for i in [204, 205, 206]:
                 assert 0 <= inputs[i] <= 1.0, f"Opp borne-off bucket {i-204} out of range: {inputs[i]}"
-
-
-def run_tests():
-    """Run all tests and report results."""
-    import traceback
-
-    test_classes = [
-        TestMaxPoint, TestMaxAnchorPoint, TestProbNoEnterFromBar,
-        TestForwardAnchorPoints, TestHittingShots, TestDoubleHittingShots,
-        TestBackEscapes, TestHittingShotsEdgeCases,
-        TestTesauroEncoding, TestBorneOffBuckets, TestExtendedFeatureNormalization,
-        TestCrossValidation,
-    ]
-
-    total = 0
-    passed = 0
-    failed = 0
-    errors = []
-
-    for cls in test_classes:
-        instance = cls()
-        methods = [m for m in dir(instance) if m.startswith('test_')]
-        for method_name in methods:
-            total += 1
-            method = getattr(instance, method_name)
-            try:
-                method()
-                passed += 1
-                print(f"  PASS: {cls.__name__}.{method_name}")
-            except AssertionError as e:
-                failed += 1
-                errors.append((cls.__name__, method_name, str(e)))
-                print(f"  FAIL: {cls.__name__}.{method_name}")
-                print(f"        {e}")
-            except Exception as e:
-                failed += 1
-                errors.append((cls.__name__, method_name, traceback.format_exc()))
-                print(f"  ERROR: {cls.__name__}.{method_name}")
-                print(f"         {e}")
-
-    print()
-    print(f"Results: {passed}/{total} passed, {failed} failed")
-
-    if errors:
-        print("\nFailed tests:")
-        for cls_name, method_name, msg in errors:
-            print(f"  {cls_name}.{method_name}: {msg[:200]}")
-
-    return failed == 0
-
-
-if __name__ == '__main__':
-    success = run_tests()
-    sys.exit(0 if success else 1)

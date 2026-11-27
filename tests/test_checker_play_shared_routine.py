@@ -11,26 +11,18 @@ same lists, check the single-position options, and check that the old Python
 pass no longer runs.
 """
 
-import os
-import random
-import sys
 from dataclasses import asdict
 from unittest.mock import patch
 
+import bgbot_cpp
 import pytest
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (os.path.join(_ROOT, "build"), os.path.join(_ROOT, "python")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-import bgbot_cpp  # noqa: E402
-
-from neongammon import BgBotAnalyzer, STARTING_BOARD, flip_board, possible_moves  # noqa: E402
-from neongammon.analyzer import (  # noqa: E402
+from neongammon import BgBotAnalyzer
+from neongammon.analyzer import (
     CUBEFUL_FILTERED_PLIES, _contact_cube_life, _contact_cube_slope, resolve_owner,
 )
-from neongammon.board import check_game_over  # noqa: E402
+
+from .batch_positions import random_positions
 
 SNAKE = [0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 2, 3, 3, 2, 2, 1, -7, -7, 0]
 BEAROFF = [0, 3, 3, 2, 3, 2, 2] + [0] * 12 + [-2, -3, -2, -3, -2, -2] + [0]
@@ -46,28 +38,9 @@ CUBES = [
 ]
 
 
-def _random_positions(n, seed):
-    rng = random.Random(seed)
-    out = []
-    while len(out) < n:
-        board = list(STARTING_BOARD)
-        for _ in range(rng.randint(4, 40)):
-            moves = possible_moves(board, rng.randint(1, 6), rng.randint(1, 6))
-            if moves:
-                board = list(rng.choice(moves))
-            if check_game_over(board):
-                break
-            board = list(flip_board(board))
-        else:
-            d1, d2 = rng.randint(1, 6), rng.randint(1, 6)
-            if len(possible_moves(board, d1, d2)) >= 2:
-                out.append((board, d1, d2))
-    return out
-
-
 CASES = (
     [(b, d1, d2, CUBES[i % len(CUBES)])
-     for i, (b, d1, d2) in enumerate(_random_positions(12, seed=11))]
+     for i, (b, d1, d2) in enumerate(random_positions(12, seed=11))]
     + [(SNAKE, 6, 5, CUBES[0]), (SNAKE, 2, 1, CUBES[2]),
        (BEAROFF, 4, 2, CUBES[0]), (BEAROFF, 6, 1, CUBES[3]),
        (BLOCKED, 3, 4, CUBES[0]), (BLOCKED, 6, 6, CUBES[4])]

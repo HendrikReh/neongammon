@@ -15,11 +15,6 @@ decision (e.g. returning -ND instead of -optimal for moves that leave a drop
 position).
 """
 
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'build'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 
 import pytest
 

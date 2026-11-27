@@ -18,8 +18,6 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT / "python"))
-sys.path.insert(0, str(_ROOT / "build"))
 sys.path.insert(0, str(_ROOT / "scripts"))
 
 from neongammon import xg_file  # noqa: E402

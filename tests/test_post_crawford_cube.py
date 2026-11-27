@@ -21,18 +21,10 @@ Run with:
     PYTHONPATH="$PWD/build:$PWD/python" python -m pytest -q tests/test_post_crawford_cube.py
 """
 
-import os
-import sys
+import bgbot_cpp as B
+import pytest
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(script_dir)
-sys.path.insert(0, os.path.join(project_dir, "build"))
-sys.path.insert(0, os.path.join(project_dir, "python"))
-
-import pytest  # noqa: E402
-
-import bgbot_cpp as B  # noqa: E402
-from neongammon import BgBotAnalyzer  # noqa: E402
+from neongammon import BgBotAnalyzer
 
 C, P, O = B.CubeOwner.CENTERED, B.CubeOwner.PLAYER, B.CubeOwner.OPPONENT
 

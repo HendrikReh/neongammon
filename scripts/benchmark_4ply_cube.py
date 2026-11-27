@@ -18,8 +18,9 @@ import os
 import sys
 import time
 
-sys.path.insert(0, "build")
-sys.path.insert(0, "neongammon/python")
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_PROJECT_ROOT, "build"))
+sys.path.insert(0, os.path.join(_PROJECT_ROOT, "python"))
 
 from neongammon import BgBotAnalyzer
 from neongammon.weights import PRODUCTION_MODEL

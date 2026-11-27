@@ -5,11 +5,13 @@
 Shows which moves survive each filter step and the final best move.
 """
 
+import os
 import sys
 import time
 
-sys.path.insert(0, "build")
-sys.path.insert(0, "neongammon/python")
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_PROJECT_ROOT, "build"))
+sys.path.insert(0, os.path.join(_PROJECT_ROOT, "python"))
 
 import bgbot_cpp
 from neongammon.weights import WeightConfig

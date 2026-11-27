@@ -10,19 +10,14 @@ from unittest.mock import patch
 
 import pytest
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (os.path.join(_ROOT, "build"), os.path.join(_ROOT, "python")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+import bgbot_cpp
 
-import bgbot_cpp  # noqa: E402
-
-import neongammon.analyzer as A  # noqa: E402
-from neongammon import (  # noqa: E402
+import neongammon.analyzer as A
+from neongammon import (
     BatchModels, BgBotAnalyzer, STARTING_BOARD, batch_checker_play, batch_evaluate,
     batch_post_move_evaluate,
 )
-from neongammon.weights import WeightConfig, bearoff_db_path  # noqa: E402
+from neongammon.weights import WeightConfig, bearoff_db_path
 
 FACTORIES = ("create_strategy", "create_multipy", "create_multipy_from_base",
              "create_multipy_5nn", "GamePlanStrategy", "BearoffDB")

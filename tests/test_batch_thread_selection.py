@@ -8,27 +8,20 @@ positions there; explicit counts, N-ply levels and checker play are left
 alone, and results never depend on the count.
 """
 
-import os
 import random
-import sys
 from dataclasses import asdict
 from unittest.mock import patch
 
 import pytest
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (os.path.join(_ROOT, "build"), os.path.join(_ROOT, "python")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+import bgbot_cpp
 
-import bgbot_cpp  # noqa: E402
-
-from neongammon import (  # noqa: E402
+from neongammon import (
     BatchModels, STARTING_BOARD, batch_evaluate, batch_post_move_evaluate, flip_board,
     possible_moves,
 )
-from neongammon.batch import CHEAP_POSITIONS_PER_WORKER, _auto_threads  # noqa: E402
-from neongammon.board import check_game_over  # noqa: E402
+from neongammon.batch import CHEAP_POSITIONS_PER_WORKER, _auto_threads
+from neongammon.board import check_game_over
 
 
 def _rows(n, seed=1429):

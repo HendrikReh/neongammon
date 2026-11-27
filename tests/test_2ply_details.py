@@ -17,20 +17,10 @@ Run with:
     python -m pytest neongammon/tests/test_2ply_details.py -v
     python -m unittest neongammon.tests.test_2ply_details -v
 """
-import os
-import sys
 import unittest
-
-# Setup paths — tests/ lives at the neongammon repo root, so one level up is the repo.
-script_dir = os.path.dirname(os.path.abspath(__file__))
-repo_dir = os.path.dirname(script_dir)  # neongammon repo root
-build_dir = os.path.join(repo_dir, "build")
-
-sys.path.insert(0, build_dir)
-sys.path.insert(0, os.path.join(repo_dir, "python"))
+from unittest import mock
 
 import bgbot_cpp
-from unittest import mock
 
 import neongammon.analyzer
 from neongammon import BgBotAnalyzer

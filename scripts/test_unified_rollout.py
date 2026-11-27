@@ -32,7 +32,7 @@ def main():
 
     # Setup paths
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_dir = os.path.dirname(os.path.dirname(script_dir))
+    project_dir = os.path.dirname(script_dir)
 
     # Pre-parse to get build_dir before importing neongammon (which needs bgbot_cpp)
     args_pre, _ = parser.parse_known_args()
@@ -41,7 +41,7 @@ def main():
 
     sys.path.insert(0, build_dir)
     sys.path.insert(0, build_dir_std)
-    sys.path.insert(0, os.path.join(project_dir, 'neongammon', 'python'))
+    sys.path.insert(0, os.path.join(project_dir, 'python'))
 
     import bgbot_cpp
     bgbot_cpp.init_escape_tables()

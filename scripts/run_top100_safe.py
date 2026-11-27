@@ -16,7 +16,7 @@ import json
 script_dir = os.path.dirname(os.path.abspath(__file__))
 # project_dir is the main bgbot directory (parent of the neongammon submodule)
 # Handle both normal repo layout and worktree layout
-_candidate = os.path.dirname(os.path.dirname(script_dir))  # normal: neongammon/../ = bgbot
+_candidate = os.path.dirname(script_dir)  # normal: neongammon/../ = bgbot
 project_dir = _candidate
 build_dirs = [
     os.path.join(project_dir, 'build_cpu_build'),
@@ -26,13 +26,13 @@ build_dirs = [
 for build_dir in reversed(build_dirs):
     if os.path.isdir(build_dir):
         sys.path.insert(0, build_dir)
-sys.path.insert(0, os.path.join(project_dir, 'neongammon', 'python'))
+sys.path.insert(0, os.path.join(project_dir, 'python'))
 
 import bgbot_cpp
 from neongammon.data import load_benchmark_file, load_benchmark_scenarios_by_indices
 from neongammon.weights import WeightConfig
 
-DATA_DIR = os.path.join(project_dir, 'neongammon', 'data')
+DATA_DIR = os.path.join(project_dir, 'data')
 
 
 def score_subset(label, score_fn, top_contact_ss, top_crashed_ss):
@@ -57,7 +57,7 @@ def run_rollout_subprocess(level_name, create_kwargs, w, contact_indices, crashe
     code = f'''
 import os, sys, json, time
 sys.path.insert(0, {repr(os.path.join(project_dir, 'build'))})
-sys.path.insert(0, {repr(os.path.join(project_dir, 'neongammon', 'python'))})
+sys.path.insert(0, {repr(os.path.join(project_dir, 'python'))})
 
 import bgbot_cpp
 from neongammon.data import load_benchmark_scenarios_by_indices

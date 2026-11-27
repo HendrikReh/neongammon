@@ -23,7 +23,7 @@ def main():
     parser.add_argument('--build-dir', type=str, default='build')
 
     project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    sys.path.insert(0, os.path.join(project_dir, 'neongammon', 'python'))
+    sys.path.insert(0, os.path.join(project_dir, 'python'))
 
     from neongammon.weights import WeightConfig
     WeightConfig.add_model_arg(parser)

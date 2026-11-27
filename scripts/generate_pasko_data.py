@@ -61,10 +61,7 @@ import multiprocessing as mp
 # --- Path setup (runs in the main process AND every spawned worker) -------
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _NEONGAMMON_ROOT = os.path.dirname(_SCRIPT_DIR)                 # .../bgbot/neongammon
-_PARENT_ROOT = os.path.dirname(_NEONGAMMON_ROOT)               # .../bgbot
 
-# Prefer neongammon/build; the parent build/ is only a fallback.
-sys.path.insert(0, os.path.join(_PARENT_ROOT, 'build'))
 sys.path.insert(0, os.path.join(_NEONGAMMON_ROOT, 'build'))
 sys.path.insert(0, os.path.join(_NEONGAMMON_ROOT, 'python'))
 

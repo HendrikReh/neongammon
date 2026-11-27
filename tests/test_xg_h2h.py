@@ -8,8 +8,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-for p in (ROOT / "scripts", ROOT / "build", ROOT / "python"):
-    sys.path.insert(0, str(p))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 xg_h2h = pytest.importorskip("xg_h2h")
 

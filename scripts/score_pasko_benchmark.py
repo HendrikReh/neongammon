@@ -26,10 +26,7 @@ import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _NEONGAMMON_ROOT = os.path.dirname(_SCRIPT_DIR)
-_PARENT_ROOT = os.path.dirname(_NEONGAMMON_ROOT)
 
-# Prefer neongammon/build (kept fresh); parent build/ is a fallback.
-sys.path.insert(0, os.path.join(_PARENT_ROOT, 'build'))
 sys.path.insert(0, os.path.join(_NEONGAMMON_ROOT, 'build'))
 sys.path.insert(0, os.path.join(_NEONGAMMON_ROOT, 'python'))
 

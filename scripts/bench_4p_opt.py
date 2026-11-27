@@ -19,7 +19,7 @@ import argparse
 import json
 import sys
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +27,6 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "build"))
 sys.path.insert(0, str(REPO / "python"))
 
-import bgbot_cpp  # noqa: E402
 from neongammon import BgBotAnalyzer  # noqa: E402
 
 
@@ -51,17 +50,14 @@ PRE_MOVE = [0, 2, 2, 1, 2, 0, 2, 0, 2, 1, 0, 0,
 class CallResult:
     label: str
     wall: float
-    counters: dict
     payload: dict  # full numerical output for accuracy verification
 
 
-def reset_and_call(fn, *args, **kwargs):
-    bgbot_cpp.reset_cubeful_counters()
+def time_call(fn, *args, **kwargs):
     t0 = time.perf_counter()
     out = fn(*args, **kwargs)
     wall = time.perf_counter() - t0
-    counters = dict(bgbot_cpp.get_cubeful_counters())
-    return out, wall, counters
+    return out, wall
 
 
 def run_post_move_money(analyzer):
@@ -144,23 +140,16 @@ def bench(label: str, iterations: int, threads: int):
     for case_name, runner in cases:
         walls = []
         last_payload = None
-        last_counters = None
         for i in range(iterations):
-            payload, wall, counters = reset_and_call(runner, analyzer)
+            payload, wall = time_call(runner, analyzer)
             walls.append(wall)
             last_payload = payload
-            last_counters = counters
-            print(f"[{label}] {case_name} iter {i+1}/{iterations}: "
-                  f"{wall:.3f}s leaf={counters['leaf_count']} "
-                  f"internal={counters['internal_count']} "
-                  f"cache_hit={counters['cache_hit_count']} "
-                  f"move_gen={counters['move_gen_count']}",
+            print(f"[{label}] {case_name} iter {i+1}/{iterations}: {wall:.3f}s",
                   flush=True)
         out["cases"][case_name] = {
             "walls": walls,
             "best": min(walls),
             "mean": sum(walls) / len(walls),
-            "counters": last_counters,
             "payload": last_payload,
         }
 
@@ -197,21 +186,25 @@ def compare(labels: list[str], data_dir: Path):
             row.append(f"{wall:.3f}s ({speedup:.2f}x)")
         print(" ".join(f"{c:<{w}}" for c, w in zip(row, widths)))
 
-    # Show counter comparison per case (helps spot what changed)
-    print(f"\n=== Counter comparison ===")
+    # Show counter comparison only when legacy JSON baselines include counters
     keys = ["leaf_count", "internal_count", "cache_hit_count", "move_gen_count"]
-    for case_name in cases:
-        print(f"\n  {case_name}")
-        cols = ["counter"] + labels
-        widths = [18] + [16] * len(labels)
-        print(" ".join(f"{c:<{w}}" for c, w in zip(cols, widths)))
-        print("-" * sum(widths))
-        for k in keys:
-            row = [k]
-            for label in labels:
-                v = results[label]["cases"][case_name]["counters"][k]
-                row.append(f"{v:>14}")
-            print(" ".join(f"{c:<{w}}" for c, w in zip(row, widths)))
+    if all(
+        results[label]["cases"][c].get("counters")
+        for label in labels for c in cases
+    ):
+        print(f"\n=== Counter comparison ===")
+        for case_name in cases:
+            print(f"\n  {case_name}")
+            cols = ["counter"] + labels
+            widths = [18] + [16] * len(labels)
+            print(" ".join(f"{c:<{w}}" for c, w in zip(cols, widths)))
+            print("-" * sum(widths))
+            for k in keys:
+                row = [k]
+                for label in labels:
+                    v = results[label]["cases"][case_name]["counters"][k]
+                    row.append(f"{v:>14}")
+                print(" ".join(f"{c:<{w}}" for c, w in zip(row, widths)))
 
     # Accuracy: max abs delta in payloads
     print(f"\n=== Accuracy deltas (max |delta| vs {base_label}) ===")

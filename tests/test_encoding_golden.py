@@ -14,17 +14,11 @@ value identical.
 
 import json
 import os
-import sys
+
+import bgbot_cpp
+from neongammon import flip_board
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(script_dir)
-build_dir = os.path.join(project_dir, 'build')
-
-sys.path.insert(0, build_dir)
-sys.path.insert(0, os.path.join(project_dir, 'python'))
-
-import bgbot_cpp  # noqa: E402
-from neongammon import flip_board  # noqa: E402
 
 with open(os.path.join(script_dir, 'data', 'encoding_golden.json')) as f:
     GOLDEN = json.load(f)['positions']

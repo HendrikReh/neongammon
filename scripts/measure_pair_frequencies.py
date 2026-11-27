@@ -12,29 +12,17 @@ import time
 import numpy as np
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-neongammon_dir = os.path.dirname(script_dir)
+project_dir = os.path.dirname(script_dir)
 
-# Resolve main project root: handles both direct (neongammon/scripts/) and
-# worktree (neongammon/.claude/worktrees/<name>/scripts/) layouts
-_parts = os.path.normpath(neongammon_dir).replace('\\', '/').split('/')
-if '.claude' in _parts:
-    _idx = _parts.index('.claude')
-    neongammon_dir = '/'.join(_parts[:_idx])
-project_dir = os.path.dirname(neongammon_dir)
-
-build_dirs = [
-    os.path.join(project_dir, 'build'),
-]
-
-for d in reversed(build_dirs):
-    if os.path.isdir(d):
-        sys.path.insert(0, d)
-sys.path.insert(0, os.path.join(neongammon_dir, 'python'))
+build_dir = os.path.join(project_dir, 'build')
+if os.path.isdir(build_dir):
+    sys.path.insert(0, build_dir)
+sys.path.insert(0, os.path.join(project_dir, 'python'))
 
 import bgbot_cpp
 from neongammon.data import load_gnubg_training_data
 
-DATA_DIR = os.path.join(project_dir, 'neongammon', 'data')
+DATA_DIR = os.path.join(project_dir, 'data')
 
 PLAN_NAMES = ['purerace', 'racing', 'attacking', 'priming', 'anchoring']
 CONTACT_NAMES = ['racing', 'attacking', 'priming', 'anchoring']

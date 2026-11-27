@@ -25,13 +25,10 @@ import os
 import sys
 import unittest
 
+import bgbot_cpp
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 repo_dir = os.path.dirname(script_dir)
-build_dir = os.path.join(repo_dir, "build")
-sys.path.insert(0, build_dir)
-sys.path.insert(0, os.path.join(repo_dir, "python"))
-
-import bgbot_cpp  # noqa: E402
 
 
 def backgame_board(anchor_depths):

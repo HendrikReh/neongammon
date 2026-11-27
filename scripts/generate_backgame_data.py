@@ -36,11 +36,11 @@ import multiprocessing as mp
 
 # --- Path setup (runs in both main and spawned worker processes) ----------
 script_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(os.path.dirname(script_dir))
+project_dir = os.path.dirname(script_dir)
 build_dir = os.path.join(project_dir, 'build')
 
 sys.path.insert(0, build_dir)
-sys.path.insert(0, os.path.join(project_dir, 'neongammon', 'python'))
+sys.path.insert(0, os.path.join(project_dir, 'python'))
 
 # --- Constants ------------------------------------------------------------
 TARGET_POSITIONS = 100_000
@@ -52,7 +52,7 @@ STARTING_BOARD = [
     5, 0, 0, 0, -3, 0, -5, 0, 0, 0, 0, 2, 0,
 ]
 
-DATA_DIR = os.path.join(project_dir, 'neongammon', 'data')
+DATA_DIR = os.path.join(project_dir, 'data')
 
 # --- Worker-local state (set by pool initializer) -------------------------
 _strategy = None

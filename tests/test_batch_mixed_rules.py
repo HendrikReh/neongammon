@@ -10,21 +10,14 @@ give every row exactly what it gives that row alone. Needs no external
 benchmark files.
 """
 
-import os
-import sys
 
 import pytest
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (os.path.join(_ROOT, "build"), os.path.join(_ROOT, "python")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-from neongammon import (  # noqa: E402
+from neongammon import (
     STARTING_BOARD, batch_checker_play, batch_evaluate, batch_post_move_evaluate,
     flip_board,
 )
-from neongammon.batch import batch_cube_action  # noqa: E402
+from neongammon.batch import batch_cube_action
 
 CONTACT = [0, 0, 0, 0, 2, 2, 4, -2, 2, 0, 2, 0, -2, 3, -1, 0, -1, -2, 0, -2, -3, -2, 0, 0, 0, 0]
 
