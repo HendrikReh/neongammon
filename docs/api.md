@@ -137,6 +137,10 @@ d = analyzer.cube_decision(board, cube_value=1, cube_owner="centered")
 #   .optimal_equity, .optimal_action, .is_beaver, .eval_level
 ```
 
+Cube-owner names are case-insensitive. Use `"centered"`, `"player"`,
+`"opponent"`, or the corresponding native `CubeOwner` value. Invalid owners
+raise `ValueError` when supplied to the cube-owner resolver.
+
 **2-Ply Detail Fields** (`incl_2ply_details=True`, requires >= 2-ply):
 
 Returns per-roll details for the first two turns under both the **ND** (No Double)

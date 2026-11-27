@@ -46,27 +46,31 @@ if TYPE_CHECKING:
 # Cube owner mapping
 # ---------------------------------------------------------------------------
 
-OWNER_MAP: dict[str, Any] = {
+OWNER_MAP: dict[str, bgbot_cpp.CubeOwner] = {
     "centered": bgbot_cpp.CubeOwner.CENTERED,
     "player": bgbot_cpp.CubeOwner.PLAYER,
     "opponent": bgbot_cpp.CubeOwner.OPPONENT,
 }
 
-_FLIP_OWNER: dict[Any, Any] = {
+_FLIP_OWNER: dict[bgbot_cpp.CubeOwner, bgbot_cpp.CubeOwner] = {
     bgbot_cpp.CubeOwner.CENTERED: bgbot_cpp.CubeOwner.CENTERED,
     bgbot_cpp.CubeOwner.PLAYER: bgbot_cpp.CubeOwner.OPPONENT,
     bgbot_cpp.CubeOwner.OPPONENT: bgbot_cpp.CubeOwner.PLAYER,
 }
 
 
-def resolve_owner(cube_owner: str | Any) -> Any:
-    """Convert a string cube owner to a ``bgbot_cpp.CubeOwner`` enum value."""
+def resolve_owner(cube_owner: object) -> bgbot_cpp.CubeOwner:
+    """Resolve a case-insensitive owner name or a valid native cube owner."""
     if isinstance(cube_owner, str):
-        return OWNER_MAP[cube_owner.lower()]
-    return cube_owner
+        owner = OWNER_MAP.get(cube_owner.lower())
+        if owner is not None:
+            return owner
+    elif isinstance(cube_owner, bgbot_cpp.CubeOwner) and cube_owner in _FLIP_OWNER:
+        return cube_owner
+    raise ValueError(f"Invalid cube owner {cube_owner!r}. Expected centered, player, or opponent.")
 
 
-def flip_owner(cube_owner):
+def flip_owner(cube_owner: object) -> bgbot_cpp.CubeOwner:
     """Return the native cube owner from the other player's perspective."""
     return _FLIP_OWNER[resolve_owner(cube_owner)]
 
@@ -231,7 +235,7 @@ class _CubelessBase:
     ) -> list[tuple[float, float, list[int], list[float]]]:
         if strategy is None:
             strategy = self._strategy_1ply
-        owner = resolve_owner(cube_owner) if cube_owner else None
+        owner = resolve_owner(cube_owner) if cube_owner is not None else None
         is_match = away1 > 0 or away2 > 0
         scored = []
         for b in candidates:
@@ -756,7 +760,7 @@ class _RolloutAnalyzer(_CubelessBase):
         # probs/equity come from the same trials, already inverted to SP's
         # perspective at the post-move board `b`. No perspective fiddling
         # needed at the python layer.
-        owner = resolve_owner(cube_owner) if cube_owner else None
+        owner = resolve_owner(cube_owner) if cube_owner is not None else None
         use_cubeful_rollout = owner is not None
         for i, (feq, cleq, b, p0) in enumerate(survivors):
             self._check_cancel()
