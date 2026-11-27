@@ -14,6 +14,13 @@ For money games (no match context):
 """
 
 
+def _validate_met_away_scores(away1, away2):
+    if away1 == away2 == 0:
+        return
+    import bgbot_cpp
+    bgbot_cpp._validate_met_away_scores(away1, away2)
+
+
 def _lookup(table, default, away1, away2):
     """Look up values from a symmetric table keyed by (min_away, max_away).
 
@@ -95,6 +102,7 @@ def take_points(away1, away2, cube_value=1):
     c = cube_value
     if away1 == away2 == 0:
         return (0.22, 0.22)
+    _validate_met_away_scores(away1, away2)
     # Check for automatic redouble cases
     p1_auto = away2 - 2 * c <= 0  # player 2 doubles, player 1 has auto-redouble
     p2_auto = away1 - 2 * c <= 0  # player 1 doubles, player 2 has auto-redouble
@@ -211,6 +219,7 @@ def take_points_janowski(away1, away2, cube_value=1, x=0.68):
     Returns:
         Tuple of (take_point_for_player1, take_point_for_player2).
     """
+    _validate_met_away_scores(away1, away2)
     tp1 = _janowski_take_point(away1, away2, cube_value, x)
     tp2 = _janowski_take_point(away2, away1, cube_value, x)
     return (tp1, tp2)
@@ -230,6 +239,7 @@ def take_points_dead_cube(away1, away2, cube_value=1):
     Returns:
         Tuple of (take_point_for_player1, take_point_for_player2).
     """
+    _validate_met_away_scores(away1, away2)
     tp1 = _dead_cube_take_point(away1, away2, cube_value)
     tp2 = _dead_cube_take_point(away2, away1, cube_value)
     return (tp1, tp2)
@@ -248,6 +258,7 @@ def gammon_prices(away1, away2, cube_value=1):
     Returns:
         Tuple of (gammon_price_for_player1, gammon_price_for_player2).
     """
+    _validate_met_away_scores(away1, away2)
     c = cube_value
     den = _mwc(away1 - 2 * c, away2) - _mwc(away1, away2 - 2 * c)
     if den == 0:

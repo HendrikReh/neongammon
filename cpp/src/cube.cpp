@@ -187,6 +187,7 @@ void get_match_points(
     float& player_cp,             // out: player's cash point
     float& opp_cp)                // out: opponent's cash point
 {
+    validate_met_away_scores(away1, away2);
     // 0-indexed away values (GNUbg convention)
     int idx0 = away1 - 1;
     int idx1 = away2 - 1;

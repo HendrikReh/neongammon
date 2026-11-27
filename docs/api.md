@@ -21,6 +21,10 @@ The library provides both **Python** and **C++** interfaces across seven categor
 of functionality. All Python functions default to the production model (`stage11`); pass
 `weights=WeightConfig.from_model("stage9")` to use the other bundled model.
 
+NeonGammon match analysis supports away scores of up to 25 for each player.
+Python analysis raises `ValueError` when either player needs more points. A game
+in a longer match is supported once both players need 25 points or fewer.
+
 ### 1. Checker Play Analytics
 
 Given a board position, two dice, and cube information, return all legal moves

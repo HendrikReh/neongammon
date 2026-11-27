@@ -1246,7 +1246,9 @@ each worker), and `full_depth_opponent` parallelizes opponent candidates at
 ## 12. Match Play
 
 Match play operates in **Match Winning Chance (MWC)** space internally, using the
-Kazaross-XG2 Match Equity Table (MET).
+Kazaross-XG2 Match Equity Table (MET). The table supports current scores up to
+25-away for each player, including later games in longer matches once both
+players need 25 points or fewer.
 
 ### Key MET Functions
 

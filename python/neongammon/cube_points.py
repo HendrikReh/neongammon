@@ -20,7 +20,7 @@ from dataclasses import dataclass, asdict
 from typing import Optional, Sequence
 
 from ._primitives import flip_owner as _flip_owner_str, resolve_owner as _resolve_owner_name
-from .matchinfo import _mwc
+from .matchinfo import _mwc, _validate_met_away_scores
 
 
 # Outcome probability vector convention (matches CubeAnalysisResponse):
@@ -509,6 +509,7 @@ def cube_action_points(
     Returns a :class:`PlayerCubePoints`.
     """
     cube_owner = _resolve_owner_name(cube_owner)
+    _validate_met_away_scores(away1, away2)
 
     is_money = (away1 <= 0 or away2 <= 0)
 
