@@ -608,6 +608,36 @@ scripts/experiments/candidate_grouping/build.sh "$out"
     "$out" "$FIXTURE_SCRIPT" compare --depths 3 4 --pairs 4
 ```
 
+### Overlapping the rich cube traversals
+
+An experimental 3-ply build overlapped the cubeful decision and independent
+cubeless probability searches. It split the four-thread search budget evenly
+between the traversals. The existing build ran both in sequence and could use
+all four threads in each traversal.
+
+On the M4 Pro with CPython 3.14.7 and Accelerate, both builds used source
+commit `44a207e` and the Stage 11 assets. The benchmark alternated build order
+across 12 fresh-process pairs. It compared five warm calls per fixture per
+process after three discarded warmups. Every returned field matched.
+
+| Fixture | Sequential warm | Overlapped warm |
+| --- | ---: | ---: |
+| 5-away/4-away, centered | 1.54 ms | 2.07 ms |
+| Money, player owns the 2-cube | 5.16 ms | 6.10 ms |
+| Snake, centered money cube | 1.51 ms | 1.65 ms |
+
+The production path keeps the sequential search. Build two Release
+extensions from `44a207e` with Accelerate enabled, applying the
+[overlap patch](../scripts/experiments/cube_3ply/overlap_traversals.patch) to
+the second checkout. From the repository root, run the
+[comparison driver](../scripts/experiments/cube_3ply/measure_overlap.py)
+with the directories containing those two extensions.
+
+```sh
+python scripts/experiments/cube_3ply/measure_overlap.py \
+  build/baseline build/overlap
+```
+
 ## Rollout and N-Ply Regression Benchmarks
 
 Saved-baseline regression scripts (each supports `--save`/`--compare` with a material band of `max(SE, 0.01)` for equities and `0.005` for probabilities; the cubeless rollout bench widens the prob band to each prob's own SE):

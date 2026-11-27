@@ -1,0 +1,28 @@
+--- a/cpp/src/analyzer_session.cpp
++++ b/cpp/src/analyzer_session.cpp
+@@ -59,6 +59,25 @@
+     if (check_budget) check_budget();
+     static PubEval pubeval;
+     CubeEvaluation out;
++#if defined(BGBOT_USE_ACCELERATE)
++    if (!details && !decision_only && !check_budget && plies == 3 && threads >= 4) {
++        const int cube_threads = threads / 2;
++        const int prob_threads = threads - cube_threads;
++        multipy_cooperative_for(2, 2, [&](int task) {
++            if (task == 0) {
++                out.decision = cube_decision_nply(
++                    board, ci, *base, plies, filter, cube_threads, &pubeval);
++            } else {
++                MultiPlyStrategy multipy(base, plies, filter, false, true, prob_threads);
++                const ClearSearchCacheOnExit cleanup{multipy};
++                if (db && db->is_loaded()) multipy.set_bearoff_db(db);
++                const Board flipped = flip(board);
++                out.probs = invert_probs(multipy.evaluate_probs(flipped, flipped));
++            }
++        });
++        return out;
++    }
++#endif
+     if (details) {
+         out.decision = cube_decision_nply_with_details(
+             board, ci, *base, plies, filter, threads, *details, &pubeval, check_budget);
