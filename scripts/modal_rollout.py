@@ -201,8 +201,11 @@ def _load_boards(path: Path) -> list[list[int]]:
 
 
 def _sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
     with open(path, "rb") as source:
-        return hashlib.file_digest(source, "sha256").hexdigest()
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _provenance(config: dict, threads: int, local: bool) -> str:
