@@ -400,6 +400,14 @@ def test_one_ply_serial_guard_spawns_no_pool_threads():
 import ctypes, os, sys
 sys.path.insert(0, {os.path.join(_ROOT, "build")!r})
 sys.path.insert(0, {os.path.join(_ROOT, "python")!r})
+# Keep Apple Accelerate BLAS single-threaded in this probe so libdispatch BLAS
+# workers on macOS 15 M1 runners do not mask MultiPlyThreadPool checks.
+try:
+    accel = ctypes.CDLL("/System/Library/Frameworks/Accelerate.framework/Accelerate")
+    if hasattr(accel, "BLASSetThreading"):
+        assert accel.BLASSetThreading(1) == 0
+except OSError:
+    pass
 libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
 class ProcTaskInfo(ctypes.Structure):
     _fields_ = [
@@ -417,17 +425,20 @@ def threads():
     info = ProcTaskInfo()
     assert libc.proc_pidinfo(os.getpid(), 4, 0, ctypes.byref(info), ctypes.sizeof(info)) == ctypes.sizeof(info)
     return info.pti_threadnum
-from neongammon import BgBotAnalyzer, STARTING_BOARD, batch_checker_play
+from neongammon import BgBotAnalyzer, STARTING_BOARD, batch_checker_play, observe_thread_budgets
 t0 = threads()
-BgBotAnalyzer(eval_level="1ply", cubeful=True).checker_play(list(STARTING_BOARD), 3, 1)
-assert threads() == t0, f"1-ply checker_play spawned threads: {{t0}} -> {{threads()}}"
-batch_checker_play(
-    [{{"board": list(STARTING_BOARD), "die1": 3, "die2": 1, "cube_value": 1, "cube_owner": "centered"}}],
-    eval_level="1ply", n_threads=1,
-)
-assert threads() == t0, f"1-ply n_threads=1 batch spawned threads: {{t0}} -> {{threads()}}"
+with observe_thread_budgets() as events:
+    BgBotAnalyzer(eval_level="1ply", cubeful=True).checker_play(list(STARTING_BOARD), 3, 1)
+    assert threads() == t0, f"1-ply checker_play spawned threads: {{t0}} -> {{threads()}}"
+    batch_checker_play(
+        [{{"board": list(STARTING_BOARD), "die1": 3, "die2": 1, "cube_value": 1, "cube_owner": "centered"}}],
+        eval_level="1ply", n_threads=1,
+    )
+    assert threads() == t0, f"1-ply n_threads=1 batch spawned threads: {{t0}} -> {{threads()}}"
+assert events and all(e.n_threads == 1 for e in events), events
 """
-    subprocess.run([sys.executable, "-c", probe], check=True)
+    env = dict(os.environ, VECLIB_MAXIMUM_THREADS="1")
+    subprocess.run([sys.executable, "-c", probe], check=True, env=env)
 
 
 @pytest.mark.parametrize("level", ["1ply", "2ply"])
