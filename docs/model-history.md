@@ -152,7 +152,7 @@ positions scale across threads:
 | Contact (2-ply cube) | 0.0615 s | 0.0245 s | 0.0214 s | 2.87x |
 | Race (2-ply cube) | 0.0277 s | 0.0125 s | 0.0126 s | 2.20x |
 
-**Per-call analyzer latency on an idle M4 Pro** (`scripts/bench_analyzer_overhead.py`,
+**Per-call analyzer latency on an idle M4 Pro** (`scripts/archive/historical/bench_analyzer_overhead.py`,
 `v3.1.1`, `stage11`, default threads, 3 rounds, median ms per call):
 
 | Call | Median ms/call (3 rounds) |
@@ -314,7 +314,7 @@ standalone shallower analyses.
 
 ## Search Distillation Experiment
 
-### Search distillation with a ranking loss (`scripts/rank_distill.py`, 2026-11-20)
+### Search distillation with a ranking loss (`scripts/archive/diagnostics/rank_distill.py`, 2026-11-20)
 
 A go/no-go test for training on candidate sets instead of single positions,
 with NeonGammon's own 3-ply as a free teacher. `mine` played 8,057 stage11
@@ -690,7 +690,7 @@ same C++ class). Python: `bgbot_cpp.backgame_category(board)` returns
 `"deep"/"middle"/"double"/"none"`. Tests: `tests/test_backgame_category.py`.
 
 **Training step 1 — truncated TD** (`td_train_backgame_truncated` in
-`training.h/.cpp`, driver `scripts/run_s11_backgame_td.py`): each backgame NN
+`training.h/.cpp`, driver `scripts/archive/stage11/run_s11_backgame_td.py`): each backgame NN
 starts from random small weights and trains by TD(0) self-play with games that
 
 * start from the category's reference positions
@@ -709,12 +709,12 @@ Outputs `models/td_s11_bg_<cat>.weights(.best)`; promote by copying the three
 `.best` files to the `sl_s11_bg_*` names the registry points at.
 
 ```bash
-py -3.14 scripts/run_s11_backgame_td.py --category deep --n-games 200000
-py -3.14 scripts/run_s11_backgame_td.py --category all
+py -3.14 scripts/archive/stage11/run_s11_backgame_td.py --category deep --n-games 200000
+py -3.14 scripts/archive/stage11/run_s11_backgame_td.py --category all
 ```
 
 **Training step 2 — SL on rollout targets** (the quality stage, mirroring how
-Stage 9's backgame nets were made). ``scripts/segregate_s11_backgame_data.py``
+Stage 9's backgame nets were made). ``scripts/archive/stage11/segregate_s11_backgame_data.py``
 splits every backgame-labelled rollout pile from the S9/S10 eras (the
 player/opponent S9 sets plus the three pasko families; ``.s8`` targets and the
 position-only ``*-data`` files skipped) into
@@ -722,7 +722,7 @@ position-only ``*-data`` files skipped) into
 about 245k/167k/94k train rows for deep/middle/double, benchmarks held out
 and deduplicated against train. Every row in those piles passes S11 detection
 (0 dropped), and ``pasko-gated-remainder`` is entirely duplicates of the gated
-sets. ``scripts/run_s11_backgame_sl.py`` then trains each category NN with the
+sets. ``scripts/archive/stage11/run_s11_backgame_sl.py`` then trains each category NN with the
 S9 backgame recipe (GPU ``sl_train.supervised_train_preencoded``, 2,500-epoch
 chunks at batch 4096, 100k ep @ a=3.1 then 250k @ a=1.0, best-ER
 checkpointing), warm-started from the TD bootstrap by default, writing
@@ -824,19 +824,19 @@ different containment nets scored byte-identically). They are now 1000/1001
 containment board evaluated through the phased strategy equals the
 containment NN evaluated directly.
 
-**Data.** `scripts/harvest_containment_positions.py` plays 3,000 two-ply
+**Data.** `scripts/archive/stage11/harvest_containment_positions.py` plays 3,000 two-ply
 stage11 self-play games from the containment seeds (every benchmark decision
 and candidate board, both orientations, excluded) and keeps the rule's
-positions; `scripts/split_containment_targets.py` moves the ones the S9-era
+positions; `scripts/archive/stage11/split_containment_targets.py` moves the ones the S9-era
 piles had already rolled into `data/s11-bg-containment-pile-rollout` (9,734)
 and leaves `data/s11-bg-containment-data` (35,266 fresh boards), rolled out
 under S9 play at 1,296 paths / 3-ply into `data/s11-bg-containment-rollout`
-(Fargate Spot, $176 realized). `scripts/extract_general_containment_rows.py`
+(Fargate Spot, $176 realized). `scripts/archive/stage11/extract_general_containment_rows.py`
 adds the rule's rows from the main corpus — 16k of `contact-train-data`
 (1.3%) and 275k of `crashed-train-data` (46%: closeouts and late-hit
 bear-offs), GNUbg targets — as `data/s11-bg-containment-general-rollout`.
 
-**Training** is `scripts/run_s11_containment_sl.py` (GPU SL, 20k epochs @
+**Training** is `scripts/archive/stage11/run_s11_containment_sl.py` (GPU SL, 20k epochs @
 alpha 3.1 then 60k @ 1.0, best-holdout-ER checkpointing). The installed net
 is the S9 `prim_race` warm start trained on family rows x4 plus the general
 rows (`--extra-data s11-bg-containment-general-rollout --family-weight 4`).
@@ -891,7 +891,7 @@ error mass sat on filter-graded picks at 1P, 63% at 3P), which over-charges
 it. The parent repo's `scripts/build_rollout_jobs_containment.py` (both
 references of a family folder, `--category`, `--models`, `--key-suffix`) and
 `scripts/build_rollout_jobs_folders_stage11p.py` force those picks into
-rollout jobs; `scripts/merge_candidate_rollouts.py` splices the results in.
+rollout jobs; `scripts/archive/stage11/merge_candidate_rollouts.py` splices the results in.
 Read the `PR(RO)` and `filt mass` columns of `score_backgame_pr.py` before
 trusting a headline PR on any of these folders.
 
@@ -944,7 +944,7 @@ every other folder — so a snake NN carries no regression risk anywhere, and
 everything it learns from has to be generated. Self-play from the benchmark
 seeds cannot generate it: measured 2026-09-03, stage11p (snake PR ~54)
 breaks the prime or runs within a move or two, so 900 games yielded ~2.4
-snake decisions each. `scripts/harvest_snake_positions.py` therefore
+snake decisions each. `scripts/archive/stage11/harvest_snake_positions.py` therefore
 samples the region directly — 5,000 random synthetic snakes (prime length
 and location, spares spread from the far side to home, a crunched opponent
 with 0-5 off and 1-3 stragglers) seed short 2-ply games in which the holder
@@ -1060,7 +1060,7 @@ root); and the cache fingerprint ignored the pin, so a pinned node could be
 served by an unpinned evaluation of the same board from an earlier call on
 the same thread.
 
-*Exit-reply data.* `scripts/harvest_snake_exit_replies.py` builds
+*Exit-reply data.* `scripts/archive/stage11/harvest_snake_exit_replies.py` builds
 `data/s11-bg-snake-exit1-data`: for every exit board in the snake harvest the
 opponent's best reply under root routing, plus 4,000 replies picked with
 per-node routing — 25,892 boards, rolled out at 648 paths / 3-ply in-trial
@@ -1380,7 +1380,7 @@ today (a massive-folder root goes to the deep net 51% of the time, the
 middle net 22%, P3 20%, the double net 7%). `data/s11-bg-massive-rollout`
 (240,173 region rows from the three train piles) and
 `data/s11-bg-massive-nbhd-rollout` (their 385,501 non-massive rows plus the
-three exit piles) — both built by `scripts/build_massive_data.py` and, like
+three exit piles) — both built by `scripts/archive/stage11/build_massive_data.py` and, like
 the category piles they come from, not tracked — feed the containment recipe (`run_s11_containment_sl.py`,
 family x4); warm starts from the deep net and from the P3 net converge to
 the same net (1-ply ER on the benchmark piles' massive rows 26.59 / 26.55

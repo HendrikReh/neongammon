@@ -58,9 +58,9 @@ struct RolloutConfig {
     MoveFilter filter = MoveFilters::TINY;  // Filter for candidate selection at top level
     int n_threads = 0;           // Threads for parallelizing trials (0 = auto)
     uint32_t seed = 42;
-    int late_ply = -1;           // Default late ply for both checker and cube (-1 = same as decision_ply)
-    int late_threshold = 20;     // Half-move index where we switch to late strategies
-    int ultra_late_threshold = 2; // Half-move where checker/cube drop to 1-ply (set high to disable)
+    int late_ply = -1;           // Default late ply for checker moves (-1 = same as decision_ply)
+    int late_threshold = 20;     // Half-move index where checker eval switches to late strategy
+    int ultra_late_threshold = 2; // Half-move where checker eval drops to 1-ply and VR thins to even moves (cube stays at cube_eval_config_; set high to disable)
 
     // When true (default), trial-level checker move selection uses CUBEFUL
     // equity (cl2cf) against the branch's current cube state instead of
@@ -88,8 +88,7 @@ struct RolloutConfig {
     // When unset: checker inherits decision_ply, cube inherits decision_ply.
     TrialEvalConfig checker;        // Checker play evaluation
     TrialEvalConfig checker_late;   // Late-game checker play
-    TrialEvalConfig cube;           // Cube decision evaluation
-    TrialEvalConfig cube_late;      // Late-game cube decisions
+    TrialEvalConfig cube;           // Cube decision evaluation (used throughout the trial)
     EvalOptions cube_eval_options;  // Deep prefilter for trial cube and truncation searches
 
     // Cancellation flag. When non-null and set to true, the rollout aborts
@@ -338,18 +337,16 @@ private:
     // Late-game checker play strategy (used after late_threshold half-moves).
     std::shared_ptr<Strategy> checker_late_strat_;
 
-    // Cube decision evaluation configs (resolved from RolloutConfig).
-    // Used to dispatch to the right cube decision function during trials:
+    // Cube decision evaluation config (resolved from RolloutConfig).
+    // Used to dispatch to the right cube decision function throughout trials:
     //   ply == 1: cube_decision_1ply (Janowski on 1-ply probs)
     //   ply > 1:  cube_decision_nply (full cubeful N-ply recursion)
     //   is_rollout: inner_rollout->cubeful_cube_decision (cubeful rollout)
     TrialEvalConfig cube_eval_config_;
-    TrialEvalConfig cube_late_eval_config_;
 
     // Inner RolloutStrategy for truncated rollout cube decisions (n_threads=1).
     // Only created when cube config specifies rollout_trials > 0.
     std::shared_ptr<RolloutStrategy> cube_inner_rollout_;
-    std::shared_ptr<RolloutStrategy> cube_late_inner_rollout_;
 
     // Truncation evaluation strategy — always the base (1-ply) strategy,
     // used only when truncation_ply == 1. N-ply truncation evaluations go

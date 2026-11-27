@@ -95,7 +95,7 @@ before the three backgame categories, then checks early containment before
 using the ordinary plan pair. A snake at the root can pin its network for
 contact nodes in the search. Race and bearoff positions retain their own
 evaluators. This routing applies when Stage 11 evaluates the position,
-including Cube decisions in the PureTD hybrid. [Network routing](../cpp/src/neural_net.cpp)
+including Cube decisions in the PureTD hybrid. [Network routing](../cpp/src/neural_net_routing.cpp)
 · [Bearoff database](bearoff.md) · [Root routing](multi-ply.md#root-routing-pinned-nn-selection)
 
 ## Lookahead and move filters

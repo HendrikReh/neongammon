@@ -46,7 +46,6 @@ void RolloutStrategy::set_bearoff_db(const BearoffDB* db) {
     if (checker_late_strat_) checker_late_strat_->set_bearoff_db(db);
     if (truncation_strat_) truncation_strat_->set_bearoff_db(db);
     if (cube_inner_rollout_) cube_inner_rollout_->set_bearoff_db(db);
-    if (cube_late_inner_rollout_) cube_late_inner_rollout_->set_bearoff_db(db);
 }
 
 void RolloutStrategy::set_move_filter(std::shared_ptr<Strategy> filter) {
@@ -135,9 +134,7 @@ void build_rollout_strategies(
     std::shared_ptr<Strategy>& checker_strat,
     std::shared_ptr<Strategy>& checker_late_strat,
     TrialEvalConfig& cube_eval_config,
-    TrialEvalConfig& cube_late_eval_config,
     std::shared_ptr<RolloutStrategy>& cube_inner_rollout,
-    std::shared_ptr<RolloutStrategy>& cube_late_inner_rollout,
     std::shared_ptr<Strategy>& truncation_strat)
 {
     MoveFilter internal_filter = {2, 0.03f};
@@ -158,12 +155,7 @@ void build_rollout_strategies(
     }
 
     cube_eval_config = resolve_cube_eval_config(config.cube, checker_ply);
-    cube_late_eval_config = resolve_cube_eval_config(
-        config.cube_late.is_set() ? config.cube_late : config.cube,
-        checker_late_ply_eff);
-
     cube_inner_rollout = make_inner_rollout_strategy(cube_eval_config, base, filter_base);
-    cube_late_inner_rollout = make_inner_rollout_strategy(cube_late_eval_config, base, filter_base);
 
     truncation_strat = base;
 }
@@ -176,8 +168,7 @@ void RolloutStrategy::init_strategy(std::shared_ptr<Strategy> filter_base) {
     }
     build_rollout_strategies(base_, filter_base, config_,
                              checker_strat_, checker_late_strat_,
-                             cube_eval_config_, cube_late_eval_config_,
-                             cube_inner_rollout_, cube_late_inner_rollout_,
+                             cube_eval_config_, cube_inner_rollout_,
                              truncation_strat_);
 
     truncation_ply_ = (config_.truncation_ply >= 1) ? config_.truncation_ply : config_.decision_ply;

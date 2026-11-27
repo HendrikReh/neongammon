@@ -76,7 +76,7 @@ for _p in (_SCRIPT_DIR, _PROJECT_ROOT / "build", _PROJECT_ROOT / "python"):
 import export_folder_benchmark_xg as fx  # noqa: E402
 from neongammon import (STARTING_BOARD, BgBotAnalyzer, check_game_over, flip_board,  # noqa: E402
                     possible_moves, xg_file as xf)
-from export_pasko_benchmark_xg import _templates, derive_half_moves, write_xg  # noqa: E402
+from xg_export_common import _templates, derive_half_moves, write_xg  # noqa: E402
 
 DEFAULT_TEMPLATES = (_PROJECT_ROOT / "data" / "xg_h2h" / "template.xg",
                      _PROJECT_ROOT / "data" / "benchmark_pr_xg" / "template.xg")

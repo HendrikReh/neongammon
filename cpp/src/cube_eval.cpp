@@ -940,12 +940,15 @@ void eval_roll_node(
 
         // Cubeful pick vs the primary cube state with money cubeless tie-break.
         const CubeInfo& primary_cube = p.aciCubePos[0];
-        const bool needs_cube_efficiency = !cube_is_dead(primary_cube);
+        const bool needs_cube_efficiency =
+            cube_uses_efficiency(primary_cube) && primary_cube.cube_x_override < 0.0f;
+        const float fixed_cube_x =
+            (primary_cube.cube_x_override >= 0.0f) ? primary_cube.cube_x_override : 0.0f;
         cf_vals.resize(n_eval);
         for (int c = 0; c < n_eval; ++c) {
             const Board& cand = (*eval_candidates)[c];
             clamp_probs_to_board(cand_probs[c], cand);
-            float cube_x = 0.0f;
+            float cube_x = fixed_cube_x;
             if (needs_cube_efficiency) {
                 auto [pp, op] = pip_counts(cand);
                 cube_x = cube_efficiency(cand_probs[c], is_race(cand), pp, op);
@@ -1314,7 +1317,11 @@ static void cubeful_equity_nply_multi_impl(
 {
     (void)filter;  // candidate selection inside the tree is single-pick
     if (n_cubes <= 0) return;
-    if (n_cubes > EVAL_MAX_CCI) n_cubes = EVAL_MAX_CCI;
+    if (n_cubes > EVAL_MAX_CCI) {
+        throw std::invalid_argument(
+            "cubeful_equity_nply_multi: n_cubes (" + std::to_string(n_cubes) +
+            ") exceeds EVAL_MAX_CCI (" + std::to_string(EVAL_MAX_CCI) + ")");
+    }
     const int pinned = root_board ? strategy.root_pin_for(*root_board) : -1;
 
     if (n_plies <= 1) {
@@ -1439,7 +1446,11 @@ static void cube_decision_nply_multi_impl(
 {
     (void)filter;  // candidate selection inside the tree is single-pick
     if (n_cubes <= 0) return;
-    if (n_cubes > EVAL_MAX_CCI / 2) n_cubes = EVAL_MAX_CCI / 2;
+    if (n_cubes > EVAL_MAX_CCI / 2) {
+        throw std::invalid_argument(
+            "cube_decision_nply_multi: n_cubes (" + std::to_string(n_cubes) +
+            ") exceeds EVAL_MAX_CCI / 2 (" + std::to_string(EVAL_MAX_CCI / 2) + ")");
+    }
     const int pinned = strategy.root_pin_for(board);  // a cube decision's root is the position itself
 
     if (n_plies <= 1) {

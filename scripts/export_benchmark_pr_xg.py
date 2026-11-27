@@ -73,7 +73,7 @@ import bgbot_cpp  # noqa: E402
 import export_folder_benchmark_xg as fx  # noqa: E402
 from neongammon import possible_moves, xg_file as xf  # noqa: E402
 from neongammon.weights import bearoff_db_path  # noqa: E402
-from export_pasko_benchmark_xg import _templates, derive_half_moves, write_xg  # noqa: E402
+from xg_export_common import _templates, derive_half_moves, write_xg  # noqa: E402
 
 BENCHMARK_DIR = _PROJECT_ROOT / "data" / "benchmark_pr"
 DEFAULT_OUT_DIR = _PROJECT_ROOT / "data" / "benchmark_pr_xg"

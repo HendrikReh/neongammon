@@ -147,12 +147,13 @@ class _RolloutAnalyzer(_CubelessBase):
         }
         self._cancel_event = threading.Event()
 
-        # Convert None to default TrialEvalConfig
+        # Convert None to default TrialEvalConfig (cube_late is accepted for
+        # compatibility only; cube decisions use `cube` throughout the trial).
+        del cube_late
         _empty = bgbot_cpp.TrialEvalConfig()
         checker_cfg = checker if checker is not None else _empty
         checker_late_cfg = checker_late if checker_late is not None else _empty
         cube_cfg = cube if cube is not None else _empty
-        cube_late_cfg = cube_late if cube_late is not None else _empty
 
         self._rollout_strategy = bgbot_cpp.create_rollout_from_base(
             self._raw_base,
@@ -168,7 +169,6 @@ class _RolloutAnalyzer(_CubelessBase):
             checker=checker_cfg,
             checker_late=checker_late_cfg,
             cube=cube_cfg,
-            cube_late=cube_late_cfg,
             ultra_late_threshold=ultra_late_threshold,
             cubeful_trial_moves=cubeful_trial_moves,
             cubeful_late_threshold=cubeful_late_threshold,

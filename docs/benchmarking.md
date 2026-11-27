@@ -13,9 +13,9 @@ to override. Scripts live in `scripts/`.
 | `run_rollout_benchmark.py` | Top-N worst 1-ply errors compared at 2-ply, 3-ply, 4-ply, rollout | `--model`, `--top N`, `--threads N` |
 | `score_benchmark_pr.py` | Benchmark PR (equity error vs rollout reference, 103k decisions). Any registered model type (5-NN, pair, backgame) via `bgbot_cpp.score_benchmark_pr_strategy`. | `--model`, `--plies N`, `--all-models`, `--all-plies`, `--decision-step N`, `--no-bearoff` |
 | `score_benchmark_pr_gnubg.py` | GNUbg's Benchmark PR (parallel GNUbg CLI subprocesses) | `--plies N`, `--workers N`, `--decision-step N` |
-| `test_evaluate_probs.py` | Single position eval at 1-4 ply + GNUbg + rollouts | `--model`, `--checkers`, `--ply N` |
-| `test_cube_decision.py` | Cube decisions vs 3 reference positions at 1-4 ply + rollout | `--model` |
-| `test_unified_rollout.py` | Verify cubeful(max_cube=1) == cubeless at N-ply + rollout | `--model` |
+| `archive/diagnostics/test_evaluate_probs.py` | Single position eval at 1-4 ply + GNUbg + rollouts | `--model`, `--checkers`, `--ply N` |
+| `archive/diagnostics/test_cube_decision.py` | Cube decisions vs 3 reference positions at 1-4 ply + rollout | `--model` |
+| `archive/diagnostics/test_unified_rollout.py` | Verify cubeful(max_cube=1) == cubeless at N-ply + rollout | `--model` |
 | `eval_position.py` | Side-by-side NeonGammon (production model) vs GNUbg evaluation (cube action or checker play, 1-4 ply + rollout, money or match play) | `cube`/`checker` subcommand, `--checkers`, `--dice`, `--match`, `--score`, `--cube-value`, `--cube-owner` |
 | `profile_cube_benchmark.py` | Profiling benchmark: 8 fixed cube positions (mix of money/match, bearoff/contact) evaluated serially with timing. For verifying optimisations don't change values. | level positional arg: `1ply`–`4ply`, `1T`, `2T`, `3T` |
 
@@ -195,8 +195,8 @@ but larger ones. A larger one-sided database would help little: only 21% of
 these races have every checker within the 10-point.
 
 Retraining the pure-race net on our own targets did NOT help (2026-11-18).
-`scripts/harvest_race_positions.py` + `modal_rollout.py` produced 330k race
-positions rolled out under Stage 9 play (~$22), and `scripts/run_purerace_sl.py`
+`scripts/archive/stage11/harvest_race_positions.py` + `modal_rollout.py` produced 330k race
+positions rolled out under Stage 9 play (~$22), and `scripts/archive/stage11/run_purerace_sl.py`
 fine-tuned both nets on them: holdout ER 16.9 -> 11.1 (100h) and 15.4 -> 11.1
 (200h). On the Benchmark PR races the gain does not carry over: absolute
 error against XG 4-ply moves 9.95 -> 9.33, the within-decision error that
@@ -674,7 +674,7 @@ Saved-baseline regression scripts (each supports `--save`/`--compare` with a mat
 - `scripts/bench_3t_checker.py` — checker play (fixed dice in `scripts/bench_checker_dice.json`)
 - `scripts/bench_3t_postmove.py` — post-move eval
 - `scripts/bench_3t_cubeless.py` — cubeless rollout of post-move positions
-- `scripts/bench_nply_cubeless.py` — standalone N-ply cubeless (post-move probs at 2–4 ply + contact/race benchmark ER)
+- `scripts/archive/historical/bench_nply_cubeless.py` — standalone N-ply cubeless (post-move probs at 2–4 ply + contact/race benchmark ER)
 
 ### Fixed Open Sage corpus on Apple Silicon
 
@@ -688,7 +688,7 @@ public API timings and full outputs at 1–4 ply and 1T–3T.
 ### Apple Silicon Timing Baselines (v3.1.1, M4 Pro)
 
 For fast local latency checks without external position files, run
-[`scripts/bench_analyzer_overhead.py`](../scripts/bench_analyzer_overhead.py)
+[`scripts/archive/historical/bench_analyzer_overhead.py`](../scripts/archive/historical/bench_analyzer_overhead.py)
 against `stage11` with `BGBOT_USE_ACCELERATE=ON`. On an idle Apple Silicon M4 Pro
 at `v3.1.1` (3 rounds, median ms per call):
 

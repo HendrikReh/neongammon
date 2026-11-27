@@ -376,11 +376,11 @@ Every level of both engines finds Paskogammon several times harder than standard
 ### Running the Pipeline
 
 ```bash
-python scripts/benchmark_pasko.py build --n-games 50 --stages pass1 --workers 6      # simulate from the Paskogammon start
-python scripts/benchmark_pasko.py build --n-games 50 --stages pass2,pass3 --n-threads 16
-python scripts/benchmark_pasko.py score --level truncated3                          # Sage 3T
-python scripts/export_pasko_benchmark_xg.py                                         # native .xg games for XG (data/pasko_money_benchmark/xg_native/)
-python scripts/benchmark_pr_xg_pasko.py --xg-dir data/pasko_money_benchmark/xg_native_xgrollerpp   # XG, one analysed folder copy per level
+python scripts/archive/pasko/benchmark_pasko.py build --n-games 50 --stages pass1 --workers 6      # simulate from the Paskogammon start
+python scripts/archive/pasko/benchmark_pasko.py build --n-games 50 --stages pass2,pass3 --n-threads 16
+python scripts/archive/pasko/benchmark_pasko.py score --level truncated3                          # Sage 3T
+python scripts/archive/pasko/export_pasko_benchmark_xg.py                                         # native .xg games for XG (data/pasko_money_benchmark/xg_native/)
+python scripts/archive/pasko/benchmark_pr_xg_pasko.py --xg-dir data/pasko_money_benchmark/xg_native_xgrollerpp   # XG, one analysed folder copy per level
 ```
 
 ## Match PR Agreement on Real Matches
@@ -449,7 +449,7 @@ python scripts/xg_h2h.py round --dir data/xg_h2h/pilot   # then Batch Analyze ro
 python scripts/xg_h2h.py report --dir data/xg_h2h/pilot --luck
 ```
 
-Keep one XG evaluation level for the whole run (`round` prints harvested levels and warns on inconsistencies). Upstream's `play_sage_vs_xg.py` and `run_sage_vs_xg_games.py` are retired stubs.
+Keep one XG evaluation level for the whole run (`round` prints harvested levels and warns on inconsistencies). Upstream's `play_sage_vs_xg.py` and `run_sage_vs_xg_games.py` are archived retired stubs under `scripts/archive/historical/`.
 
 ### 2. Self-Play Transcripts Scored by XG
 

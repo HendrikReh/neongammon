@@ -176,3 +176,75 @@ def test_routed_strategy_small_manifest_and_root_pin_validation(tmp_path):
 
     routed.set_root_pinned([1])
     assert routed.root_pinned() == [1]
+
+
+@pytest.mark.parametrize("bad_plies", [0, -1, -3])
+def test_raw_nply_bindings_reject_non_positive_plies(bad_plies):
+    base = _load_base()
+    w = default_weights()
+    owner = bgbot_cpp.CubeOwner.CENTERED
+    board = list(STARTING_BOARD)
+
+    with pytest.raises(ValueError, match="n_plies"):
+        bgbot_cpp.cubeful_equity_nply(board, owner, base, n_plies=bad_plies)
+    with pytest.raises(ValueError, match="n_plies"):
+        bgbot_cpp.cubeful_probs_nply(board, owner, base, n_plies=bad_plies)
+    with pytest.raises(ValueError, match="n_plies"):
+        bgbot_cpp.cubeful_probs_and_equity_nply(board, owner, base, n_plies=bad_plies)
+    with pytest.raises(ValueError, match="n_plies"):
+        bgbot_cpp.cube_decision_nply_unified(
+            board, 1, owner, bad_plies,
+            w.strategy_type, w.weight_paths_list, w.hidden_sizes_list,
+            strategy=base,
+        )
+    with pytest.raises(ValueError, match="n_plies"):
+        bgbot_cpp.cube_decision_nply(board, 1, owner, bad_plies)
+
+
+def test_cube_late_compat_noop_does_not_affect_rollout():
+    base = _load_base()
+    owner = bgbot_cpp.CubeOwner.CENTERED
+    board = list(STARTING_BOARD)
+
+    r_default = bgbot_cpp.create_rollout_from_base(
+        base, n_trials=4, truncation_depth=2, decision_ply=1, n_threads=1, seed=42,
+    )
+    r_compat = bgbot_cpp.create_rollout_from_base(
+        base, n_trials=4, truncation_depth=2, decision_ply=1, n_threads=1, seed=42,
+        cube_late=bgbot_cpp.TrialEvalConfig(ply=2),
+    )
+    assert r_default.cube_decision(board, 1, owner) == r_compat.cube_decision(board, 1, owner)
+
+
+def test_td_train_releases_gil(tmp_path):
+    import threading
+    import time
+
+    ticks = 0
+    stop = threading.Event()
+
+    def heartbeat():
+        nonlocal ticks
+        while not stop.is_set():
+            ticks += 1
+            time.sleep(0.001)
+
+    t = threading.Thread(target=heartbeat)
+    t.start()
+    try:
+        res = bgbot_cpp.td_train(
+            n_games=4,
+            alpha=0.1,
+            n_hidden=8,
+            eps=0.1,
+            seed=42,
+            benchmark_interval=100,
+            model_name="td_gil_smoke",
+            models_dir=str(tmp_path),
+        )
+    finally:
+        stop.set()
+        t.join(timeout=2)
+
+    assert res.games_played == 4
+    assert ticks >= 1

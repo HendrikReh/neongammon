@@ -100,7 +100,6 @@ RolloutConfig make_rollout_config(
     const TrialEvalConfig& checker,
     const TrialEvalConfig& checker_late,
     const TrialEvalConfig& cube,
-    const TrialEvalConfig& cube_late,
     int ultra_late_threshold,
     bool cubeful_trial_moves = true,
     int cubeful_late_threshold = 0,
@@ -123,7 +122,6 @@ RolloutConfig make_rollout_config(
     rc.checker = checker;
     rc.checker_late = checker_late;
     rc.cube = cube;
-    rc.cube_late = cube_late;
     rc.ultra_late_threshold = ultra_late_threshold;
     rc.cubeful_trial_moves = cubeful_trial_moves;
     rc.cubeful_late_threshold = cubeful_late_threshold;
@@ -391,7 +389,7 @@ void bind_rollout(py::module_& m) {
                                     const TrialEvalConfig& checker,
                                     const TrialEvalConfig& checker_late,
                                     const TrialEvalConfig& cube,
-                                    const TrialEvalConfig& cube_late,
+                                    const TrialEvalConfig& /*cube_late*/,
                                     int ultra_late_threshold) {
         auto base = std::make_shared<GamePlanStrategy>(
             purerace_w, racing_w, attacking_w, priming_w, anchoring_w,
@@ -400,7 +398,7 @@ void bind_rollout(py::module_& m) {
             n_trials, truncation_depth, decision_ply,
             filter_max_moves, filter_threshold, n_threads, seed,
             late_ply, late_threshold, enable_vr, parallelize_trials,
-            checker, checker_late, cube, cube_late, ultra_late_threshold);
+            checker, checker_late, cube, ultra_late_threshold);
         return std::make_shared<RolloutStrategy>(std::move(base), config);
     }, "Create rollout strategy wrapping 5-NN GamePlanStrategy",
        py::arg("purerace_weights"),
@@ -447,7 +445,7 @@ void bind_rollout(py::module_& m) {
             int n_threads, uint32_t seed, int late_ply, int late_threshold,
             bool enable_vr, bool parallelize_trials,
             const TrialEvalConfig& checker, const TrialEvalConfig& checker_late,
-            const TrialEvalConfig& cube, const TrialEvalConfig& cube_late,
+            const TrialEvalConfig& cube, const TrialEvalConfig& /*cube_late*/,
             int ultra_late_threshold) {
         auto leaf = std::make_shared<GamePlanStrategy>(
             purerace_w, racing_w, attacking_w, priming_w, anchoring_w,
@@ -461,7 +459,7 @@ void bind_rollout(py::module_& m) {
             n_trials, truncation_depth, decision_ply,
             filter_max_moves, filter_threshold, n_threads, seed,
             late_ply, late_threshold, enable_vr, parallelize_trials,
-            checker, checker_late, cube, cube_late, ultra_late_threshold);
+            checker, checker_late, cube, ultra_late_threshold);
         return std::make_shared<RolloutStrategy>(std::move(leaf), std::move(filter), config);
     }, "Create hybrid rollout strategy with separate filter and leaf 5-NN strategies",
        py::arg("purerace_weights"), py::arg("racing_weights"),
@@ -517,14 +515,14 @@ void bind_rollout(py::module_& m) {
                                      const TrialEvalConfig& checker,
                                      const TrialEvalConfig& checker_late,
                                      const TrialEvalConfig& cube,
-                                     const TrialEvalConfig& cube_late,
+                                     const TrialEvalConfig& /*cube_late*/,
                                      int ultra_late_threshold) {
         auto base = std::make_shared<GamePlanPairStrategy>(weight_paths, hidden_sizes);
         auto rc = make_rollout_config(
             n_trials, truncation_depth, decision_ply,
             filter_max_moves, filter_threshold, n_threads, seed,
             late_ply, late_threshold, enable_vr, parallelize_trials,
-            checker, checker_late, cube, cube_late, ultra_late_threshold);
+            checker, checker_late, cube, ultra_late_threshold);
         return std::make_shared<RolloutStrategy>(std::move(base), rc);
     }, "Create RolloutStrategy from 17-NN Pair base strategy",
        py::arg("weight_paths"),
@@ -555,7 +553,7 @@ void bind_rollout(py::module_& m) {
                                          const TrialEvalConfig& checker,
                                          const TrialEvalConfig& checker_late,
                                          const TrialEvalConfig& cube,
-                                         const TrialEvalConfig& cube_late,
+                                         const TrialEvalConfig& /*cube_late*/,
                                          int ultra_late_threshold,
                                          bool cubeful_trial_moves,
                                          int cubeful_late_threshold,
@@ -567,7 +565,7 @@ void bind_rollout(py::module_& m) {
             n_trials, truncation_depth, decision_ply,
             filter_max_moves, filter_threshold, n_threads, seed,
             late_ply, late_threshold, enable_vr, parallelize_trials,
-            checker, checker_late, cube, cube_late, ultra_late_threshold,
+            checker, checker_late, cube, ultra_late_threshold,
             cubeful_trial_moves, cubeful_late_threshold,
             target_se, max_batches, truncation_ply);
         return std::make_shared<RolloutStrategy>(std::move(base), rc);
@@ -636,7 +634,7 @@ void bind_cube_rollout(py::module_& m) {
                                        const TrialEvalConfig& checker,
                                        const TrialEvalConfig& checker_late,
                                        const TrialEvalConfig& cube_cfg,
-                                       const TrialEvalConfig& cube_late,
+                                       const TrialEvalConfig& /*cube_late*/,
                                        int ultra_late_threshold,
                                        py::object progress_callback,
                                        double target_se,
@@ -652,7 +650,7 @@ void bind_cube_rollout(py::module_& m) {
             n_trials, truncation_depth, decision_ply,
             filter_max_moves, filter_threshold, n_threads, seed,
             late_ply, late_threshold, enable_vr, /*parallelize_trials=*/false,
-            checker, checker_late, cube_cfg, cube_late, ultra_late_threshold,
+            checker, checker_late, cube_cfg, ultra_late_threshold,
             /*cubeful_trial_moves=*/true, /*cubeful_late_threshold=*/0,
             target_se, max_batches);
         auto rollout = std::make_shared<RolloutStrategy>(std::move(base), config);
