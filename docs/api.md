@@ -500,8 +500,12 @@ present) return `None` — the caller decides how to record "no luck computed".
 ### Model Selection
 
 Wheels and source distributions include weights for the production model (`stage11`)
-and `stage9`. The other registered models (`stage3` through `stage8`, including
-`stage5small`, and `stage10`) require weights from the Git checkout.
+and `stage9`. The shared package manifest lists 24 distinct weight files. Stage
+11 uses 21 of them. Stage 9 also needs its original pure-race network and its
+two backgame networks. [Package manifest](../pyproject.toml)
+
+The other registered models (`stage3` through `stage8`, including `stage5small`,
+and `stage10`) require weights from the Git checkout.
 
 ```python
 from neongammon import BgBotAnalyzer, batch_evaluate, batch_post_move_evaluate
