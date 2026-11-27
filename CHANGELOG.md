@@ -19,6 +19,52 @@ Timings below were measured on an M4 Pro Mac mini (10P+4E cores).
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-11-27
+
+### Upgrade notes
+
+- Install the matching Python package and native extension together. A source
+  checkout needs a fresh `bgbot_cpp` build. The Python loader checks the
+  native ABI on first use and reports an incompatible extension.
+- Pass custom trial settings with `eval_level="rollout"`. Fixed search and
+  truncated rollout presets now reject options they previously ignored.
+- Supply both away scores as zero for money play or both in 1–25 for match
+  play. Invalid score and cube inputs raise errors.
+- C++ callers should use `RolloutConfig::cube` for cube decisions throughout
+  a trial. The old `cube_late` field is gone. Python still accepts
+  `cube_late` in custom rollouts as a deprecated no-op.
+
+### Added
+
+- The `neongammon` command provides `info`, `probe`, and `eval` for
+  checking an installation and evaluating a position. Python callers can use
+  `runtime_info()` and `observe_thread_budgets()`.
+- Added a reproducible Apple Silicon multi-ply benchmark with a recorded M4 Pro
+  baseline. ([#123](https://github.com/HendrikReh/neongammon/pull/123))
+
+### Fixed
+
+- Corrected take and redouble equities in match search and kept match equity
+  in the correct units during dead-cube rollouts. Cubeless rollouts now use
+  cubeless trials.
+- Aligned take points and gammon prices with dead-cube, Crawford, and
+  double-match-point rules. Reject unsupported search depths and cube-state
+  batch sizes at the affected native entry points.
+- Hardened native cache cleanup, routed model validation, and concurrent
+  bearoff lookups. ([#122](https://github.com/HendrikReh/neongammon/pull/122))
+- Preserve routing provenance in Modal rollouts, account for failed chunks
+  accurately, and return a failing exit status when work fails. Local
+  rollout generation can run without the Modal package.
+
+### Changed
+
+- Skip cube-efficiency calculations in search when valuation does not use
+  them, including dead cubes and Crawford positions, or when an explicit
+  cube-efficiency override supplies the value.
+- Split neural-network kernels, weight I/O, and routing into separate
+  implementation files. Moved historical scripts under `scripts/archive/`.
+  ([#124](https://github.com/HendrikReh/neongammon/pull/124))
+
 ## [3.2.2] - 2026-11-27
 
 ### Fixed
@@ -983,7 +1029,8 @@ The fork's first release.
   module before copying it, because `cp` over a loaded `.so` makes macOS kill
   the next import ([#12](https://github.com/HendrikReh/neongammon/pull/12)).
 
-[Unreleased]: https://github.com/HendrikReh/neongammon/compare/v3.2.2...HEAD
+[Unreleased]: https://github.com/HendrikReh/neongammon/compare/v4.0.0...HEAD
+[4.0.0]: https://github.com/HendrikReh/neongammon/compare/v3.2.2...v4.0.0
 [3.2.2]: https://github.com/HendrikReh/neongammon/compare/v3.2.1...v3.2.2
 [3.2.1]: https://github.com/HendrikReh/neongammon/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/HendrikReh/neongammon/compare/v3.1.2...v3.2.0
