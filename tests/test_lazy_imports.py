@@ -73,3 +73,14 @@ from neongammon import BgBotAnalyzer
     assert "MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE" in completed.stderr
     assert "Rebuild" in completed.stderr and "reinstall" in completed.stderr
     assert bgbot_cpp.__file__ in completed.stderr
+
+
+def test_analyzer_module_keeps_public_api_and_shared_calibration():
+    import neongammon
+    from neongammon import analyzer, facade, rollout, strategies
+
+    assert neongammon.BgBotAnalyzer is analyzer.BgBotAnalyzer is facade.BgBotAnalyzer
+    assert analyzer.create_analyzer is facade.create_analyzer
+    assert neongammon.RolloutCancelled is analyzer.RolloutCancelled is rollout.RolloutCancelled
+    assert analyzer.MONEY_CONTACT_CUBE_LIFE is strategies.MONEY_CONTACT_CUBE_LIFE
+    assert analyzer.MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE is strategies.MONEY_CONTACT_CUBE_LIFE_PIP_SLOPE

@@ -9,7 +9,8 @@ from pathlib import Path
 from threading import Lock
 from weakref import finalize
 
-from .analyzer import BgBotAnalyzer, _validate_cube_limit
+from .facade import BgBotAnalyzer
+from .strategies import _validate_cube_limit
 from .board import possible_moves
 from .types import CubeDecisionResult
 

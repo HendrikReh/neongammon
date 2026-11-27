@@ -1564,7 +1564,7 @@ default `parallel_threads=0`, both stages use the budget resolved from
 (`truncation_ply=2`) — neither is shown as a column above.)
 
 These per-level defaults are defined in one place — the `BgBotAnalyzer.__init__`
-dispatch in [python/neongammon/analyzer.py](../python/neongammon/analyzer.py), in the
+dispatch in [python/neongammon/facade.py](../python/neongammon/facade.py), in the
 `elif eval_level == "truncated1"/"truncated2"/"truncated3"/"rollout":` blocks.
 Change them there and all callers (including the host app) pick up the new
 defaults.

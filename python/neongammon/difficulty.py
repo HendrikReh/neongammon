@@ -9,7 +9,7 @@ from math import exp
 from random import Random
 from typing import Protocol
 
-from .analyzer import BgBotAnalyzer
+from .facade import BgBotAnalyzer
 from .board import can_double_match, possible_moves
 from .types import CubeDecisionResult
 from .batch import BatchModels

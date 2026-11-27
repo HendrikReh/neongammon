@@ -13,7 +13,7 @@ from neongammon import BgBotAnalyzer, STARTING_BOARD
 def controlled_thread_defaults(monkeypatch):
     # Keep expectations independent of the CI host's CPU count/environment.
     monkeypatch.delenv("BGBOT_MULTIPLY_THREADS", raising=False)
-    monkeypatch.setattr("neongammon.analyzer.os.cpu_count", lambda: 8)
+    monkeypatch.setattr("neongammon.strategies.os.cpu_count", lambda: 8)
 
 
 def evaluate(level, threads, *, cubeful=True, match_play=False):
@@ -25,7 +25,7 @@ def evaluate(level, threads, *, cubeful=True, match_play=False):
 
     analyzer = BgBotAnalyzer(eval_level=level, parallel_threads=threads, cubeful=cubeful)
     context = {"away1": 5, "away2": 3} if match_play else {}
-    with patch("neongammon.analyzer.ThreadPoolExecutor", side_effect=observe):
+    with patch("neongammon.cubeful.ThreadPoolExecutor", side_effect=observe):
         result = analyzer.checker_play(list(STARTING_BOARD), 3, 1, beaver=False, **context)
     assert result.moves, "The real checker evaluation must produce candidates"
     return limits, asdict(result)

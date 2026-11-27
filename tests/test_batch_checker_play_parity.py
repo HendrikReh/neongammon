@@ -172,7 +172,7 @@ def test_the_filtered_depths_come_from_python():
     # With no filtered depth, 2-ply searches every move, in the analyzer too.
     positions = POSITIONS["2ply"][:6]
     with patch("neongammon.batch.CUBEFUL_FILTERED_PLIES", frozenset()), \
-            patch("neongammon.analyzer.CUBEFUL_FILTERED_PLIES", frozenset()):
+            patch("neongammon.cubeful.CUBEFUL_FILTERED_PLIES", frozenset()):
         batch = _batch_moves("2ply", positions)
         analyzer = _analyzer_moves("2ply", positions)
     assert batch == analyzer

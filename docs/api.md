@@ -26,7 +26,7 @@ of functionality. All Python functions default to the production model (`stage11
 Given a board position, two dice, and cube information, return all legal moves
 ranked by equity, with cubeless post-move probabilities for each.
 
-**Python** — `BgBotAnalyzer.checker_play()` (`python/neongammon/analyzer.py`):
+**Python** — `BgBotAnalyzer.checker_play()` (`python/neongammon/facade.py`):
 ```python
 from neongammon import BgBotAnalyzer, STARTING_BOARD
 
@@ -60,7 +60,7 @@ for (auto& c : candidates) {
 Given a post-move board (right before the opponent's turn) and cube information,
 return cubeful equity, cubeless equity, and cubeless probabilities.
 
-**Python (single)** — `BgBotAnalyzer.post_move_analytics()` (`python/neongammon/analyzer.py`):
+**Python (single)** — `BgBotAnalyzer.post_move_analytics()` (`python/neongammon/facade.py`):
 ```python
 from neongammon import BgBotAnalyzer
 
@@ -107,7 +107,7 @@ Given a pre-roll board position and cube information, return cubeful equity
 information for the three cube states (No Double, Double/Take, Double/Pass),
 cubeless equity, and cubeless probabilities.
 
-**Python** — `BgBotAnalyzer.cube_action()` (`python/neongammon/analyzer.py`):
+**Python** — `BgBotAnalyzer.cube_action()` (`python/neongammon/facade.py`):
 ```python
 from neongammon import BgBotAnalyzer
 
