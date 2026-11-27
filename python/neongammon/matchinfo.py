@@ -7,6 +7,10 @@ Dead cube take points and gammon prices are calculated exactly from the match
 equity table. All take points are gammonless — they assume zero probability of
 gammon/backgammon wins and losses.
 
+Away scores describe the game about to be scored. Set ``is_crawford=True``
+for the Crawford game. With the default ``False``, a player already at
+1-away indicates post-Crawford play.
+
 For money games (no match context):
 - Gammonless take point: 0.22 (both players)
 - Gammonless dead cube take point: 0.25 (both players)
@@ -61,7 +65,7 @@ _TAKE_POINTS_CV2 = {
 _TAKE_POINTS = {1: _TAKE_POINTS_CV1, 2: _TAKE_POINTS_CV2}
 
 
-def _auto_redouble_take_point(away_taker, away_doubler, cube_value):
+def _auto_redouble_take_point(away_taker, away_doubler, cube_value, is_crawford):
     """Gammonless dead cube take point when the taker has an automatic redouble.
 
     The taker has an automatic redouble when the doubler will win the match on a
@@ -71,15 +75,12 @@ def _auto_redouble_take_point(away_taker, away_doubler, cube_value):
 
     T = (MWC(a1, a2-C) - MWC(a1, a2-4C)) / (MWC(a1-4C, a2) - MWC(a1, a2-4C))
     """
-    c = cube_value
-    num = _mwc(away_taker, away_doubler - c) - _mwc(away_taker, away_doubler - 4 * c)
-    den = _mwc(away_taker - 4 * c, away_doubler) - _mwc(away_taker, away_doubler - 4 * c)
-    if den == 0:
-        return 0.25
-    return num / den
+    return _gammonless_take_point(
+        away_taker, away_doubler, cube_value, 4 * cube_value, is_crawford,
+    )
 
 
-def take_points(away1, away2, cube_value=1):
+def take_points(away1, away2, cube_value=1, *, is_crawford=False):
     """Return gammonless (take_point_player1, take_point_player2) for the given match score.
 
     Gammonless means assuming zero probability of gammon/backgammon wins and losses.
@@ -95,6 +96,7 @@ def take_points(away1, away2, cube_value=1):
         away1: Points player 1 needs to win the match.
         away2: Points player 2 needs to win the match.
         cube_value: Current cube value.
+        is_crawford: Whether the current game is the Crawford game.
 
     Returns:
         Tuple of (take_point_for_player1, take_point_for_player2).
@@ -108,20 +110,20 @@ def take_points(away1, away2, cube_value=1):
     p2_auto = away1 - 2 * c <= 0  # player 1 doubles, player 2 has auto-redouble
 
     if p1_auto and p2_auto:
-        tp1 = _auto_redouble_take_point(away1, away2, c)
-        tp2 = _auto_redouble_take_point(away2, away1, c)
+        tp1 = _auto_redouble_take_point(away1, away2, c, is_crawford)
+        tp2 = _auto_redouble_take_point(away2, away1, c, is_crawford)
         return (tp1, tp2)
 
     if p1_auto:
-        tp1 = _auto_redouble_take_point(away1, away2, c)
+        tp1 = _auto_redouble_take_point(away1, away2, c, is_crawford)
         # Player 2's take point: lookup or Janowski
-        tp2 = _get_single_take_point(away2, away1, c)
+        tp2 = _get_single_take_point(away2, away1, c, is_crawford)
         return (tp1, tp2)
 
     if p2_auto:
-        tp2 = _auto_redouble_take_point(away2, away1, c)
+        tp2 = _auto_redouble_take_point(away2, away1, c, is_crawford)
         # Player 1's take point: lookup or Janowski
-        tp1 = _get_single_take_point(away1, away2, c)
+        tp1 = _get_single_take_point(away1, away2, c, is_crawford)
         return (tp1, tp2)
 
     # No automatic redoubles — use lookup or Janowski
@@ -130,10 +132,10 @@ def take_points(away1, away2, cube_value=1):
         key = (min(away1, away2), max(away1, away2))
         if key in table:
             return _lookup(table, 0.22, away1, away2)
-    return take_points_janowski(away1, away2, cube_value, x=0.68)
+    return take_points_janowski(away1, away2, cube_value, x=0.68, is_crawford=is_crawford)
 
 
-def _get_single_take_point(away_taker, away_doubler, cube_value):
+def _get_single_take_point(away_taker, away_doubler, cube_value, is_crawford):
     """Get a single player's take point via lookup table or Janowski fallback."""
     if cube_value in _TAKE_POINTS:
         table = _TAKE_POINTS[cube_value]
@@ -144,38 +146,21 @@ def _get_single_take_point(away_taker, away_doubler, cube_value):
                 return leader_val
             else:
                 return trailer_val
-    return _janowski_take_point(away_taker, away_doubler, cube_value, x=0.68)
+    return _janowski_take_point(away_taker, away_doubler, cube_value, 0.68, is_crawford)
 
 
-def _mwc(away1, away2):
-    """MWC from the match equity table for player 1 needing away1, player 2 needing away2.
+def _gammonless_take_point(away1, away2, pass_points, taken_cube, is_crawford):
+    """Solve MWC(pass) = P(win) * MWC(win) + P(loss) * MWC(loss)."""
+    from bgbot_cpp import _get_met_after
 
-    If either away is 1, uses Crawford MWC. If away1 <= 0, returns 1.0 (player 1 has
-    already won). If away2 <= 0, returns 0.0 (player 2 has already won).
-    """
-    if away1 <= 0:
-        return 1.0
-    if away2 <= 0:
-        return 0.0
-    import bgbot_cpp
-    return bgbot_cpp.get_met(away1, away2, False)
-
-
-def _dead_cube_take_point(away1, away2, cube_value):
-    """Gammonless dead cube take point for player 1 at the given score and cube value.
-
-    T = (MWC(a1, a2-C) - MWC(a1, a2-2C)) / (MWC(a1-2C, a2) - MWC(a1, a2-2C))
-    where a1=away1, a2=away2, C=cube_value.
-    """
-    c = cube_value
-    num = _mwc(away1, away2 - c) - _mwc(away1, away2 - 2 * c)
-    den = _mwc(away1 - 2 * c, away2) - _mwc(away1, away2 - 2 * c)
+    loss = _get_met_after(away1, away2, taken_cube, False, is_crawford)
+    den = _get_met_after(away1, away2, taken_cube, True, is_crawford) - loss
     if den == 0:
         return 0.25
-    return num / den
+    return (_get_met_after(away1, away2, pass_points, False, is_crawford) - loss) / den
 
 
-def _janowski_take_point(away1, away2, cube_value, x):
+def _janowski_take_point(away1, away2, cube_value, x, is_crawford):
     """Gammonless Janowski live cube take point for player 1.
 
     T_live = T_dead * CP / (CP + x * (1 - CP))
@@ -186,15 +171,18 @@ def _janowski_take_point(away1, away2, cube_value, x):
     If the taker (player 1) can't survive a redouble (away1 - 2*cube_value <= 0),
     the cube is dead after taking and the dead cube take point is returned directly.
     """
+    from bgbot_cpp import _get_met_after
+
     c = cube_value
+    t_dead = _gammonless_take_point(away1, away2, c, 2 * c, is_crawford)
     # If the taker can't survive a redouble, cube is dead after taking
     if away1 - 2 * c <= 0:
-        return _dead_cube_take_point(away1, away2, c)
-    t_dead = _dead_cube_take_point(away1, away2, c)
+        return t_dead
     # Cash point: player 1's P(win) above which they'd redouble at cube 2C
     # CP = (MWC(a1-2C, a2) - MWC(a1, a2-4C)) / (MWC(a1-4C, a2) - MWC(a1, a2-4C))
-    cp_num = _mwc(away1 - 2 * c, away2) - _mwc(away1, away2 - 4 * c)
-    cp_den = _mwc(away1 - 4 * c, away2) - _mwc(away1, away2 - 4 * c)
+    loss = _get_met_after(away1, away2, 4 * c, False, is_crawford)
+    cp_num = _get_met_after(away1, away2, 2 * c, True, is_crawford) - loss
+    cp_den = _get_met_after(away1, away2, 4 * c, True, is_crawford) - loss
     if cp_den == 0:
         return t_dead
     cp = cp_num / cp_den
@@ -204,7 +192,7 @@ def _janowski_take_point(away1, away2, cube_value, x):
     return t_dead * cp / den
 
 
-def take_points_janowski(away1, away2, cube_value=1, x=0.68):
+def take_points_janowski(away1, away2, cube_value=1, x=0.68, *, is_crawford=False):
     """Return gammonless Janowski live cube take points for both players.
 
     Uses the Janowski approximation with cube life index x:
@@ -215,17 +203,19 @@ def take_points_janowski(away1, away2, cube_value=1, x=0.68):
         away2: Points player 2 needs to win the match.
         cube_value: Current cube value.
         x: Cube life index (cube efficiency). 0 = dead cube, 1 = fully live.
+        is_crawford: Whether the current game is the Crawford game.
 
     Returns:
         Tuple of (take_point_for_player1, take_point_for_player2).
     """
-    _validate_met_away_scores(away1, away2)
-    tp1 = _janowski_take_point(away1, away2, cube_value, x)
-    tp2 = _janowski_take_point(away2, away1, cube_value, x)
+    if away1 == away2 == 0:
+        return (0.25, 0.25)
+    tp1 = _janowski_take_point(away1, away2, cube_value, x, is_crawford)
+    tp2 = _janowski_take_point(away2, away1, cube_value, x, is_crawford)
     return (tp1, tp2)
 
 
-def take_points_dead_cube(away1, away2, cube_value=1):
+def take_points_dead_cube(away1, away2, cube_value=1, *, is_crawford=False):
     """Return gammonless (dead_cube_take_point_player1, dead_cube_take_point_player2).
 
     Calculated from the match equity table. Gammonless means assuming zero
@@ -235,17 +225,20 @@ def take_points_dead_cube(away1, away2, cube_value=1):
         away1: Points player 1 needs to win the match.
         away2: Points player 2 needs to win the match.
         cube_value: Current cube value.
+        is_crawford: Whether the current game is the Crawford game.
 
     Returns:
         Tuple of (take_point_for_player1, take_point_for_player2).
     """
-    _validate_met_away_scores(away1, away2)
-    tp1 = _dead_cube_take_point(away1, away2, cube_value)
-    tp2 = _dead_cube_take_point(away2, away1, cube_value)
+    if away1 == away2 == 0:
+        return (0.25, 0.25)
+    take_cube = 2 * cube_value
+    tp1 = _gammonless_take_point(away1, away2, cube_value, take_cube, is_crawford)
+    tp2 = _gammonless_take_point(away2, away1, cube_value, take_cube, is_crawford)
     return (tp1, tp2)
 
 
-def gammon_prices(away1, away2, cube_value=1):
+def gammon_prices(away1, away2, cube_value=1, *, is_crawford=False):
     """Return (gammon_price_player1, gammon_price_player2) for the given match score.
 
     Calculated from the match equity table.
@@ -254,15 +247,22 @@ def gammon_prices(away1, away2, cube_value=1):
         away1: Points player 1 needs to win the match.
         away2: Points player 2 needs to win the match.
         cube_value: Current cube value.
+        is_crawford: Whether the current game is the Crawford game.
 
     Returns:
         Tuple of (gammon_price_for_player1, gammon_price_for_player2).
     """
-    _validate_met_away_scores(away1, away2)
+    if away1 == away2 == 0:
+        return (0.5, 0.5)
+
+    from bgbot_cpp import _get_met_after
+
     c = cube_value
-    den = _mwc(away1 - 2 * c, away2) - _mwc(away1, away2 - 2 * c)
+    win = _get_met_after(away1, away2, 2 * c, True, is_crawford)
+    loss = _get_met_after(away1, away2, 2 * c, False, is_crawford)
+    den = win - loss
     if den == 0:
         return (0.5, 0.5)
-    player1_gain = _mwc(away1 - 4 * c, away2) - _mwc(away1 - 2 * c, away2)
-    player2_gain = _mwc(away1, away2 - 2 * c) - _mwc(away1, away2 - 4 * c)
+    player1_gain = _get_met_after(away1, away2, 4 * c, True, is_crawford) - win
+    player2_gain = loss - _get_met_after(away1, away2, 4 * c, False, is_crawford)
     return (player1_gain / den, player2_gain / den)

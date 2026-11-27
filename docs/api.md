@@ -424,6 +424,12 @@ Match play gammonless take points, dead cube take points, and gammon prices.
 All take points are gammonless (assume zero gammon/backgammon probability). For money
 games: take point = 0.22, dead cube take point = 0.25, gammon price = 0.5 (both players).
 
+These functions accept the current game's away scores and an optional keyword
+argument `is_crawford`. The default is `False`, so an existing 1-away score
+means post-Crawford. Set `is_crawford=True` for the Crawford game itself.
+A score that first reaches 1-away as a result of a pre-Crawford game uses the
+MWC with Crawford still to play.
+
 ### 7. Luck (Per-Roll Dice Fortune)
 
 Given a position's cube analytics and the roll that actually happened, return how

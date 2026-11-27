@@ -20,7 +20,7 @@ from dataclasses import dataclass, asdict
 from typing import Optional, Sequence
 
 from ._primitives import flip_owner as _flip_owner_str, resolve_owner as _resolve_owner_name
-from .matchinfo import _mwc, _validate_met_away_scores
+from .matchinfo import _validate_met_away_scores
 
 
 # Outcome probability vector convention (matches CubeAnalysisResponse):
@@ -219,7 +219,25 @@ def _money_points(
 # ─── Match-play dead-cube (MET-exact) thresholds ────────────────────
 
 
-def _dead_take(away1: int, away2: int, cv: int,
+def _dead_game_mwcs(away1: int, away2: int, cv: int, is_crawford: bool,
+                    rG0: float, rBG0: float, rG1: float, rBG1: float) -> tuple[float, float]:
+    """Match-winning chances conditional on winning or losing this game."""
+    from bgbot_cpp import _get_met_after
+
+    win = (
+        (1.0 - rG0 - rBG0) * _get_met_after(away1, away2, cv, True, is_crawford)
+        + rG0 * _get_met_after(away1, away2, 2 * cv, True, is_crawford)
+        + rBG0 * _get_met_after(away1, away2, 3 * cv, True, is_crawford)
+    )
+    loss = (
+        (1.0 - rG1 - rBG1) * _get_met_after(away1, away2, cv, False, is_crawford)
+        + rG1 * _get_met_after(away1, away2, 2 * cv, False, is_crawford)
+        + rBG1 * _get_met_after(away1, away2, 3 * cv, False, is_crawford)
+    )
+    return win, loss
+
+
+def _dead_take(away1: int, away2: int, cv: int, is_crawford: bool,
                rG0: float, rBG0: float, rG1: float, rBG1: float) -> float:
     """Dead-cube take point for player 1.
 
@@ -234,31 +252,29 @@ def _dead_take(away1: int, away2: int, cv: int,
                              + rG1*MWC(a1, a2-4cv)
                              + rBG1*MWC(a1, a2-6cv) )
     """
-    c = cv
-    pass_mwc = _mwc(away1, away2 - c)
-    win_mwc = ((1.0 - rG0 - rBG0) * _mwc(away1 - 2 * c, away2)
-               + rG0 * _mwc(away1 - 4 * c, away2)
-               + rBG0 * _mwc(away1 - 6 * c, away2))
-    lose_mwc = ((1.0 - rG1 - rBG1) * _mwc(away1, away2 - 2 * c)
-                + rG1 * _mwc(away1, away2 - 4 * c)
-                + rBG1 * _mwc(away1, away2 - 6 * c))
+    from bgbot_cpp import _get_met_after
+
+    pass_mwc = _get_met_after(away1, away2, cv, False, is_crawford)
+    win_mwc, lose_mwc = _dead_game_mwcs(
+        away1, away2, 2 * cv, is_crawford, rG0, rBG0, rG1, rBG1,
+    )
     denom = win_mwc - lose_mwc
     if abs(denom) < 1e-12:
         return 0.25
     return (pass_mwc - lose_mwc) / denom
 
 
-def _dead_cash(away1: int, away2: int, cv: int,
+def _dead_cash(away1: int, away2: int, cv: int, is_crawford: bool,
                rG0: float, rBG0: float, rG1: float, rBG1: float) -> float:
     """Dead-cube cash point (player doubles ⇒ opp passes threshold).
 
     Equivalent to ``1 − opp's dead take point`` — symmetric across players.
     """
-    opp_tp = _dead_take(away2, away1, cv, rG1, rBG1, rG0, rBG0)
+    opp_tp = _dead_take(away2, away1, cv, is_crawford, rG1, rBG1, rG0, rBG0)
     return _clamp01(1.0 - opp_tp)
 
 
-def _dead_too_good(away1: int, away2: int, cv: int,
+def _dead_too_good(away1: int, away2: int, cv: int, is_crawford: bool,
                    rG0: float, rBG0: float, rG1: float, rBG1: float) -> float:
     """Dead-cube too-good point (player plays on vs cashing).
 
@@ -272,21 +288,19 @@ def _dead_too_good(away1: int, away2: int, cv: int,
 
     In the gammonless / money-like case ``win_mwc_cv == Cash`` so TG = 1.0.
     """
-    c = cv
-    cash = _mwc(away1 - c, away2)
-    win_mwc = ((1.0 - rG0 - rBG0) * _mwc(away1 - c, away2)
-               + rG0 * _mwc(away1 - 2 * c, away2)
-               + rBG0 * _mwc(away1 - 3 * c, away2))
-    lose_mwc = ((1.0 - rG1 - rBG1) * _mwc(away1, away2 - c)
-                + rG1 * _mwc(away1, away2 - 2 * c)
-                + rBG1 * _mwc(away1, away2 - 3 * c))
+    from bgbot_cpp import _get_met_after
+
+    cash = _get_met_after(away1, away2, cv, True, is_crawford)
+    win_mwc, lose_mwc = _dead_game_mwcs(
+        away1, away2, cv, is_crawford, rG0, rBG0, rG1, rBG1,
+    )
     denom = win_mwc - lose_mwc
     if abs(denom) < 1e-12:
         return 1.0
     return _clamp01((cash - lose_mwc) / denom)
 
 
-def _dead_double(away1: int, away2: int, cv: int,
+def _dead_double(away1: int, away2: int, cv: int, is_crawford: bool,
                  rG0: float, rBG0: float, rG1: float, rBG1: float,
                  centered: bool) -> float:
     """Dead-cube initial / redouble point — the P(win) threshold below which
@@ -299,19 +313,12 @@ def _dead_double(away1: int, away2: int, cv: int,
 
     where both win/lose MWCs are gammon-weighted.
     """
-    c = cv
-    win_cv = ((1.0 - rG0 - rBG0) * _mwc(away1 - c, away2)
-              + rG0 * _mwc(away1 - 2 * c, away2)
-              + rBG0 * _mwc(away1 - 3 * c, away2))
-    win_2cv = ((1.0 - rG0 - rBG0) * _mwc(away1 - 2 * c, away2)
-               + rG0 * _mwc(away1 - 4 * c, away2)
-               + rBG0 * _mwc(away1 - 6 * c, away2))
-    lose_cv = ((1.0 - rG1 - rBG1) * _mwc(away1, away2 - c)
-               + rG1 * _mwc(away1, away2 - 2 * c)
-               + rBG1 * _mwc(away1, away2 - 3 * c))
-    lose_2cv = ((1.0 - rG1 - rBG1) * _mwc(away1, away2 - 2 * c)
-                + rG1 * _mwc(away1, away2 - 4 * c)
-                + rBG1 * _mwc(away1, away2 - 6 * c))
+    win_cv, lose_cv = _dead_game_mwcs(
+        away1, away2, cv, is_crawford, rG0, rBG0, rG1, rBG1,
+    )
+    win_2cv, lose_2cv = _dead_game_mwcs(
+        away1, away2, 2 * cv, is_crawford, rG0, rBG0, rG1, rBG1,
+    )
 
     denom = (win_2cv - lose_2cv) - (win_cv - lose_cv)
     if abs(denom) < 1e-12:
@@ -569,10 +576,10 @@ def cube_action_points(
     live_dp = live_cp
 
     # Dead-cube values from exact MET arithmetic.
-    dead_tp = _clamp01(_dead_take(away1, away2, cv, rG0, rBG0, rG1, rBG1))
-    dead_cp = _clamp01(_dead_cash(away1, away2, cv, rG0, rBG0, rG1, rBG1))
-    dead_tg = _clamp01(_dead_too_good(away1, away2, cv, rG0, rBG0, rG1, rBG1))
-    dead_dp = _clamp01(_dead_double(away1, away2, cv, rG0, rBG0, rG1, rBG1,
+    dead_tp = _clamp01(_dead_take(away1, away2, cv, is_crawford, rG0, rBG0, rG1, rBG1))
+    dead_cp = _clamp01(_dead_cash(away1, away2, cv, is_crawford, rG0, rBG0, rG1, rBG1))
+    dead_tg = _clamp01(_dead_too_good(away1, away2, cv, is_crawford, rG0, rBG0, rG1, rBG1))
+    dead_dp = _clamp01(_dead_double(away1, away2, cv, is_crawford, rG0, rBG0, rG1, rBG1,
                                      centered=(cube_owner == "centered")))
 
     # Janowski column (user's x) uses the exact equity-space interpolation

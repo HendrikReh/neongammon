@@ -503,6 +503,11 @@ void bind_eval(py::module_& m) {
     }, "MET lookup: MWC for player needing away1 points vs opponent needing away2.",
        py::arg("away1"), py::arg("away2"), py::arg("is_crawford") = false);
 
+    m.def("_get_met_after", &get_met_after,
+          "MWC after scoring points from the given current match state.",
+          py::arg("away1"), py::arg("away2"), py::arg("points"),
+          py::arg("player_wins"), py::arg("is_crawford"));
+
     m.def("can_double_match", [](int away1, int away2, int cube_value,
                                   CubeOwner owner, bool is_crawford, int max_cube_value) {
         CubeInfo cube{cube_value, owner, {away1, away2, is_crawford}};
