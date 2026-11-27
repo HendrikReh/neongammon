@@ -19,6 +19,29 @@ Timings below were measured on an M4 Pro Mac mini (10P+4E cores).
 
 ## [Unreleased]
 
+## [3.2.2] - 2026-11-27
+
+### Fixed
+
+- Play on after Crawford when the no-double equity beats the best outcome
+  of doubling. Calculate study take points and gammon prices with the correct
+  Crawford phase. ([#107](https://github.com/HendrikReh/neongammon/issues/107),
+  [#111](https://github.com/HendrikReh/neongammon/issues/111))
+- Reject evaluations above 25-away, the limit of the match-equity table.
+  ([#108](https://github.com/HendrikReh/neongammon/issues/108))
+- Count legal gammon-saving plays when the opponent is guaranteed to bear off
+  on its next roll. ([#109](https://github.com/HendrikReh/neongammon/issues/109))
+- Value a take at dead-cube equity when the accepted cube reaches the cap,
+  and disallow beavers above the cap. ([#110](https://github.com/HendrikReh/neongammon/issues/110))
+- Check evaluator and label provenance when resuming rollout generation.
+  ([#112](https://github.com/HendrikReh/neongammon/issues/112))
+
+### Changed
+
+- Share the model manifest between wheels and source distributions. Validate
+  versioned weight headers and their encoder metadata.
+- Share cube-decision and rollout code across evaluation paths. Allocate
+  cubeful caches on demand and reuse candidates across cube states.
 - Root routing is configured on each strategy with `set_root_pinned`.
   Use an empty list to disable it. This replaces
   `NEONGAMMON_NO_ROOT_ROUTING` and `BGSAGE_NO_ROOT_ROUTING`.
@@ -960,7 +983,8 @@ The fork's first release.
   module before copying it, because `cp` over a loaded `.so` makes macOS kill
   the next import ([#12](https://github.com/HendrikReh/neongammon/pull/12)).
 
-[Unreleased]: https://github.com/HendrikReh/neongammon/compare/v3.2.1...HEAD
+[Unreleased]: https://github.com/HendrikReh/neongammon/compare/v3.2.2...HEAD
+[3.2.2]: https://github.com/HendrikReh/neongammon/compare/v3.2.1...v3.2.2
 [3.2.1]: https://github.com/HendrikReh/neongammon/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/HendrikReh/neongammon/compare/v3.1.2...v3.2.0
 [3.1.2]: https://github.com/HendrikReh/neongammon/compare/v3.1.1...v3.1.2
