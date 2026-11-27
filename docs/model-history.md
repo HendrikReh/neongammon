@@ -314,7 +314,7 @@ standalone shallower analyses.
 
 ## Search Distillation Experiment
 
-### Search distillation with a ranking loss (`scripts/archive/diagnostics/rank_distill.py`, 2026-11-20)
+### Search distillation with a ranking loss (`scripts/archive/diagnostics/rank_distill.py`, 2026-11-20) { #search-distillation-with-a-ranking-loss-scriptsrank_distillpy-2026-11-20 }
 
 A go/no-go test for training on candidate sets instead of single positions,
 with NeonGammon's own 3-ply as a free teacher. `mine` played 8,057 stage11
