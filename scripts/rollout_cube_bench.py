@@ -13,7 +13,7 @@ import time
 # Unbuffered stdout for real-time log visibility
 sys.stdout.reconfigure(line_buffering=True)
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'build'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'build'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 
 

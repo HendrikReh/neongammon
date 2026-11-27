@@ -19,24 +19,20 @@ import sys
 import time
 import argparse
 
-# Setup import paths — find the main project root (contains build/)
+# Setup import paths (self-contained inside repo root)
 script_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = script_dir
-while project_dir != os.path.dirname(project_dir):
-    if os.path.isdir(os.path.join(project_dir, 'build')):
-        break
-    project_dir = os.path.dirname(project_dir)
+project_dir = os.path.dirname(script_dir)
 build_dir = os.path.join(project_dir, 'build')
 
 sys.path.insert(0, build_dir)
-sys.path.insert(0, os.path.join(project_dir, 'neongammon', 'python'))
+sys.path.insert(0, os.path.join(project_dir, 'python'))
 
 import bgbot_cpp
 from neongammon.data import load_benchmark_file
 from neongammon.weights import WeightConfig
 
-DATA_DIR = os.path.join(project_dir, 'neongammon', 'data')
-MODELS_DIR = os.path.join(project_dir, 'neongammon', 'models')
+DATA_DIR = os.path.join(project_dir, 'data')
+MODELS_DIR = os.path.join(project_dir, 'models')
 
 SHARED_PAIRS = {'prim_prim': 'prim_anch', 'anch_prim': 'prim_anch', 'anch_anch': 'prim_anch'}
 

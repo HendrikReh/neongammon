@@ -15,20 +15,13 @@ generate), the wrapper mixes it into the base's, a wrapper over a wrapper of
 the same database shares it, and the legacy key folds it in too.
 """
 
-import os
-import sys
 import weakref
 
 import pytest
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (os.path.join(_ROOT, "build"), os.path.join(_ROOT, "python")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+import bgbot_cpp
 
-import bgbot_cpp  # noqa: E402
-
-from neongammon.weights import bearoff_db_path, default_weights  # noqa: E402
+from neongammon.weights import bearoff_db_path, default_weights
 
 pytestmark = pytest.mark.skipif(bearoff_db_path() is None, reason="no bearoff database")
 

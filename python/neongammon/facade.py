@@ -31,9 +31,8 @@ from .strategies import (
     _MultiPlyAnalyzer,
     _OnePlyAnalyzer,
     _cube_limit_kwargs,
-    _dead_cube_equity,
-    _janowski_x,
-    _validate_cube_limit,
+    _janowski_1ply_equity,
+    _normalize_cube_context,
     contact_cube_life,
     contact_cube_slope,
     flip_owner,
@@ -419,10 +418,9 @@ class BgBotAnalyzer:
                 ignored. Used by the app's expert re-evaluation so the move a
                 player actually made is always scored at the expert level.
         """
-        _validate_cube_limit(cube_value, max_cube_value)
-        if away1 > 0 or away2 > 0:
-            jacoby = False
-            beaver = False
+        jacoby, beaver = _normalize_cube_context(
+            cube_value, away1, away2, jacoby, beaver, max_cube_value
+        )
         raw = self._analyzer.checker_play_analytics(
             board, die1, die2, cube_value, cube_owner, progress_callback,
             away1=away1, away2=away2, is_crawford=is_crawford, jacoby=jacoby,
@@ -450,7 +448,9 @@ class BgBotAnalyzer:
         """
         if self._eval_level != "2ply" or not self._cubeful:
             raise ValueError("top_two_promote requires a cubeful 2-ply analyzer")
-        _validate_cube_limit(cube_value, max_cube_value)
+        jacoby, beaver = _normalize_cube_context(
+            cube_value, away1, away2, jacoby, beaver, max_cube_value
+        )
         if len(moves) < 2:
             return moves, "2-ply"
         first, second = moves[:2]
@@ -464,11 +464,10 @@ class BgBotAnalyzer:
             return moves, "2-ply"
         inner = self._analyzer._inner
         owner = flip_owner(cube_owner)
-        money = away1 == away2 == 0
 
         opponent_cube = bgbot_cpp.CubeInfo(
-            cube_value, owner, away2, away1, is_crawford, money and jacoby,
-            money and beaver, max_cube_value, contact_cube_life(3, away1, away2),
+            cube_value, owner, away2, away1, is_crawford, jacoby,
+            beaver, max_cube_value, contact_cube_life(3, away1, away2),
             contact_cube_slope(3, away1, away2),
         )
         endpoints = [first.board, second.board]
@@ -522,10 +521,9 @@ class BgBotAnalyzer:
                 rollout eval levels — N-ply and 1-ply paths return synchronously
                 and don't emit progress.
         """
-        _validate_cube_limit(cube_value, max_cube_value)
-        if away1 > 0 or away2 > 0:
-            jacoby = False
-            beaver = False
+        jacoby, beaver = _normalize_cube_context(
+            cube_value, away1, away2, jacoby, beaver, max_cube_value
+        )
 
         inner = self._analyzer
         if isinstance(inner, _CubefulAnalyzer):
@@ -582,24 +580,16 @@ class BgBotAnalyzer:
             # including the opponent's optimal cube action at the start of
             # their turn). No post-hoc Janowski needed.
             cf_eq = float(r["cubeful_equity"])
-        elif max_cube_value and cube_value >= max_cube_value:
-            cf_eq = _dead_cube_equity(probs_list, cube_value, away1, away2, is_crawford)
         else:
             # Cubeful equity via post-hoc root Janowski on cubeless probs.
             # Root-Janowski conversion uses the 1-ply money contact cube life
             # across all depths (matching batch_post_move_evaluate).
-            x = _janowski_x(probs_list, board, 1, away1, away2)
-            is_match = away1 > 0 or away2 > 0
-            if is_match:
-                cf_eq = bgbot_cpp.cl2cf(probs_list, cube_value, owner, x,
-                                        away1, away2, is_crawford,
-                                        jacoby=jacoby)
-            else:
-                jacoby_active = (
-                    jacoby and owner == bgbot_cpp.CubeOwner.CENTERED
-                )
-                cf_eq = bgbot_cpp.cl2cf_money(probs_list, owner, x,
-                                              jacoby_active=jacoby_active)
+            cf_eq = _janowski_1ply_equity(
+                probs_list, board, owner,
+                cube_value=cube_value, away1=away1, away2=away2,
+                is_crawford=is_crawford, jacoby=jacoby,
+                max_cube_value=max_cube_value,
+            )
 
         return PostMoveAnalysis(
             probs=Probabilities.from_list(probs_list),
@@ -654,10 +644,9 @@ class BgBotAnalyzer:
                 opponent_rolls); the headline equities match the plain
                 2-ply call.
         """
-        _validate_cube_limit(cube_value, max_cube_value)
-        if away1 > 0 or away2 > 0:
-            jacoby = False
-            beaver = False
+        jacoby, beaver = _normalize_cube_context(
+            cube_value, away1, away2, jacoby, beaver, max_cube_value
+        )
         raw = self._analyzer.cube_action_analytics(
             board, cube_value, cube_owner,
             progress_callback=progress_callback,
@@ -709,10 +698,9 @@ class BgBotAnalyzer:
         rollout levels it is ``cube_action`` with those fields dropped.
         Arguments as in :meth:`cube_action`.
         """
-        _validate_cube_limit(cube_value, max_cube_value)
-        if away1 > 0 or away2 > 0:
-            jacoby = False
-            beaver = False
+        jacoby, beaver = _normalize_cube_context(
+            cube_value, away1, away2, jacoby, beaver, max_cube_value
+        )
         kw = dict(away1=away1, away2=away2, is_crawford=is_crawford, jacoby=jacoby,
                   beaver=beaver, **_cube_limit_kwargs(max_cube_value))
         inner = getattr(self._analyzer, "_inner", self._analyzer)

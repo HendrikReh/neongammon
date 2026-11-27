@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-import os
-from concurrent.futures import ThreadPoolExecutor
+# Kept for tests/integrations that patch neongammon.cubeful.ThreadPoolExecutor
+# to verify that cubeful checker play spawns zero Python thread pools.
+from concurrent.futures import ThreadPoolExecutor  # noqa: F401
 
 import bgbot_cpp
 
-from .rollout import RolloutCancelled, _RolloutAnalyzer
+from .rollout import _RolloutAnalyzer, _rollout_eval_candidate
 from .strategies import (
     _FLIP_OWNER,
     _CubelessBase,
@@ -18,9 +19,8 @@ from .strategies import (
     _contact_cube_life,
     _contact_cube_slope,
     _cube_limit_kwargs,
-    _dead_cube_equity,
     _extension_constant,
-    _janowski_x,
+    _janowski_1ply_equity,
     _move_order_key,
     resolve_owner,
 )
@@ -37,15 +37,6 @@ CUBEFUL_FILTERED_PLIES: frozenset[int] = frozenset(_extension_constant("CUBEFUL_
 
 # Capability observed by integrations that verify Python candidate pools.
 SERIAL_CUBEFUL_1PLY = True
-
-
-def _pool_map(fn, items, workers: int) -> list:
-    """``map`` over ``items`` on a pool of ``workers`` threads, or inline when
-    the budget is one or there is at most one item (no pool to start)."""
-    if workers <= 1 or len(items) <= 1:
-        return list(map(fn, items))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(fn, items))
 
 
 class _CubefulAnalyzer:
@@ -78,50 +69,42 @@ class _CubefulAnalyzer:
         """Cubeful equity of a post-move board at ``ply`` (default: the
         analyzer's cubeful depth); ``ply=1`` is the 1-ply Janowski conversion."""
         ply = self._cubeful_ply if ply is None else ply
-        is_match = away1 > 0 or away2 > 0
-        if max_cube_value and cube_value >= max_cube_value and ply == 1:
-            return _dead_cube_equity(probs, cube_value, away1, away2, is_crawford)
         if ply == 1:
-            x = _janowski_x(probs, post_move_board, 1, away1, away2)
-            if is_match:
-                return bgbot_cpp.cl2cf(probs, cube_value, owner, x,
-                                       away1, away2, is_crawford,
-                                       jacoby=jacoby)
-            else:
-                jacoby_active = (
-                    jacoby and owner == bgbot_cpp.CubeOwner.CENTERED
-                )
-                return bgbot_cpp.cl2cf_money(probs, owner, x,
-                                             jacoby_active=jacoby_active)
+            return _janowski_1ply_equity(
+                probs, post_move_board, owner,
+                cube_value=cube_value, away1=away1, away2=away2,
+                is_crawford=is_crawford, jacoby=jacoby,
+                max_cube_value=max_cube_value,
+            )
+        is_match = away1 > 0 or away2 > 0
+        opp_pre_roll = bgbot_cpp.flip_board(post_move_board)
+        opp_owner = _FLIP_OWNER[owner]
+        db = getattr(self._inner, '_bearoff_db', None)
+        n_threads = getattr(self._inner, '_parallel_threads', 1)
+        if is_match:
+            opp_eq = bgbot_cpp.cubeful_equity_nply(
+                opp_pre_roll, opp_owner,
+                self._inner._strategy_1ply, ply,
+                n_threads=n_threads,
+                cube_value=cube_value,
+                away1=away2, away2=away1, is_crawford=is_crawford,
+                jacoby=jacoby, beaver=beaver, **_cube_limit_kwargs(max_cube_value),
+                contact_x=_contact_cube_life(ply, away1, away2),
+                contact_x_pip_slope=_contact_cube_slope(ply, away1, away2),
+                bearoff_db=db,
+            )
         else:
-            opp_pre_roll = bgbot_cpp.flip_board(post_move_board)
-            opp_owner = _FLIP_OWNER[owner]
-            db = getattr(self._inner, '_bearoff_db', None)
-            n_threads = getattr(self._inner, '_parallel_threads', 1)
-            if is_match:
-                opp_eq = bgbot_cpp.cubeful_equity_nply(
-                    opp_pre_roll, opp_owner,
-                    self._inner._strategy_1ply, ply,
-                    n_threads=n_threads,
-                    cube_value=cube_value,
-                    away1=away2, away2=away1, is_crawford=is_crawford,
-                    jacoby=jacoby, beaver=beaver, **_cube_limit_kwargs(max_cube_value),
-                    contact_x=_contact_cube_life(ply, away1, away2),
-                    contact_x_pip_slope=_contact_cube_slope(ply, away1, away2),
-                    bearoff_db=db,
-                )
-            else:
-                opp_eq = bgbot_cpp.cubeful_equity_nply(
-                    opp_pre_roll, opp_owner,
-                    self._inner._strategy_1ply, ply,
-                    n_threads=n_threads,
-                    cube_value=cube_value,
-                    jacoby=jacoby, beaver=beaver, **_cube_limit_kwargs(max_cube_value),
-                    contact_x=_contact_cube_life(ply, away1, away2),
-                    contact_x_pip_slope=_contact_cube_slope(ply, away1, away2),
-                    bearoff_db=db,
-                )
-            return -opp_eq
+            opp_eq = bgbot_cpp.cubeful_equity_nply(
+                opp_pre_roll, opp_owner,
+                self._inner._strategy_1ply, ply,
+                n_threads=n_threads,
+                cube_value=cube_value,
+                jacoby=jacoby, beaver=beaver, **_cube_limit_kwargs(max_cube_value),
+                contact_x=_contact_cube_life(ply, away1, away2),
+                contact_x_pip_slope=_contact_cube_slope(ply, away1, away2),
+                bearoff_db=db,
+            )
+        return -opp_eq
 
     def _uses_cube_aware_tree(self, owner) -> bool:
         """Whether checker play scores candidates in the N-ply cube-aware tree."""
@@ -214,7 +197,6 @@ class _CubefulAnalyzer:
     ) -> list[dict]:
         owner = resolve_owner(cube_owner)
         inner = self._inner
-        is_rollout = isinstance(inner, _RolloutAnalyzer)
 
         if self._uses_cube_aware_tree(owner):
             return self._checker_play_native(
@@ -226,6 +208,9 @@ class _CubefulAnalyzer:
                 board, die1, die2, owner, cube_value, away1, away2, is_crawford,
                 jacoby, beaver, max_cube_value)
 
+        if not isinstance(inner, _RolloutAnalyzer):
+            raise TypeError(f"Unsupported inner analyzer: {type(inner).__name__}")
+
         results = inner.checker_play_analytics(
             board, die1, die2, cube_value, cube_owner, progress_callback,
             away1=away1, away2=away2, is_crawford=is_crawford, jacoby=jacoby, beaver=beaver, max_cube_value=max_cube_value,
@@ -234,166 +219,89 @@ class _CubefulAnalyzer:
         if not results:
             return results
 
-        if is_rollout:
-            # Rollout path: survivors carry rollout-level cubeful equity from
-            # cube_decision (set in _RolloutAnalyzer.checker_play_analytics).
-            # Non-survivors fall back to N-ply cubeful_equity_nply at the
-            # rollout's decision_ply — faster than running cube_decision per
-            # candidate, but at a lower ply than the rollout itself, so the
-            # cubeful values may disagree with the rollout-level cube action
-            # (e.g. 3-ply says D/T where 3T says D/P).
-            for m in results:
-                cubeless_eq = m["equity"]
-                if "rollout_cubeful_equity" in m:
-                    cf_eq = m["rollout_cubeful_equity"]
-                else:
-                    cf_eq = self._cubeful_equity(
-                        m["board"], m["probs"], owner,
-                        cube_value=cube_value, away1=away1, away2=away2,
-                        is_crawford=is_crawford, jacoby=jacoby, beaver=beaver, **_cube_limit_kwargs(max_cube_value),
-                    )
-                m["cubeless_equity"] = cubeless_eq
-                m["equity"] = cf_eq
-
-            results.sort(key=_move_order_key)
-
-            # Promote non-rollout entries that rank above any rollout entry,
-            # so the top of the displayed list is at rollout-level cubeful and
-            # the symmetry checker_play.best.cubeful == -cube_action.optimal
-            # holds (required for parity with the multi-ply path that uses
-            # cubeful_equity_nply uniformly across survivors and non-survivors).
-            # Pathological positions where many candidates flip cube action
-            # between decision_ply and rollout-level can trigger many extra
-            # rollouts here — that's the cost of getting the displayed best
-            # right at the rollout level.
-            inner_ro = inner  # _RolloutAnalyzer
-            # The trial loop's denominator (survivors x n_trials) was fixed
-            # before any promotion, so it cannot cover the extra rollouts below
-            # — and promotions are discovered one at a time, so no honest
-            # percentage exists here. Keep reporting past that total instead:
-            # ``completed > total`` is the caller's signal that the planned
-            # trials are done and we are finalizing the best move. Without this
-            # the caller sees a legitimate 100% and then silence for however
-            # long the promotions take.
-            #
-            # Each promotion IS a full rollout, though, so its own trials do
-            # have an honest percentage: ``finalize_progress`` reports that
-            # 0 -> n_trials arc, restarting per promoted move, which is what
-            # lets a caller show a live bar through the finalizing phase
-            # instead of a motionless full one.
-            n_trials_ro = inner_ro._rollout_config["n_trials"]
-            trial_total = n_trials_ro * sum(
-                1 for r in results if r.get("eval_level") == "Rollout"
-            )
-            promoted = 0
-            while (results and "rollout_cubeful_equity" not in results[0]):
-                promoted += 1
-                if progress_callback:
-                    progress_callback(trial_total + promoted, trial_total, results)
-                if finalize_progress:
-                    # Restart the sub-arc before the trials begin, so the bar
-                    # drops to 0 as this move's rollout starts rather than
-                    # sitting at the previous promotion's 100%.
-                    finalize_progress(0, n_trials_ro)
-                m = results[0]
-                try:
-                    pr = inner_ro._rollout_strategy.cubeful_evaluate_board(
-                        m["board"], m["board"],
-                        cube_value=cube_value, owner=owner,
-                        away1=away1, away2=away2, is_crawford=is_crawford,
-                        jacoby=jacoby, beaver=beaver, **_cube_limit_kwargs(max_cube_value),
-                        progress=finalize_progress,
-                    )
-                except bgbot_cpp.RolloutCancelled:
-                    raise RolloutCancelled()
-                probs = list(pr["probs"])
-                if inner_ro._bearoff_db is not None and \
-                        inner_ro._bearoff_db.is_bearoff(m["board"]):
-                    probs = inner_ro._bearoff_db.lookup_probs(
-                        m["board"], post_move=True)
-                m["probs"] = probs
-                m["prob_std_errors"] = list(pr.get("prob_std_errors", [0] * 5))
-                m["cubeless_equity"] = pr["equity"]
-                m["std_error"] = pr.get("std_error") or 0
-                m["equity"] = pr["cubeful_equity"]
-                m["rollout_cubeful_equity"] = pr["cubeful_equity"]
-                m["rollout_cubeful_se"] = pr["cubeful_se"]
-                m["eval_level"] = "Rollout"
-                m.pop("is_1ply_only", None)
-                results.sort(key=_move_order_key)
-
-            if results:
-                best = results[0]["equity"]
-                for r in results:
-                    r["equity_diff"] = r["equity"] - best
-            return results
-
-        # Non-rollout path: N-ply cubeful equity + promotion loop
-        workers = getattr(inner, "_parallel_threads", 0)
-        if not isinstance(workers, int) or workers <= 0:
-            workers = max(2, os.cpu_count() or 2)
-        workers = max(1, workers)
-
-        # The cube-aware N-ply path returned above (_checker_play_native);
-        # here each candidate's cubeless value is converted (1-ply Janowski,
-        # or the N-ply cubeful equity when no cube tree applies).
-        def _convert_move_legacy(m: dict) -> tuple[float, float]:
+        # Rollout path: survivors carry rollout-level cubeful equity from
+        # cube_decision (set in _RolloutAnalyzer.checker_play_analytics).
+        # Non-survivors fall back to N-ply cubeful_equity_nply at the
+        # rollout's decision_ply — faster than running cube_decision per
+        # candidate, but at a lower ply than the rollout itself, so the
+        # cubeful values may disagree with the rollout-level cube action
+        # (e.g. 3-ply says D/T where 3T says D/P).
+        for m in results:
             cubeless_eq = m["equity"]
-            cf_eq = self._cubeful_equity(
-                m["board"], m["probs"], owner,
-                cube_value=cube_value, away1=away1, away2=away2,
-                is_crawford=is_crawford, jacoby=jacoby, beaver=beaver, **_cube_limit_kwargs(max_cube_value),
-            )
-            return cubeless_eq, cf_eq
-
-        if isinstance(inner, _OnePlyAnalyzer):
-            converted = list(map(_convert_move_legacy, results))
-        else:
-            converted = _pool_map(_convert_move_legacy, results, workers)
-
-        for m, (cubeless_eq, cf_eq) in zip(results, converted):
-            m["cubeless_equity"] = m["equity"]
+            if "rollout_cubeful_equity" in m:
+                cf_eq = m["rollout_cubeful_equity"]
+            else:
+                cf_eq = self._cubeful_equity(
+                    m["board"], m["probs"], owner,
+                    cube_value=cube_value, away1=away1, away2=away2,
+                    is_crawford=is_crawford, jacoby=jacoby, beaver=beaver, **_cube_limit_kwargs(max_cube_value),
+                )
+            m["cubeless_equity"] = cubeless_eq
             m["equity"] = cf_eq
 
         results.sort(key=_move_order_key)
 
-        def _nply_eval(b, board_ref):
-            if isinstance(inner, _MultiPlyAnalyzer):
-                r = inner._strategy_nply.evaluate_board(b, board_ref)
-                eval_level = f"{inner._n_plies}-ply"
-                extra = {}
-            else:
-                return None
-            probs = list(r["probs"])
-            cf_eq = self._cubeful_equity(
-                b, probs, owner,
-                cube_value=cube_value, away1=away1, away2=away2,
-                is_crawford=is_crawford, jacoby=jacoby, beaver=beaver, **_cube_limit_kwargs(max_cube_value),
+        # Promote non-rollout entries that rank above any rollout entry,
+        # so the top of the displayed list is at rollout-level cubeful and
+        # the symmetry checker_play.best.cubeful == -cube_action.optimal
+        # holds (required for parity with the multi-ply path that uses
+        # cubeful_equity_nply uniformly across survivors and non-survivors).
+        # Pathological positions where many candidates flip cube action
+        # between decision_ply and rollout-level can trigger many extra
+        # rollouts here — that's the cost of getting the displayed best
+        # right at the rollout level.
+        inner_ro = inner  # _RolloutAnalyzer
+        # The trial loop's denominator (survivors x n_trials) was fixed
+        # before any promotion, so it cannot cover the extra rollouts below
+        # — and promotions are discovered one at a time, so no honest
+        # percentage exists here. Keep reporting past that total instead:
+        # ``completed > total`` is the caller's signal that the planned
+        # trials are done and we are finalizing the best move. Without this
+        # the caller sees a legitimate 100% and then silence for however
+        # long the promotions take.
+        #
+        # Each promotion IS a full rollout, though, so its own trials do
+        # have an honest percentage: ``finalize_progress`` reports that
+        # 0 -> n_trials arc, restarting per promoted move, which is what
+        # lets a caller show a live bar through the finalizing phase
+        # instead of a motionless full one.
+        n_trials_ro = inner_ro._rollout_config["n_trials"]
+        trial_total = n_trials_ro * sum(
+            1 for r in results if r.get("eval_level") == "Rollout"
+        )
+        promoted = 0
+        while results and "rollout_cubeful_equity" not in results[0]:
+            promoted += 1
+            if progress_callback:
+                progress_callback(trial_total + promoted, trial_total, results)
+            if finalize_progress:
+                # Restart the sub-arc before the trials begin, so the bar
+                # drops to 0 as this move's rollout starts rather than
+                # sitting at the previous promotion's 100%.
+                finalize_progress(0, n_trials_ro)
+            m = results[0]
+            pr = _rollout_eval_candidate(
+                inner_ro, m["board"], m["board"],
+                owner=owner, cube_value=cube_value,
+                away1=away1, away2=away2, is_crawford=is_crawford,
+                jacoby=jacoby, beaver=beaver, max_cube_value=max_cube_value,
+                progress=finalize_progress,
             )
-            extra["cubeless_equity"] = r["equity"]
-            return cf_eq, probs, eval_level, extra
-
-        # Same rule as _promote_second_best: no 1-ply value may sit in the top
-        # two. A pruned move whose 1-ply cubeful value outranks a survivor is
-        # promoted (re-scored at N-ply), so the filter decides which moves are
-        # searched, never the pick on its own.
-        while (r := _CubelessBase._first_stale_top_two(results)) is not None:
-            ret = _nply_eval(r["board"], board)
-            if ret is None:
-                break
-            cf_eq, probs, eval_level, extra = ret
-            r["equity"] = cf_eq
-            r["probs"] = probs
-            r["eval_level"] = eval_level
-            r.pop("is_1ply_only", None)
-            r.update(extra)
+            m["probs"] = pr["probs"]
+            m["prob_std_errors"] = pr["prob_std_errors"]
+            m["cubeless_equity"] = pr["equity"]
+            m["std_error"] = pr["std_error"]
+            m["equity"] = pr["rollout_cubeful_equity"]
+            m["rollout_cubeful_equity"] = pr["rollout_cubeful_equity"]
+            m["rollout_cubeful_se"] = pr["rollout_cubeful_se"]
+            m["eval_level"] = "Rollout"
+            m.pop("is_1ply_only", None)
             results.sort(key=_move_order_key)
 
         if results:
             best = results[0]["equity"]
             for r in results:
                 r["equity_diff"] = r["equity"] - best
-
         return results
 
     def cube_action_analytics(

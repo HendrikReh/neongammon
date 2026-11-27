@@ -10,18 +10,11 @@ zeroes it only when something was inserted since the last one. These tests
 check that the cache still caches, clears and returns the same values.
 """
 
-import os
-import sys
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (os.path.join(_ROOT, "build"), os.path.join(_ROOT, "python")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+import bgbot_cpp
 
-import bgbot_cpp  # noqa: E402
-
-from neongammon import STARTING_BOARD, possible_moves  # noqa: E402
-from neongammon.weights import WeightConfig, default_weights  # noqa: E402
+from neongammon import STARTING_BOARD, possible_moves
+from neongammon.weights import WeightConfig, default_weights
 
 CANDIDATES = [list(c) for c in possible_moves(STARTING_BOARD, 3, 1)[:4]]
 

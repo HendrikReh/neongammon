@@ -12,27 +12,23 @@ field for field: with the bearoff database (both default to it) and without.
 """
 
 import os
-import random
 import subprocess
 import sys
 from dataclasses import asdict
 from unittest.mock import patch
 
+import bgbot_cpp
 import pytest
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (os.path.join(_ROOT, "build"), os.path.join(_ROOT, "python")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-import bgbot_cpp  # noqa: E402
-
-from neongammon import (  # noqa: E402
+from neongammon import (
     BgBotAnalyzer, STARTING_BOARD, batch_checker_play, batch_evaluate,
     batch_post_move_evaluate, flip_board, possible_moves,
 )
-from neongammon.analyzer import SERIAL_CUBEFUL_1PLY  # noqa: E402
-from neongammon.board import check_game_over  # noqa: E402
+from neongammon.analyzer import SERIAL_CUBEFUL_1PLY
+
+from .batch_positions import random_positions
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # A snake: the 24-NN layout pins every contact node of its tree to NN 22.
 SNAKE = [0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 2, 3, 3, 2, 2, 1, -7, -7, 0]
@@ -51,35 +47,15 @@ CUBES = [
 ]
 
 
-def _random_positions(n, seed):
-    rng = random.Random(seed)
-    out = []
-    while len(out) < n:
-        board = list(STARTING_BOARD)
-        for _ in range(rng.randint(4, 40)):
-            moves = possible_moves(board, rng.randint(1, 6), rng.randint(1, 6))
-            if moves:
-                board = list(rng.choice(moves))
-            if check_game_over(board):
-                break
-            board = list(flip_board(board))
-        else:
-            d1, d2 = rng.randint(1, 6), rng.randint(1, 6)
-            if len(possible_moves(board, d1, d2)) >= 2:
-                out.append(dict(board=board, die1=d1, die2=d2,
-                                **CUBES[len(out) % len(CUBES)]))
-    return out
-
-
 FIXED = [dict(board=SNAKE, die1=6, die2=5, **CUBES[0]),
          dict(board=SNAKE, die1=2, die2=1, **CUBES[4]),
          dict(board=BEAROFF, die1=4, die2=2, **CUBES[3]),
          dict(board=BEAROFF, die1=6, die2=1, **CUBES[0]),
          dict(board=NEAR_BEAROFF, die1=5, die2=3, **CUBES[0]),
          dict(board=NEAR_BEAROFF, die1=6, die2=6, **CUBES[1])]
-POSITIONS = {"1ply": _random_positions(36, seed=7) + FIXED,
-             "2ply": _random_positions(36, seed=7) + FIXED,
-             "3ply": _random_positions(12, seed=7) + FIXED}
+POSITIONS = {"1ply": random_positions(36, seed=7, contexts=CUBES) + FIXED,
+             "2ply": random_positions(36, seed=7, contexts=CUBES) + FIXED,
+             "3ply": random_positions(12, seed=7, contexts=CUBES) + FIXED}
 
 
 def _analyzer_moves(level, positions, bearoff_db=True):

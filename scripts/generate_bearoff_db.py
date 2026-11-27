@@ -20,7 +20,7 @@ import time
 import argparse
 
 # Add build directory to path for bgbot_cpp
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'build'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'build'))
 
 import bgbot_cpp
 

@@ -45,11 +45,6 @@ genuinely differ. Do NOT relax these assertions to make the suite green -- the
 leak is the bug they are reporting.
 """
 
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'build'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 
 import pytest
 

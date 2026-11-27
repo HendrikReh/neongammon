@@ -8,21 +8,14 @@ equities and flags must equal cube_action's, and the simulation, which reads
 only the flags, uses it and records the same games.
 """
 
-import os
-import random
-import sys
 from dataclasses import asdict
 
 import pytest
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (os.path.join(_ROOT, "build"), os.path.join(_ROOT, "python")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+from neongammon import BgBotAnalyzer
+from neongammon.simulation import GameConfig, simulate_game
 
-from neongammon import BgBotAnalyzer, STARTING_BOARD, flip_board, possible_moves  # noqa: E402
-from neongammon.board import check_game_over  # noqa: E402
-from neongammon.simulation import GameConfig, simulate_game  # noqa: E402
+from .batch_positions import random_positions
 
 SNAKE = [0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 2, 3, 3, 2, 2, 1, -7, -7, 0]
 BEAROFF = [0, 3, 3, 2, 3, 2, 2] + [0] * 12 + [-2, -3, -2, -3, -2, -2] + [0]
@@ -39,24 +32,7 @@ FIELDS = ("equity_nd", "equity_dt", "equity_dp", "should_double", "should_take",
           "optimal_equity", "optimal_action", "eval_level", "is_beaver")
 
 
-def _positions(n, seed):
-    rng = random.Random(seed)
-    out = []
-    while len(out) < n:
-        b = list(STARTING_BOARD)
-        for _ in range(rng.randint(4, 40)):
-            m = possible_moves(b, rng.randint(1, 6), rng.randint(1, 6))
-            if m:
-                b = list(rng.choice(m))
-            if check_game_over(b):
-                break
-            b = list(flip_board(b))
-        else:
-            out.append(b)
-    return out
-
-
-BOARDS = _positions(5, seed=772) + [SNAKE, BEAROFF]
+BOARDS = random_positions(5, seed=772, with_dice=False) + [SNAKE, BEAROFF]
 
 
 @pytest.mark.parametrize("level", ["1ply", "2ply", "3ply"])

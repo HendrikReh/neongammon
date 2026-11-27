@@ -17,8 +17,9 @@ import os
 import sys
 import time
 
-sys.path.insert(0, "build")
-sys.path.insert(0, "neongammon/python")
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_PROJECT_ROOT, "build"))
+sys.path.insert(0, os.path.join(_PROJECT_ROOT, "python"))
 
 from neongammon import BgBotAnalyzer
 from neongammon.weights import PRODUCTION_MODEL
@@ -75,7 +76,9 @@ def parse_refpos(path: str) -> list[dict]:
 
 def main():
     # Find refpos.txt one level up from neongammon/
-    refpos_path = os.path.join(os.path.dirname(__file__), "..", "..", "refpos.txt")
+    refpos_path = os.path.join(_PROJECT_ROOT, "refpos.txt")
+    if not os.path.exists(refpos_path):
+        refpos_path = os.path.join(os.path.dirname(_PROJECT_ROOT), "refpos.txt")
     refpos_path = os.path.normpath(refpos_path)
     if not os.path.exists(refpos_path):
         print(f"ERROR: refpos.txt not found at {refpos_path}")

@@ -11,7 +11,7 @@ import os
 import time
 import statistics
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'build'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'build'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 
 from neongammon import BgBotAnalyzer

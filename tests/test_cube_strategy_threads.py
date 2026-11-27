@@ -15,7 +15,9 @@ from dataclasses import astuple
 
 import pytest
 
-from neongammon import BgBotAnalyzer, STARTING_BOARD, check_game_over, flip_board, possible_moves
+from neongammon import BgBotAnalyzer
+
+from .batch_positions import random_positions
 
 CUBE_STATES = [
     dict(cube_value=1, cube_owner="centered"),
@@ -23,23 +25,6 @@ CUBE_STATES = [
     dict(cube_value=1, cube_owner="centered", away1=5, away2=3),
     dict(cube_value=2, cube_owner="player", away1=7, away2=4),
 ]
-
-
-def _positions(n, seed=7):
-    rng = random.Random(seed)
-    out = []
-    while len(out) < n:
-        b = list(STARTING_BOARD)
-        for _ in range(rng.randint(4, 60)):
-            moves = possible_moves(b, rng.randint(1, 6), rng.randint(1, 6))
-            if moves:
-                b = list(rng.choice(moves))
-            if check_game_over(b):
-                break
-            b = flip_board(b)
-        if not check_game_over(b):
-            out.append(b)
-    return out
 
 
 def _key(r):
@@ -51,7 +36,7 @@ def _key(r):
     ("1ply", 1), ("2ply", 1), ("3ply", 1), ("2ply", 0),
 ])
 def test_shared_cube_strategy_matches_fresh_analyzers(level, parallel_threads):
-    positions = _positions(10)
+    positions = random_positions(10, seed=7, max_steps=60, with_dice=False)
     jobs = [(i, s) for i in range(len(positions)) for s in range(len(CUBE_STATES))]
     want = {j: _key(BgBotAnalyzer(eval_level=level, parallel_threads=1)
                     .cube_action(positions[j[0]], **CUBE_STATES[j[1]]))

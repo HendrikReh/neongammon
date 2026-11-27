@@ -1,26 +1,26 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Mark Higgins
 """Compact legal move arrays, with compatibility for older engine builds."""
-from numbers import Integral
+import importlib.util
+from pathlib import Path
 
 import bgbot_cpp
 import numpy as np
 
+if __package__:
+    from ._primitives import validate_board
+else:
+    # Support isolated spec_from_file_location loading (tests/test_move_arrays.py
+    # and scripts/benchmark_move_arrays.py) without importing the package root.
+    _prim_spec = importlib.util.spec_from_file_location(
+        "_neongammon_primitives", Path(__file__).with_name("_primitives.py")
+    )
+    _prim_mod = importlib.util.module_from_spec(_prim_spec)
+    _prim_spec.loader.exec_module(_prim_mod)
+    validate_board = _prim_mod.validate_board
+
 
 ROLLS = tuple((first, second) for first in range(1, 7) for second in range(first, 7))
-
-
-def _validated_board(board):
-    values = tuple(board)
-    if len(values) != 26 or any(isinstance(value, bool) or not isinstance(value, Integral)
-                                for value in values):
-        raise ValueError("board must contain 26 integers")
-    values = tuple(map(int, values))
-    if (any(abs(value) > 15 for value in values) or min(values[0], values[25]) < 0
-            or values[25] + sum(max(0, value) for value in values[1:25]) > 15
-            or values[0] + sum(max(0, -value) for value in values[1:25]) > 15):
-        raise ValueError("invalid checker count")
-    return values
 
 
 def possible_moves_all(board):
@@ -35,7 +35,7 @@ def possible_moves_all(board):
 
     Older extensions transparently use the equivalent 21-call construction.
     """
-    values = _validated_board(board)
+    values = validate_board(board)
     native = getattr(bgbot_cpp, "possible_moves_all", None)
     if native is not None:
         return native(values)

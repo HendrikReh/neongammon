@@ -13,11 +13,9 @@ from pathlib import Path
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT / "python"))
-sys.path.insert(0, str(_ROOT / "build"))
+from neongammon import xg_file
 
-from neongammon import xg_file  # noqa: E402
+_ROOT = Path(__file__).resolve().parent.parent
 
 _XG_DIR = _ROOT / "data" / "money_benchmark" / "xg"
 _STAGE1 = _ROOT / "data" / "money_benchmark" / "build" / "stage1"

@@ -104,7 +104,6 @@ int main(int argc, char* argv[]) {
     double total_time = 0.0;
 
     for (int i = 0; i < iterations; i++) {
-        reset_cubeful_counters();
         auto start = Clock::now();
         decision = cube_decision_nply(board, cube, strategy, 4, MoveFilters::TINY, n_threads);
         auto end = Clock::now();
@@ -117,10 +116,6 @@ int main(int argc, char* argv[]) {
                i + 1, elapsed,
                decision.equity_nd, decision.equity_dt,
                decision.equity_dp, decision.optimal_equity);
-        if (i == 0) {
-            printf("  Profiling counters:\n");
-            print_cubeful_counters();
-        }
     }
 
     double avg_time = total_time / iterations;

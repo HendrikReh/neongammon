@@ -4,17 +4,10 @@
 
 import json
 import os
-import sys
 
 import pytest
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(script_dir)
-sys.path.insert(0, os.path.join(project_dir, 'build'))
-sys.path.insert(0, os.path.join(project_dir, 'python'))
-
-from neongammon import settings  # noqa: E402
-from neongammon import gnubg  # noqa: E402
+from neongammon import gnubg, settings
 
 
 @pytest.fixture(autouse=True)

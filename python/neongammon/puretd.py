@@ -9,6 +9,7 @@ from pathlib import Path
 from threading import Lock
 from weakref import finalize
 
+from ._primitives import resolve_owner as _resolve_owner_name, validate_board
 from .facade import BgBotAnalyzer
 from .strategies import _validate_cube_limit
 from .board import possible_moves
@@ -181,35 +182,30 @@ class PureTDPolicy:
         max_cube_value: int = 0,
     ) -> list[int]:
         """Return a legal post-move board in the mover's perspective."""
-        if len(board) != 26 or any(type(checkers) is not int for checkers in board):
-            raise ValueError("board must contain 26 integers")
-        points = board[1:25]
-        mover_off = 15 - board[25] - sum(p for p in points if p > 0)
-        opponent_off = 15 - board[0] + sum(p for p in points if p < 0)
-        if min(board[0], board[25], mover_off, opponent_off) < 0:
-            raise ValueError("invalid checker counts")
-        if max(mover_off, opponent_off) == 15:
-            raise ValueError("board must be nonterminal")
+        validated = validate_board(board, nonterminal=True)
+        points = validated[1:25]
+        mover_off = 15 - validated[25] - sum(p for p in points if p > 0)
+        opponent_off = 15 - validated[0] + sum(p for p in points if p < 0)
         if any(type(die) is not int or not 1 <= die <= 6 for die in (die1, die2)):
             raise ValueError("dice must be integers in [1, 6]")
         if (type(cube_value) is not int or not 1 <= cube_value <= 1 << 30
                 or cube_value & (cube_value - 1)):
             raise ValueError("cube_value must be a power of two in [1, 2**30]")
         _validate_cube_limit(cube_value, max_cube_value)
-        if cube_owner not in _CUBE_OWNER:
-            raise ValueError("invalid cube_owner")
+        owner_name = _resolve_owner_name(cube_owner)
+        board_list = list(validated)
 
         with self._lock:
             if not self._release.alive:
                 raise RuntimeError("PureTD policy is closed")
             if not (away1 or away2 or is_crawford or beaver or not jacoby
                     or cube_value == max_cube_value):
-                legal = possible_moves(board, die1, die2)
+                legal = possible_moves(board_list, die1, die2)
                 if len(legal) == 1:
                     return legal[0]
-                state = _Board((ctypes.c_int * 24)(*points), (board[25], board[0]),
+                state = _Board((ctypes.c_int * 24)(*points), (validated[25], validated[0]),
                                (mover_off, opponent_off), 0)
-                cube = _Cube(_CUBE_OWNER[cube_owner], cube_value, 1)
+                cube = _Cube(_CUBE_OWNER[owner_name], cube_value, 1)
                 successor = _Board()
                 index = self._lib.bgc_best_move(self._handle, ctypes.byref(state),
                                                 die1, die2, ctypes.byref(cube),
@@ -223,7 +219,7 @@ class PureTDPolicy:
                 return selected
 
         return self.analysis.checker_play(
-            board, die1, die2, cube_value, cube_owner, away1=away1, away2=away2,
+            board_list, die1, die2, cube_value, owner_name, away1=away1, away2=away2,
             is_crawford=is_crawford, jacoby=jacoby, beaver=beaver,
             max_cube_value=max_cube_value,
         ).moves[0].board

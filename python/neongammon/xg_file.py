@@ -37,9 +37,10 @@ from __future__ import annotations
 import struct
 import zlib
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .board import flip_board
+from ._primitives import flip_board
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -93,7 +94,7 @@ class ArchiveEntry:
     compressed: bool  # Status field: fsCompressed(0) / fsStored(1)
 
     def data(self) -> bytes:
-        return zlib.decompress(self.blob) if self.compressed else self.blob
+        return zlib.decompress(self.blob) if (self.compressed and self.blob) else self.blob
 
 
 def _crc32_signed(data: bytes) -> int:
@@ -108,38 +109,55 @@ class XgArchive:
         self.entries = entries
 
     @classmethod
-    def load(cls, path: str | Path) -> "XgArchive":
-        raw = Path(path).read_bytes()
-        if len(raw) < RICH_HEADER_SIZE + ARCHIVE_TRAILER_SIZE:
-            raise ValueError(f"{path}: too small to be a valid XG file")
-        magic = struct.unpack_from('<I', raw, 0)[0]
+    def from_bytes(
+        cls,
+        raw: bytes | bytearray | memoryview,
+        source: str = "<bytes>",
+    ) -> "XgArchive":
+        raw_bytes = bytes(raw)
+        if len(raw_bytes) < RICH_HEADER_SIZE + ARCHIVE_TRAILER_SIZE:
+            raise ValueError(f"{source}: too small to be a valid XG file")
+        magic = struct.unpack_from('<I', raw_bytes, 0)[0]
         if magic != MAGIC_RGMH:
-            raise ValueError(f"{path}: bad magic 0x{magic:08X}, expected RGMH")
+            raise ValueError(f"{source}: bad magic 0x{magic:08X}, expected RGMH")
 
-        trailer_off = len(raw) - ARCHIVE_TRAILER_SIZE
+        trailer_off = len(raw_bytes) - ARCHIVE_TRAILER_SIZE
         crc, file_count, _version, reg_size, data_size, comp_reg_i = \
-            struct.unpack_from('<iiiiii', raw, trailer_off)
+            struct.unpack_from('<iiiiii', raw_bytes, trailer_off)
+        if file_count < 0 or reg_size < 0 or data_size < 0:
+            raise ValueError(f"{source}: invalid archive layout")
         reg_start = trailer_off - reg_size
         data_start = reg_start - data_size
         if data_start < RICH_HEADER_SIZE:
-            raise ValueError(f"{path}: invalid archive layout")
+            raise ValueError(f"{source}: invalid archive layout")
 
-        calc = _crc32_signed(raw[data_start:trailer_off])
+        calc = _crc32_signed(raw_bytes[data_start:trailer_off])
         if calc != crc:
-            raise ValueError(f"{path}: archive CRC mismatch ({crc} != {calc})")
+            raise ValueError(f"{source}: archive CRC mismatch ({crc} != {calc})")
 
-        reg_raw = raw[reg_start:trailer_off]
-        index = zlib.decompress(reg_raw) if (comp_reg_i & 0xFF) else reg_raw
+        reg_raw = raw_bytes[reg_start:trailer_off]
+        index = (
+            zlib.decompress(reg_raw)
+            if ((comp_reg_i & 0xFF) and reg_size > 0)
+            else reg_raw
+        )
 
         entries = []
         for i in range(file_count):
-            rec = index[i * REGISTRY_ENTRY_SIZE:(i + 1) * REGISTRY_ENTRY_SIZE]
+            rec_off = i * REGISTRY_ENTRY_SIZE
+            if rec_off + REGISTRY_ENTRY_SIZE > len(index):
+                raise ValueError(f"{source}: truncated archive registry")
+            rec = index[rec_off:rec_off + REGISTRY_ENTRY_SIZE]
             name = rec[1:1 + rec[0]].decode('ascii', errors='replace')
             osize, csize, start, fcrc = struct.unpack_from('<iiii', rec, 512)
             compressed = (rec[528] == 0)
-            blob = raw[data_start + start:data_start + start + csize]
+            blob = raw_bytes[data_start + start:data_start + start + csize]
             entries.append(ArchiveEntry(name, osize, fcrc, blob, compressed))
-        return cls(raw[:data_start], entries)
+        return cls(raw_bytes[:data_start], entries)
+
+    @classmethod
+    def load(cls, path: str | Path) -> "XgArchive":
+        return cls.from_bytes(Path(path).read_bytes(), source=str(path))
 
     def get(self, name: str) -> bytes | None:
         for e in self.entries:
@@ -157,7 +175,7 @@ class XgArchive:
                 return
         self.entries.append(entry)
 
-    def save(self, path: str | Path) -> None:
+    def to_bytes(self) -> bytes:
         blobs = bytearray()
         registry = bytearray()
         for e in self.entries:
@@ -178,7 +196,10 @@ class XgArchive:
         trailer = struct.pack('<iiiii', _crc32_signed(stream), len(self.entries),
                               1, len(reg_comp), len(blobs))
         trailer += bytes([1]) + bytes(ARCHIVE_TRAILER_SIZE - len(trailer) - 1)
-        Path(path).write_bytes(self.prefix + stream + trailer)
+        return self.prefix + stream + trailer
+
+    def save(self, path: str | Path) -> None:
+        Path(path).write_bytes(self.to_bytes())
 
 
 # ---------------------------------------------------------------------------
@@ -186,9 +207,14 @@ class XgArchive:
 # ---------------------------------------------------------------------------
 
 # tsHeaderMatch
+_HDR_SPLAYER1 = 9          # shortstring[40]
+_HDR_SPLAYER2 = 50         # shortstring[40]
+_HDR_SPLAYER_MAX = 40
 _HDR_MATCH_LENGTH = 92
 _HDR_JACOBY = 101
 _HDR_BEAVER = 102
+_HDR_DATE = 128            # Delphi TDateTime (float64 days since 1899-12-30)
+_HDR_COMP_LEVEL1 = 272
 _HDR_VERSION = 552
 _HDR_MAGIC = 556
 _HDR_PLAYER1 = 880        # TShortUnicodeString (v24+)
@@ -220,6 +246,7 @@ _BM_POS_PLAYED = 68        # 32 x 26 int8, mover's frame
 _BM_MOVES = 900            # 32 x 8 int8
 _BM_EVAL_LEVEL = 1156      # 32 x TEvalLevel {Level: int16, isDouble: u8, fill}
 _BM_EVAL = 1284            # 32 x 7 float32
+_BM_IS_FORCED = 2180       # Boolean: 1 when forced move
 
 # tsCube
 _CUBE_ACTIF = 12
@@ -260,9 +287,13 @@ _BM_LEVEL = 36
 _HG_POSINIT = 21           # tsHeaderGame: the game's initial position, P1 frame (26 int8)
 _FG_SCORE1 = 12            # tsFooterGame
 _FG_SCORE2 = 16
+_FG_CRAWFORD_NEXT = 20
 _FG_WINNER = 24            # +1 = player1 wins, -1 = player2
 _FG_POINTS = 28
 _FG_TERMINATION = 32       # 0 drop / 1 single / 2 gammon / 3 backgammon; +100 = resign
+_FM_SCORE1 = 12            # tsFooterMatch
+_FM_SCORE2 = 16
+_FM_WINNER = 20
 
 
 def iter_records(data: bytes | bytearray):
@@ -285,7 +316,7 @@ def norm_bars(board) -> list[int]:
 
 def to_mover_board(raw_board: list[int], actif: int) -> tuple[int, ...]:
     """Raw record board (player-1 frame) -> mover's perspective, neongammon bars."""
-    b = raw_board if actif == 1 else flip_board(raw_board)
+    b = flip_board(raw_board) if (actif < 0 or actif == 2) else raw_board
     return tuple(norm_bars(b))
 
 
@@ -293,6 +324,32 @@ def xg_eval_to_probs(ev) -> list[float]:
     """XG 7-float eval [bg_loss, g_loss, loss, win, g_win, bg_win, equity]
     -> neongammon probs [win, g_win, bg_win, g_loss, bg_loss]."""
     return [float(ev[3]), float(ev[4]), float(ev[5]), float(ev[1]), float(ev[0])]
+
+
+def _read_pascal_string(data: bytes | bytearray, offset: int, max_len: int) -> str:
+    """Read a Delphi short string[N]: 1 length byte + up to N ASCII bytes."""
+    length = min(data[offset], max_len)
+    return data[offset + 1:offset + 1 + length].decode('ascii', errors='replace').strip()
+
+
+def _read_short_unicode_string(data: bytes | bytearray, offset: int) -> str:
+    """Read a Delphi TShortUnicodeString (258 bytes = 128 UTF-16LE code units + null)."""
+    raw = data[offset:offset + 256]
+    try:
+        return raw.decode('utf-16-le').split('\x00', 1)[0].strip()
+    except UnicodeDecodeError:
+        return ""
+
+
+def _delphi_date_to_iso(delphi_date: float) -> str:
+    """Convert Delphi TDateTime (days since 1899-12-30) to an ISO-8601 string."""
+    if delphi_date <= 0:
+        return ""
+    try:
+        epoch = datetime(1899, 12, 30, tzinfo=timezone.utc)
+        return (epoch + timedelta(seconds=delphi_date * 86400)).isoformat()
+    except (OverflowError, OSError, ValueError):
+        return ""
 
 
 # --- header ----------------------------------------------------------------
@@ -303,9 +360,20 @@ def parse_header(data, off=0) -> dict:
     if magic != MAGIC_DMLI:
         raise ValueError("tsHeaderMatch record missing DMLI magic")
     tot = struct.unpack_from('<4i', data, off + _HDR_TOT_TIMEDELAY)
+    splayer1 = _read_pascal_string(data, off + _HDR_SPLAYER1, _HDR_SPLAYER_MAX)
+    splayer2 = _read_pascal_string(data, off + _HDR_SPLAYER2, _HDR_SPLAYER_MAX)
+    uplayer1 = _read_short_unicode_string(data, off + _HDR_PLAYER1)
+    uplayer2 = _read_short_unicode_string(data, off + _HDR_PLAYER2)
+    player1 = uplayer1 if (uplayer1 and uplayer1 != "!") else splayer1
+    player2 = uplayer2 if (uplayer2 and uplayer2 != "!") else splayer2
+    delphi_date = struct.unpack_from('<d', data, off + _HDR_DATE)[0]
     return {
         "version": version,
+        "player1": player1 or "Player 1",
+        "player2": player2 or "Player 2",
         "match_length": struct.unpack_from('<i', data, off + _HDR_MATCH_LENGTH)[0],
+        "date_iso": _delphi_date_to_iso(delphi_date),
+        "comp_level": struct.unpack_from('<i', data, off + _HDR_COMP_LEVEL1)[0],
         "jacoby": bool(data[off + _HDR_JACOBY]),
         "beaver": bool(data[off + _HDR_BEAVER]),
         "tot_timedelay_move": tot[0],
@@ -330,12 +398,33 @@ def parse_game_header(data, off) -> dict:
     }
 
 
+def parse_game_footer(data, off) -> dict:
+    return {
+        "score1": struct.unpack_from('<i', data, off + _FG_SCORE1)[0],
+        "score2": struct.unpack_from('<i', data, off + _FG_SCORE2)[0],
+        "crawford_next": bool(data[off + _FG_CRAWFORD_NEXT]),
+        "winner": struct.unpack_from('<i', data, off + _FG_WINNER)[0],
+        "points_won": struct.unpack_from('<i', data, off + _FG_POINTS)[0],
+        "termination": struct.unpack_from('<i', data, off + _FG_TERMINATION)[0],
+    }
+
+
+def parse_match_footer(data, off) -> dict:
+    return {
+        "score1": struct.unpack_from('<i', data, off + _FM_SCORE1)[0],
+        "score2": struct.unpack_from('<i', data, off + _FM_SCORE2)[0],
+        "winner": struct.unpack_from('<i', data, off + _FM_WINNER)[0],
+    }
+
+
 # --- tsMove ----------------------------------------------------------------
 
 
 def parse_move_record(data, off) -> dict:
     """Decode the fields of a tsMove record needed for matching + harvesting."""
     actif = struct.unpack_from('<i', data, off + _MOVE_ACTIF)[0]
+    pos_raw = read_position(data, off + _MOVE_POSITION_I)
+    pos_end = norm_bars(read_position(data, off + _MOVE_POSITION_END))
     dm = off + _MOVE_DATAMOVES
     nmoves = struct.unpack_from('<i', data, dm + _BM_NMOVES)[0]
     nmoves = max(0, min(nmoves, 32))
@@ -348,14 +437,19 @@ def parse_move_record(data, off) -> dict:
             "level": level,
             "eval": list(ev),
         })
+    err_move = struct.unpack_from('<d', data, off + _MOVE_ERR_MOVE)[0]
     return {
         "actif": actif,
-        "position_raw": read_position(data, off + _MOVE_POSITION_I),
-        "mover_board": to_mover_board(read_position(data, off + _MOVE_POSITION_I), actif),
+        "position_raw": pos_raw,
+        "position_i": norm_bars(pos_raw),
+        "position_end": pos_end,
+        "mover_board": to_mover_board(pos_raw, actif),
         "dice": list(struct.unpack_from('<2i', data, off + _MOVE_DICE)),
         "cube_a": struct.unpack_from('<i', data, off + _MOVE_CUBE_A)[0],
         "n_moves": nmoves,
         "moves": moves,
+        "is_forced": bool(data[dm + _BM_IS_FORCED]),
+        "err_move": err_move if err_move > -999 else None,
         "rollout_indices": list(struct.unpack_from('<32i', data, off + _MOVE_ROLLOUT_INDEX)),
         "analyze_m": struct.unpack_from('<i', data, off + _MOVE_ANALYZE_M)[0],
         "timedelay": struct.unpack_from('<I', data, off + _MOVE_TIMEDELAY)[0],
@@ -374,14 +468,16 @@ def set_move_timedelay(data: bytearray, off: int, move_bits: int,
 
 def parse_cube_record(data, off) -> dict:
     actif = struct.unpack_from('<i', data, off + _CUBE_ACTIF)[0]
+    pos_raw = read_position(data, off + _CUBE_POSITION)
     da = off + _CUBE_DOUBLE_ACTION
     eval_nd = struct.unpack_from('<7f', data, da + _DA_EVAL)
     eval_dt = struct.unpack_from('<7f', data, da + _DA_EVAL_DT)
     equ_nd, equ_dt, equ_dp = struct.unpack_from('<3f', data, da + _DA_EQU_ND)
+    err_cube = struct.unpack_from('<d', data, off + _CUBE_ERR_CUBE)[0]
     return {
         "actif": actif,
-        "position_raw": read_position(data, off + _CUBE_POSITION),
-        "mover_board": to_mover_board(read_position(data, off + _CUBE_POSITION), actif),
+        "position_raw": pos_raw,
+        "mover_board": to_mover_board(pos_raw, actif),
         "double": struct.unpack_from('<i', data, off + _CUBE_DOUBLE)[0],
         "take": struct.unpack_from('<i', data, off + _CUBE_TAKE)[0],
         "cube_b": struct.unpack_from('<i', data, off + _CUBE_B)[0],
@@ -394,6 +490,7 @@ def parse_cube_record(data, off) -> dict:
         "equity_nd": float(equ_nd),
         "equity_dt": float(equ_dt),
         "equity_dp": float(equ_dp),
+        "err_cube": err_cube if err_cube > -999 else None,
         "rollout_index": struct.unpack_from('<i', data, off + _CUBE_ROLLOUT_INDEX)[0],
         "analyze_c": struct.unpack_from('<i', data, off + _CUBE_ANALYZE_C)[0],
         "analyze_cr": struct.unpack_from('<i', data, off + _CUBE_ANALYZE_CR)[0],

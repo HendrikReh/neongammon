@@ -979,66 +979,12 @@ void MultiPlyStrategy::best_move_index_cubeful_multi(
     //
     Strategy* filter_s = filter_strat_ ? filter_strat_.get() : base_.get();
 
-    // Batched scoring (delta evaluation); classification follows the
-    // pre-move board. Terminal candidates get terminal_probs inside the
-    // batch call.
-    std::vector<std::array<float, NUM_OUTPUTS>> probs_per(n);
-    thread_local std::vector<double> eq_tmp;
-    eq_tmp.resize(n);
-    filter_s->batch_evaluate_candidates_equity_probs(
-        candidates, pre_move_board, eq_tmp.data(), probs_per.data());
-    for (int i = 0; i < n; ++i) {
-        clamp_probs_to_board(probs_per[i], candidates[i]);
-    }
-
     // First filter step from the chain (always ply=1 in the current default
-    // chains). Use its max_moves and threshold for the cubeful filter.
+    // chains). Use its max_moves and threshold for the per-cube cubeful filter.
     const MoveFilterStep& first_step = filter_chain_[0];
-    std::vector<bool> in_set(n, false);
-    std::vector<int> survivors;
-    survivors.reserve(std::min(n, first_step.max_moves * n_cubes));
-
-    {
-        // Per-cube top-K-within-threshold; union into in_set/survivors.
-        std::vector<std::pair<float, int>> cube_eqs;
-        cube_eqs.reserve(n);
-        for (int c = 0; c < n_cubes; ++c) {
-            cube_eqs.clear();
-            for (int i = 0; i < n; ++i) {
-                float cf = cl2cf(probs_per[i], cubes[c], cube_x);
-                cube_eqs.emplace_back(cf, i);
-            }
-            // Ties broken on money cubeless equity. This decides WHICH
-            // candidates survive to the cubeful rescore, and a move dropped
-            // here can never be recovered -- at a score where every cubeful
-            // key is bit-identical, survival was otherwise decided by
-            // introsort partitioning order.
-            //
-            // The tie test is exact equality, NOT MOVE_TIE_EPSILON: an
-            // epsilon comparator is not a strict weak ordering (a~b, b~c,
-            // a!~c), which is undefined behaviour in std::sort. Exact
-            // equality gives a plain lexicographic order and covers the
-            // bit-identical case that actually occurs.
-            std::sort(cube_eqs.begin(), cube_eqs.end(),
-                      [&](const std::pair<float, int>& a,
-                          const std::pair<float, int>& b) {
-                          if (a.first != b.first) return a.first > b.first;
-                          return cubeless_equity(probs_per[a.second])
-                               > cubeless_equity(probs_per[b.second]);
-                      });
-            float best_cf = cube_eqs[0].first;
-            int keep = 0;
-            for (const auto& p : cube_eqs) {
-                if (keep >= first_step.max_moves) break;
-                if (best_cf - p.first > first_step.threshold) break;
-                if (!in_set[p.second]) {
-                    in_set[p.second] = true;
-                    survivors.push_back(p.second);
-                }
-                ++keep;
-            }
-        }
-    }
+    std::vector<int> survivors = filter_candidates_cubeful_1ply(
+        *filter_s, candidates, pre_move_board, cubes, n_cubes, cube_x,
+        first_step.max_moves, first_step.threshold);
 
     if (survivors.size() == 1) {
         for (int c = 0; c < n_cubes; ++c) out_indices[c] = survivors[0];

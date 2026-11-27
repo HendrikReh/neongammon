@@ -18,7 +18,7 @@ import time
 
 # Setup import paths — find the main project root (contains build/)
 script_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(os.path.dirname(script_dir))
+project_dir = os.path.dirname(script_dir)
 build_dirs = [
     os.path.join(project_dir, 'build_cpu_build'),
     os.path.join(project_dir, 'build'),
@@ -27,13 +27,13 @@ build_dirs = [
 for build_dir in reversed(build_dirs):
     if os.path.isdir(build_dir):
         sys.path.insert(0, build_dir)
-sys.path.insert(0, os.path.join(project_dir, 'neongammon', 'python'))
+sys.path.insert(0, os.path.join(project_dir, 'python'))
 
 import bgbot_cpp
 from neongammon.data import load_benchmark_file, load_benchmark_scenarios_by_indices
 from neongammon.weights import WeightConfig, WeightConfigPair, MODELS
 
-DATA_DIR = os.path.join(project_dir, 'neongammon', 'data')
+DATA_DIR = os.path.join(project_dir, 'data')
 
 
 def main():

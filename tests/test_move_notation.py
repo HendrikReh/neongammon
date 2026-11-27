@@ -6,12 +6,7 @@ Run from the repo root: ``py -3.14 -m pytest neongammon/tests/test_move_notation
 The engine-backed tests skip when ``bgbot_cpp`` is not importable.
 """
 
-import os
 import random
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'build'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 
 import pytest
 

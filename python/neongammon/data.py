@@ -174,6 +174,8 @@ def load_gnubg_training_data(filepath: str):
     """
     import numpy as np
 
+    from ._primitives import flip_board, invert_probs
+
     boards = []
     targets = []
 
@@ -201,20 +203,8 @@ def load_gnubg_training_data(filepath: str):
             # The data is from the on-roll player's perspective (pre-roll).
             # For supervised training, we need to flip both the board and the probabilities
             # because the NN evaluates post-move boards from the opponent's perspective.
-            #
-            # Flip board:
-            flipped = [0] * 26
-            flipped[0] = board[25]
-            flipped[25] = board[0]
-            for i in range(1, 25):
-                flipped[i] = -board[25 - i]
-
-            # Flip probabilities: [Pwin, Pgw, Pbw, Pgl, Pbl] -> [1-Pwin, Pgl, Pbl, Pgw, Pbw]
-            p_win, p_gw, p_bw, p_gl, p_bl = probs
-            flipped_probs = [1.0 - p_win, p_gl, p_bl, p_gw, p_bw]
-
-            boards.append(flipped)
-            targets.append(flipped_probs)
+            boards.append(flip_board(board))
+            targets.append(invert_probs(probs))
 
     boards = np.array(boards, dtype=np.int32)
     targets = np.array(targets, dtype=np.float32)

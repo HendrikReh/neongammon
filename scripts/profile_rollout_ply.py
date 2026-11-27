@@ -5,7 +5,7 @@ import sys
 import os
 import time
 
-build_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'build'))
+build_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'build'))
 sys.path.insert(0, build_dir)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 

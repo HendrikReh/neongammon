@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ._primitives import cubeless_equity
+
 
 @dataclass
 class MatchInfo:
@@ -86,9 +88,13 @@ class Probabilities:
     @property
     def equity(self) -> float:
         """Cubeless equity derived from probabilities."""
-        return (2.0 * self.win - 1.0
-                + self.gammon_win - self.gammon_loss
-                + self.backgammon_win - self.backgammon_loss)
+        return cubeless_equity((
+            self.win,
+            self.gammon_win,
+            self.backgammon_win,
+            self.gammon_loss,
+            self.backgammon_loss,
+        ))
 
 
 @dataclass

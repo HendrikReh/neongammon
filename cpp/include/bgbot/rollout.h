@@ -444,6 +444,106 @@ private:
         double final_equity;     // Result (basis cube units, SP perspective)
     };
 
+    // Common constructor initialization helper.
+    void init_strategy(std::shared_ptr<Strategy> filter_base);
+
+    // Unified cubeful cube-decision runner backing both cubeful_cube_decision
+    // (max_batches=1, target_se=0) and cubeful_cube_decision_batched.
+    CubefulRolloutResult cubeful_cube_decision_impl(
+        const Board& pre_roll_board,
+        const CubeInfo& cube,
+        RolloutProgressCallback progress,
+        int max_batches,
+        double target_se) const;
+
+    // Compute the move-0 board choice for a single opening roll index.
+    Board select_move0_for_roll(const Board& start_board,
+                                int roll_idx,
+                                const CubeInfo* select_cubes,
+                                int n_select_cubes,
+                                float cube_x_stamp) const;
+
+    // Apply a cube decision (double/take/beaver/pass) to a single branch.
+    static void apply_cube_decision(CubefulBranch& branch,
+                                    const CubeDecision& cd,
+                                    bool is_match,
+                                    bool is_sp_turn);
+
+    // Phase helpers for run_trial_unified (defined in rollout_trial.cpp).
+    const Move1Cache::Entry* acquire_move1_entry(
+        int move0_roll_idx,
+        const CubefulBranch branches[], int n_branches,
+        bool use_cubeful_select,
+        Move0Cache* move0_cache,
+        Move1Cache* move1_cache) const;
+
+    bool run_phase1_cube_check(
+        const Board& board, int move_num, int move0_roll_idx,
+        bool race, bool is_match, bool is_sp_turn,
+        CubefulBranch branches[], int n_branches,
+        const Move1Cache::Entry* move1_entry,
+        Move1Cache* move1_cache,
+        float& cube_x, bool& cube_x_ready) const;
+
+    TrialResult finalize_all_dp_early_exit(
+        const Board& board, bool is_sp_turn,
+        const std::array<double, NUM_OUTPUTS>& cl_accumulated_luck,
+        double cl_scalar_eq_luck) const;
+
+    void run_phase3_vr_mean(
+        const Board& board, int d1, int d2, int actual_idx,
+        bool do_vr, bool cube_active, bool is_match, bool use_cubeful_select_now,
+        float cube_x,
+        const CubefulBranch branches[], int n_branches,
+        const Move1Cache::Entry* move1_entry,
+        Move1Cache* move1_cache,
+        std::array<std::vector<Board>, 21>& move_candidates,
+        std::array<std::array<float, NUM_OUTPUTS>, 21>& roll_best_probs,
+        std::array<int, 21>& best_candidate_idx,
+        std::array<double, NUM_OUTPUTS>& cl_mean_probs,
+        double& cl_mean_eq,
+        double mean_cf_branch[2]) const;
+
+    Board run_phase4_select_move(
+        const Board& board, int move_num, int actual_idx,
+        bool do_vr, bool using_base, bool can_reuse_vr_idx,
+        bool use_cubeful_select_now, float cube_x,
+        const Strategy& current_strat,
+        const CubefulBranch branches[], int n_branches,
+        const Move1Cache::Entry* move1_entry,
+        Move0Cache* move0_cache,
+        const std::vector<Board>& candidates,
+        const std::array<int, 21>& best_candidate_idx) const;
+
+    void run_phase4b_vr_luck(
+        const Board& board, const Board& chosen, int actual_idx,
+        bool cube_active, bool is_match, bool is_sp_turn, bool using_base,
+        float cube_x,
+        const Move1Cache::Entry* move1_entry,
+        const std::vector<Board>& actual_candidates,
+        const std::array<std::array<float, NUM_OUTPUTS>, 21>& roll_best_probs,
+        const std::array<int, 21>& best_candidate_idx,
+        const std::array<double, NUM_OUTPUTS>& cl_mean_probs,
+        double cl_mean_eq,
+        const double mean_cf_branch[2],
+        CubefulBranch branches[], int n_branches,
+        std::array<double, NUM_OUTPUTS>& cl_accumulated_luck,
+        double& cl_scalar_eq_luck) const;
+
+    TrialResult run_phase5_terminal(
+        GameResult result,
+        bool cube_active, bool is_match, bool is_sp_turn,
+        CubefulBranch branches[], int n_branches,
+        const std::array<double, NUM_OUTPUTS>& cl_accumulated_luck,
+        double cl_scalar_eq_luck) const;
+
+    TrialResult run_truncation_phase(
+        const Board& board, int truncation, int max_moves, int sp_parity_offset,
+        bool cube_active, bool is_match,
+        CubefulBranch branches[], int n_branches,
+        const std::array<double, NUM_OUTPUTS>& cl_accumulated_luck,
+        double cl_scalar_eq_luck) const;
+
     // Unified trial function for both cubeless and cubeful rollout.
     //
     // When start_post_move=true: evaluates a post-move position (opponent first).

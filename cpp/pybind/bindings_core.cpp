@@ -433,67 +433,6 @@ void bind_core(py::module_& m) {
        py::arg("pe_weights") = PubEval::WeightSource::TESAURO,
        py::arg("n_threads") = 0);
 
-    // --- Utility: weight transfer from 196-input to 214-input network ---
-    m.def("create_extended_from_tesauro", [](const std::string& src_weights,
-                                              const std::string& dst_weights,
-                                              int n_hidden,
-                                              uint32_t seed) {
-        // Load 196-input network
-        auto src_nn = std::make_shared<NeuralNetwork>(n_hidden, TESAURO_INPUTS);
-        if (!src_nn->load_weights(src_weights)) {
-            throw std::runtime_error("Failed to load source weights: " + src_weights);
-        }
-
-        // Create 214-input network with small random weights
-        auto dst_nn = std::make_shared<NeuralNetwork>(n_hidden, EXTENDED_CONTACT_INPUTS, 0.01f, seed);
-
-        // Copy output weights (identical: n_hidden -> 5)
-        dst_nn->output_weights() = src_nn->output_weights();
-
-        // Copy hidden weights: map Tesauro indices to extended indices
-        // Tesauro layout:  [0-95] player points, [96] bar, [97] borne-off, [98-193] opp points, [194] bar, [195] borne-off
-        // Extended layout:  [0-95] player points, [96] bar, [97-99] 3 borne-off buckets, [100-106] features,
-        //                   [107-202] opp points, [203] bar, [204-206] 3 borne-off buckets, [207-213] features
-        const int src_stride = TESAURO_INPUTS + 1;  // 197
-        const int dst_stride = EXTENDED_CONTACT_INPUTS + 1;  // 215
-
-        for (int h = 0; h < n_hidden; ++h) {
-            // Player point weights: src[0-95] -> dst[0-95]
-            for (int i = 0; i < 96; ++i) {
-                dst_nn->hidden_weights()[h * dst_stride + i] = src_nn->hidden_weights()[h * src_stride + i];
-            }
-            // Player bar: src[96] -> dst[96]
-            dst_nn->hidden_weights()[h * dst_stride + 96] = src_nn->hidden_weights()[h * src_stride + 96];
-            // Player borne-off: src[97] -> dst[97] (first bucket), others stay random small
-            dst_nn->hidden_weights()[h * dst_stride + 97] = src_nn->hidden_weights()[h * src_stride + 97];
-            // New features [98-106] stay random (small init)
-
-            // Opponent point weights: src[98-193] -> dst[107-202]
-            for (int i = 0; i < 96; ++i) {
-                dst_nn->hidden_weights()[h * dst_stride + 107 + i] = src_nn->hidden_weights()[h * src_stride + 98 + i];
-            }
-            // Opponent bar: src[194] -> dst[203]
-            dst_nn->hidden_weights()[h * dst_stride + 203] = src_nn->hidden_weights()[h * src_stride + 194];
-            // Opponent borne-off: src[195] -> dst[204] (first bucket)
-            dst_nn->hidden_weights()[h * dst_stride + 204] = src_nn->hidden_weights()[h * src_stride + 195];
-            // New features [205-213] stay random (small init)
-
-            // Bias: src[196] -> dst[214]
-            dst_nn->hidden_weights()[h * dst_stride + EXTENDED_CONTACT_INPUTS] =
-                src_nn->hidden_weights()[h * src_stride + TESAURO_INPUTS];
-        }
-
-        // Save
-        if (!dst_nn->save_weights(dst_weights)) {
-            throw std::runtime_error("Failed to save extended weights: " + dst_weights);
-        }
-        return true;
-    }, "Create 214-input network weights from 196-input Tesauro weights",
-       py::arg("src_weights"),
-       py::arg("dst_weights"),
-       py::arg("n_hidden") = 120,
-       py::arg("seed") = 42);
-
     // --- Strategy base class (for polymorphic dispatch in unified bindings) ---
     py::class_<Strategy, std::shared_ptr<Strategy>>(m, "Strategy")
         .def("evaluate_board", [](Strategy& self,
@@ -1412,39 +1351,6 @@ void bind_core(py::module_& m) {
        py::arg("hidden_sizes"),
        py::arg("n_threads") = 0);
 
-    // --- Pair strategy vs PubEval ---
-    m.def("play_games_pair_vs_pubeval", [](const std::vector<std::string>& weight_paths,
-                                            const std::vector<int>& hidden_sizes,
-                                            int n_games, uint32_t seed,
-                                            PubEval::WeightSource pe_weights,
-                                            int n_threads) {
-        GamePlanPairStrategy nn_strat(weight_paths, hidden_sizes);
-        PubEval pe_strat(pe_weights);
-        py::gil_scoped_release release;
-        return play_games_parallel(nn_strat, pe_strat, n_games, seed, n_threads);
-    }, "Play games: 17-NN Pair (p1) vs PubEval (p2)",
-       py::arg("weight_paths"),
-       py::arg("hidden_sizes"),
-       py::arg("n_games") = 1000,
-       py::arg("seed") = 42,
-       py::arg("pe_weights") = PubEval::WeightSource::TESAURO,
-       py::arg("n_threads") = 0);
-
-    // --- Pair strategy self-play ---
-    m.def("play_games_pair_vs_self", [](const std::vector<std::string>& weight_paths,
-                                         const std::vector<int>& hidden_sizes,
-                                         int n_games, uint32_t seed,
-                                         int n_threads) {
-        GamePlanPairStrategy strat(weight_paths, hidden_sizes);
-        py::gil_scoped_release release;
-        return play_games_parallel(strat, strat, n_games, seed, n_threads);
-    }, "Play games: 17-NN Pair vs itself (self-play outcome distribution)",
-       py::arg("weight_paths"),
-       py::arg("hidden_sizes"),
-       py::arg("n_games") = 1000,
-       py::arg("seed") = 42,
-       py::arg("n_threads") = 0);
-
     // --- Pair strategy multipy creation ---
     m.def("create_multipy_pair", [](const std::vector<std::string>& weight_paths,
                                      const std::vector<int>& hidden_sizes,
@@ -1453,13 +1359,8 @@ void bind_core(py::module_& m) {
                                      bool full_depth_opponent,
                                      bool parallel_evaluate, int parallel_threads) {
         auto base = std::make_shared<GamePlanPairStrategy>(weight_paths, hidden_sizes);
-        MoveFilter filter{filter_max_moves, filter_threshold};
-        auto strat = std::make_shared<MultiPlyStrategy>(
-            base, n_plies, filter, full_depth_opponent,
-            parallel_evaluate, parallel_threads);
-        static auto pubeval = std::make_shared<PubEval>();
-        strat->set_move_prefilter(pubeval);
-        return strat;
+        return make_multipy(std::move(base), n_plies, filter_max_moves, filter_threshold,
+                            full_depth_opponent, parallel_evaluate, parallel_threads);
     }, "Create MultiPlyStrategy from 17-NN Pair base strategy",
        py::arg("weight_paths"),
        py::arg("hidden_sizes"),
@@ -1552,20 +1453,6 @@ void bind_core(py::module_& m) {
 
     m.attr("RoutedStrategy") = m.attr("BackgameAwarePairStrategy");
 
-    // --- Stage 9 scoring ---
-    m.def("score_benchmarks_stage9", [](const ScenarioSet& ss,
-                                        const std::vector<std::string>& weight_paths,
-                                        const std::vector<int>& hidden_sizes,
-                                        int n_threads) {
-        BackgameAwarePairStrategy strat(weight_paths, hidden_sizes);
-        py::gil_scoped_release release;
-        return score_benchmarks(strat, ss.scenarios, n_threads);
-    }, "Score benchmarks using 19-NN BackgameAwarePairStrategy",
-       py::arg("scenarios"),
-       py::arg("weight_paths"),
-       py::arg("hidden_sizes"),
-       py::arg("n_threads") = 0);
-
     // --- Stage 9 multipy creation ---
     m.def("create_multipy_stage9", [](const std::vector<std::string>& weight_paths,
                                        const std::vector<int>& hidden_sizes,
@@ -1574,13 +1461,8 @@ void bind_core(py::module_& m) {
                                        bool full_depth_opponent,
                                        bool parallel_evaluate, int parallel_threads) {
         auto base = std::make_shared<BackgameAwarePairStrategy>(weight_paths, hidden_sizes);
-        MoveFilter filter{filter_max_moves, filter_threshold};
-        auto strat = std::make_shared<MultiPlyStrategy>(
-            base, n_plies, filter, full_depth_opponent,
-            parallel_evaluate, parallel_threads);
-        static auto pubeval = std::make_shared<PubEval>();
-        strat->set_move_prefilter(pubeval);
-        return strat;
+        return make_multipy(std::move(base), n_plies, filter_max_moves, filter_threshold,
+                            full_depth_opponent, parallel_evaluate, parallel_threads);
     }, "Create MultiPlyStrategy from 19-NN Backgame-Aware Pair base strategy",
        py::arg("weight_paths"),
        py::arg("hidden_sizes"),

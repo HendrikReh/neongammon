@@ -14,7 +14,7 @@ import sys
 import time
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(os.path.dirname(script_dir))
+project_dir = os.path.dirname(script_dir)
 build_dirs = [
     os.path.join(project_dir, 'build'),
 ]
@@ -22,13 +22,13 @@ build_dirs = [
 for d in reversed(build_dirs):
     if os.path.isdir(d):
         sys.path.insert(0, d)
-sys.path.insert(0, os.path.join(project_dir, 'neongammon', 'python'))
+sys.path.insert(0, os.path.join(project_dir, 'python'))
 
 import bgbot_cpp
 from neongammon.data import load_benchmark_file, load_benchmark_scenarios_by_indices
 from neongammon.weights import WeightConfig
 
-DATA_DIR = os.path.join(project_dir, 'neongammon', 'data')
+DATA_DIR = os.path.join(project_dir, 'data')
 THREADS = 16
 
 bgbot_cpp.init_escape_tables()
@@ -82,7 +82,7 @@ def run_rollout_subprocess(label, model_name, kwargs, ci, ki,
                            hybrid_filter_model=None):
     """Run rollout in subprocess to avoid OOM from cache accumulation."""
     abs_build_dirs = [os.path.abspath(d) for d in build_dirs if os.path.isdir(d)]
-    abs_python_path = os.path.join(os.path.abspath(project_dir), 'neongammon', 'python')
+    abs_python_path = os.path.join(os.path.abspath(project_dir), 'python')
     abs_contact = os.path.join(os.path.abspath(DATA_DIR), 'contact.bm')
     abs_crashed = os.path.join(os.path.abspath(DATA_DIR), 'crashed.bm')
 

@@ -22,17 +22,17 @@ import time
 import argparse
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(os.path.dirname(script_dir))
+project_dir = os.path.dirname(script_dir)
 build_dir = os.path.join(project_dir, 'build')
 
 sys.path.insert(0, build_dir)
-sys.path.insert(0, os.path.join(project_dir, 'neongammon', 'python'))
+sys.path.insert(0, os.path.join(project_dir, 'python'))
 
 import bgbot_cpp
 from neongammon.data import load_benchmark_file
 from neongammon.weights import WeightConfig
 
-DATA_DIR = os.path.join(project_dir, 'neongammon', 'data')
+DATA_DIR = os.path.join(project_dir, 'data')
 
 GAME_PLAN_BENCHMARKS = ['purerace', 'racing', 'attacking', 'priming', 'anchoring']
 OLD_STYLE_BENCHMARKS = ['contact', 'crashed', 'race']

@@ -440,42 +440,30 @@ CubeBenchmarkResult evaluate_rollout(
         out.cubeless_equity = cubeless_equity(out.probs);
     }
 
+    const float nd_raw = static_cast<float>(cfr.nd_equity);
+    const float dt_raw = static_cast<float>(cfr.dt_equity);
+    const CubeDecision dec = decision_from_raw_equities(
+        pos.cube, nd_raw, dt_raw, /*dt_is_basis_scaled=*/true);
+
+    out.equity_nd = dec.equity_nd;
+    out.equity_dt = dec.equity_dt;
+    out.equity_dp = dec.equity_dp;
+    out.should_double = dec.should_double;
+    out.should_take = dec.should_take;
+    out.optimal_equity = dec.optimal_equity;
+    out.is_beaver = dec.is_beaver;
+
     if (!pos.cube.is_money()) {
         const int a1 = pos.cube.match.away1;
         const int a2 = pos.cube.match.away2;
         const int cv = pos.cube.cube_value;
         const bool craw = pos.cube.match.is_crawford;
-
-        const float nd_m = static_cast<float>(cfr.nd_equity);
-        const float dt_m = static_cast<float>(cfr.dt_equity);
-        const float dp_m = dp_mwc(a1, a2, cv, craw);
-
-        const bool auto_double = (!craw && a1 > 1 && a2 == 1);
-        out.should_take = (dt_m <= dp_m);
-        if (auto_double) {
-            out.should_double = true;
-        } else {
-            out.should_double = (std::min(dt_m, dp_m) > nd_m);
-        }
-
-        out.equity_nd = mwc2eq(nd_m, a1, a2, cv, craw);
-        out.equity_dt = mwc2eq(dt_m, a1, a2, cv, craw);
-        out.equity_dp = mwc2eq(dp_m, a1, a2, cv, craw);
-        out.optimal_equity = out.should_double ? std::min(out.equity_dt, out.equity_dp)
-                                               : out.equity_nd;
+        out.equity_nd_se = mwc_se_to_eq_se(
+            static_cast<float>(cfr.nd_se), nd_raw, a1, a2, cv, craw);
+        out.equity_dt_se = mwc_se_to_eq_se(
+            static_cast<float>(cfr.dt_se), dt_raw, a1, a2, cv, craw);
     } else {
-        out.equity_dp = 1.0f;
-        const float actual_dt = static_cast<float>(cfr.dt_equity);
-        out.is_beaver = (pos.cube.beaver && actual_dt < 0.0f);
-        out.equity_dt = out.is_beaver ? 2.0f * actual_dt : actual_dt;
-        out.equity_dt_se = cfr.dt_se;
-        out.should_take = (out.equity_dt <= out.equity_dp);
-        out.should_double = (std::min(out.equity_dt, out.equity_dp) > out.equity_nd);
-        out.optimal_equity = out.should_double ? std::min(out.equity_dt, out.equity_dp)
-                                               : out.equity_nd;
-    }
-
-    if (!out.equity_dt_se.has_value()) {
+        out.equity_nd_se = cfr.nd_se;
         out.equity_dt_se = cfr.dt_se;
     }
     return out;
@@ -600,7 +588,6 @@ int main(int argc, char* argv[]) {
         double total_time = 0.0;
         for (std::size_t i = 0; i < benchmark_positions().size(); ++i) {
             const auto& pos = benchmark_positions()[i];
-            reset_cubeful_counters();
             const auto t0 = std::chrono::steady_clock::now();
             const CubeBenchmarkResult result = evaluate_position(ctx, pos);
             const auto t1 = std::chrono::steady_clock::now();
@@ -651,7 +638,6 @@ int main(int argc, char* argv[]) {
                 print_prob_std_errors(*result.prob_std_errors);
             }
             std::cout << "    Time: " << std::fixed << std::setprecision(3) << elapsed << "s\n";
-            print_cubeful_counters();
         }
 
         std::cout << "\n======================================================================\n";

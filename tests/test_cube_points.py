@@ -15,23 +15,9 @@ Run with:
     python -m pytest neongammon/tests/test_cube_points.py -v
 """
 
-import os
-import sys
 import unittest
 
-# Setup paths (same pattern as other neongammon tests)
-script_dir = os.path.dirname(os.path.abspath(__file__))
-# Resolve INSIDE this repo. dirname(dirname(tests/)) is the HOST project when
-# neongammon is vendored as a submodule, so this used to load the host's stale
-# bgbot_cpp instead of the one built here -- tests then silently exercised a
-# different binary than the developer just compiled.
-project_dir = os.path.dirname(script_dir)
-build_dir = os.path.join(project_dir, "build")
-
-sys.path.insert(0, build_dir)
-sys.path.insert(0, os.path.join(project_dir, "python"))
-
-from neongammon.cube_points import cube_action_points  # noqa: E402
+from neongammon.cube_points import cube_action_points
 
 
 # Gammonless: only the P(win) matters; all gammon/BG components are zero.

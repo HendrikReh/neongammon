@@ -8,6 +8,7 @@ import threading
 
 import bgbot_cpp
 
+from ._primitives import cubeless_equity
 from .strategies import (
     _CubelessBase,
     _cube_limit_kwargs,
@@ -19,6 +20,66 @@ from .strategies import (
 class RolloutCancelled(Exception):
     """Raised when a rollout is cancelled via cancel()."""
     pass
+
+
+def _rollout_eval_candidate(
+    rollout_analyzer: _RolloutAnalyzer,
+    cand_board,
+    ref_board,
+    *,
+    owner=None,
+    cube_value: int = 1,
+    away1: int = 0,
+    away2: int = 0,
+    is_crawford: bool = False,
+    jacoby: bool = True,
+    beaver: bool = True,
+    max_cube_value: int = 0,
+    progress=None,
+) -> dict:
+    """Evaluate one post-move candidate board via the rollout strategy.
+
+    Checks cancellation before launching native trials, translates
+    ``bgbot_cpp.RolloutCancelled`` to :class:`RolloutCancelled`, and overrides
+    Monte Carlo probabilities with exact bearoff DB values when available.
+    """
+    rollout_analyzer._check_cancel()
+    use_cubeful = owner is not None
+    try:
+        if use_cubeful:
+            r = rollout_analyzer._rollout_strategy.cubeful_evaluate_board(
+                cand_board, ref_board,
+                cube_value=cube_value, owner=owner,
+                away1=away1, away2=away2, is_crawford=is_crawford,
+                jacoby=jacoby, beaver=beaver, **_cube_limit_kwargs(max_cube_value),
+                progress=progress,
+            )
+        else:
+            r = rollout_analyzer._rollout_strategy.evaluate_board(
+                cand_board, ref_board, progress,
+            )
+    except bgbot_cpp.RolloutCancelled:
+        raise RolloutCancelled()
+
+    probs = list(r["probs"])
+    if rollout_analyzer._bearoff_db is not None and rollout_analyzer._bearoff_db.is_bearoff(cand_board):
+        probs = rollout_analyzer._bearoff_db.lookup_probs(cand_board, post_move=True)
+
+    entry = {
+        "board": cand_board,
+        "equity": r["equity"],          # cubeless equity
+        "probs": probs,
+        "std_error": r.get("std_error") or 0,
+        "prob_std_errors": list(r.get("prob_std_errors", [0] * 5)),
+        "eval_level": "Rollout",
+    }
+    if use_cubeful:
+        # cubeful_evaluate_board returns rollout-level cubeful that already
+        # accounts for opp's optimal cube action — store it so _CubefulAnalyzer
+        # uses it directly instead of recomputing.
+        entry["rollout_cubeful_equity"] = r["cubeful_equity"]
+        entry["rollout_cubeful_se"] = r["cubeful_se"]
+    return entry
 
 
 class _RolloutAnalyzer(_CubelessBase):
@@ -231,10 +292,7 @@ class _RolloutAnalyzer(_CubelessBase):
         # perspective at the post-move board `b`. No perspective fiddling
         # needed at the python layer.
         owner = resolve_owner(cube_owner) if cube_owner is not None else None
-        use_cubeful_rollout = owner is not None
         for i, (feq, cleq, b, p0) in enumerate(survivors):
-            self._check_cancel()
-
             # Trial-level progress callback: maps trial progress within
             # the current move to overall progress across all moves.
             _trial_progress = None
@@ -244,41 +302,13 @@ class _RolloutAnalyzer(_CubelessBase):
                     overall_total = total_moves * n_trials
                     progress_callback(overall, overall_total, results)
 
-            try:
-                if use_cubeful_rollout:
-                    r = self._rollout_strategy.cubeful_evaluate_board(
-                        b, board,
-                        cube_value=cube_value, owner=owner,
-                        away1=away1, away2=away2, is_crawford=is_crawford,
-                        jacoby=jacoby, beaver=beaver, **_cube_limit_kwargs(max_cube_value),
-                        progress=_trial_progress,
-                    )
-                else:
-                    r = self._rollout_strategy.evaluate_board(
-                        b, board, _trial_progress)
-            except bgbot_cpp.RolloutCancelled:
-                raise RolloutCancelled()
-
-            probs = list(r["probs"])
-            # Override with exact bearoff DB probs when available.
-            if self._bearoff_db is not None and self._bearoff_db.is_bearoff(b):
-                probs = self._bearoff_db.lookup_probs(b, post_move=True)
-
-            entry = {
-                "board": b,
-                "equity": r["equity"],          # cubeless equity
-                "probs": probs,
-                "std_error": r.get("std_error", 0),
-                "prob_std_errors": list(r.get("prob_std_errors", [0] * 5)),
-                "eval_level": "Rollout",
-            }
-            if use_cubeful_rollout:
-                # cubeful_evaluate_board returns rollout-level cubeful that
-                # already accounts for opp's optimal cube action — store it
-                # so _CubefulAnalyzer uses it directly instead of recomputing.
-                entry["rollout_cubeful_equity"] = r["cubeful_equity"]
-                entry["rollout_cubeful_se"] = r["cubeful_se"]
-            results.append(entry)
+            results.append(_rollout_eval_candidate(
+                self, b, board,
+                owner=owner, cube_value=cube_value,
+                away1=away1, away2=away2, is_crawford=is_crawford,
+                jacoby=jacoby, beaver=beaver, max_cube_value=max_cube_value,
+                progress=_trial_progress,
+            ))
 
         # Non-rolled-out moves: those that survived stage 1 (1-ply prefilter)
         # but failed stage 2 (2-ply TINY) get their 2-ply equity; those that
@@ -337,10 +367,6 @@ class _RolloutAnalyzer(_CubelessBase):
         if self._bearoff_db is not None and self._bearoff_db.is_bearoff(board):
             pre_roll = self._bearoff_db.lookup_probs(board, post_move=False)
             result["probs"] = pre_roll
-            result["cubeless_equity"] = (
-                2.0 * pre_roll[0] - 1.0
-                + pre_roll[1] - pre_roll[3]
-                + pre_roll[2] - pre_roll[4]
-            )
+            result["cubeless_equity"] = cubeless_equity(pre_roll)
 
         return result

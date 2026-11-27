@@ -12,8 +12,21 @@ from typing import TYPE_CHECKING
 
 import bgbot_cpp
 
+from ._primitives import (
+    invert_probs as invert_probs,
+    resolve_owner as _resolve_owner_name,
+    validate_board as validate_board,
+)
+
 if TYPE_CHECKING:
     from .types import GamePlanResult
+
+_OWNER_ENUM_MAP = {
+    "centered": bgbot_cpp.CubeOwner.CENTERED,
+    "player": bgbot_cpp.CubeOwner.PLAYER,
+    "opponent": bgbot_cpp.CubeOwner.OPPONENT,
+}
+_VALID_NATIVE_OWNERS = frozenset(_OWNER_ENUM_MAP.values())
 
 #: Standard backgammon starting position.
 STARTING_BOARD: list[int] = [
@@ -123,22 +136,9 @@ def can_double_match(
     games (both away values zero), eligibility depends on ownership. The
     maximum cube value applies to both kinds of game.
     """
-    owner_map = {"centered": 0, "player": 1, "opponent": 2}
-    cpp_owner = bgbot_cpp.CubeOwner(owner_map[owner])
+    if isinstance(owner, bgbot_cpp.CubeOwner) and owner in _VALID_NATIVE_OWNERS:
+        cpp_owner = owner
+    else:
+        cpp_owner = _OWNER_ENUM_MAP[_resolve_owner_name(owner)]
     return bgbot_cpp.can_double_match(
         away1, away2, cube_value, cpp_owner, is_crawford, max_cube_value)
-
-
-def invert_probs(probs: list[float]) -> list[float]:
-    """Invert probabilities from one player's perspective to the other.
-
-    ``[P(win), P(gw), P(bw), P(gl), P(bl)]`` becomes
-    ``[1-P(win), P(gl), P(bl), P(gw), P(bw)]``.
-    """
-    return [
-        1.0 - probs[0],
-        probs[3],
-        probs[4],
-        probs[1],
-        probs[2],
-    ]

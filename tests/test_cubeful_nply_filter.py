@@ -10,39 +10,16 @@ scoring every move (CUBEFUL_FILTERED_PLIES). batch_checker_play follows the
 same steps (tests/test_batch_checker_play_parity.py).
 """
 
-import os
-import random
-import sys
-
 import pytest
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (os.path.join(_ROOT, "build"), os.path.join(_ROOT, "python")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+from neongammon import BgBotAnalyzer
 
-from neongammon import BgBotAnalyzer, STARTING_BOARD, flip_board, possible_moves  # noqa: E402
-from neongammon.board import check_game_over  # noqa: E402
+from .batch_positions import random_positions
 
 
 def _positions(n=24, seed=7):
     """Mid-game positions from random play, with the roll to play."""
-    rng = random.Random(seed)
-    out = []
-    while len(out) < n:
-        board = list(STARTING_BOARD)
-        for _ in range(rng.randint(6, 30)):
-            moves = possible_moves(board, rng.randint(1, 6), rng.randint(1, 6))
-            if moves:
-                board = list(rng.choice(moves))
-            if check_game_over(board):
-                break
-            board = list(flip_board(board))
-        else:
-            d1, d2 = rng.randint(1, 6), rng.randint(1, 6)
-            if len(possible_moves(board, d1, d2)) >= 8:
-                out.append((board, d1, d2))
-    return out
+    return random_positions(n, seed=seed, min_steps=6, max_steps=30, min_moves=8)
 
 
 @pytest.fixture(scope="module")
