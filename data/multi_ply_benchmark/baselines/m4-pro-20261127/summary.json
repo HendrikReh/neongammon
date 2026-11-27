@@ -1,0 +1,1117 @@
+{
+  "schema_version": 1,
+  "started_utc": "2026-11-27T15:34:11.956763+00:00",
+  "revision": "8b70d1801e1b0a1d784230a91bcdf30747afd5cb",
+  "engine_tracked_diff": false,
+  "native": {
+    "name": "bgbot_cpp.cpython-314-darwin.so",
+    "sha256": "6d117608dc4d79eec4b458d97ceb7ac0f455ae598ff333708d0d16c4527acba5"
+  },
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "python": "3.14.7",
+  "chip": "Apple M4 Pro",
+  "mac_model": "Mac16,11",
+  "mac_build": "26A434",
+  "logical_cpus": 14,
+  "load_avg_start": [
+    3.10009765625,
+    2.6513671875,
+    2.84814453125
+  ],
+  "environment": {
+    "VECLIB_MAXIMUM_THREADS": "1"
+  },
+  "threads_requested": 4,
+  "model": "stage11",
+  "weight_slots": [
+    {
+      "name": "sl_s5_purerace.weights.best",
+      "hidden_size": 200,
+      "sha256": "4f3bedb89abe0fc0fa9550eea2a3dafb263ef124c0cb10f7dd6bdef415505d3d"
+    },
+    {
+      "name": "sl_s9_race_race.weights.best",
+      "hidden_size": 400,
+      "sha256": "e1bd7faa62adc6a87012357f3773fae89eec15f387200062e717af07506354f9"
+    },
+    {
+      "name": "sl_s9_race_att.weights.best",
+      "hidden_size": 400,
+      "sha256": "aa13ecc8dcfb7c2a46e00bff83947bfbacbc6832b625515dcea6a0582300e1e7"
+    },
+    {
+      "name": "sl_s9_race_prim.weights.best",
+      "hidden_size": 400,
+      "sha256": "ea4252b68134a5eea8fbdc5149a9b2e197a7d9f4025fea0432b7a296dc4e3754"
+    },
+    {
+      "name": "sl_s9_race_anch.weights.best",
+      "hidden_size": 400,
+      "sha256": "137d9da64e17898ba954a677d58bfed62d144d5de99431c5462ea0a55d7e90e0"
+    },
+    {
+      "name": "sl_s9_att_race.weights.best",
+      "hidden_size": 400,
+      "sha256": "cd40466951c3a78b4f7b22d98664aab66258857c6e7ff6f15d51f2222543ecb9"
+    },
+    {
+      "name": "sl_s9_att_att.weights.best",
+      "hidden_size": 400,
+      "sha256": "239447eb28eb48ce0800c395a0f066568cf863eb15241552264a751f2150b243"
+    },
+    {
+      "name": "sl_s9_att_prim.weights.best",
+      "hidden_size": 400,
+      "sha256": "fb112487b9ff4f4cc810f8f88f3ffab357c9f7ce8a900dd0aa45374189c2ae05"
+    },
+    {
+      "name": "sl_s9_att_anch.weights.best",
+      "hidden_size": 400,
+      "sha256": "58bdecf6930f4c1897a47c85a4f9863e533641b0029a5593bc0b6ac498dfd801"
+    },
+    {
+      "name": "sl_s9_prim_race.weights.best",
+      "hidden_size": 400,
+      "sha256": "6a466f82c474175a5a3f04e11568426c0b86538a08c99e2990c49af49c6d7ae4"
+    },
+    {
+      "name": "sl_s9_prim_att.weights.best",
+      "hidden_size": 400,
+      "sha256": "002d3486dc279ca0da611de325400deed58c9162ff147e710b6ddbe4b26d53f6"
+    },
+    {
+      "name": "sl_s9_prim_anch.weights.best",
+      "hidden_size": 400,
+      "sha256": "453fa330381d33480b6720e14ed189f08a156394d6e4ad965b283e8fd45b7b04"
+    },
+    {
+      "name": "sl_s9_prim_anch.weights.best",
+      "hidden_size": 400,
+      "sha256": "453fa330381d33480b6720e14ed189f08a156394d6e4ad965b283e8fd45b7b04"
+    },
+    {
+      "name": "sl_s9_anch_race.weights.best",
+      "hidden_size": 400,
+      "sha256": "522e1de2d65d7d8c0b2f571b9cfab8b5f3113c68d194b0ad3414025a86d065bf"
+    },
+    {
+      "name": "sl_s9_anch_att.weights.best",
+      "hidden_size": 400,
+      "sha256": "94345949736aed37fad339d56f7c3c5a386da3303e4c975bc20fe31de4b3c3b1"
+    },
+    {
+      "name": "sl_s9_prim_anch.weights.best",
+      "hidden_size": 400,
+      "sha256": "453fa330381d33480b6720e14ed189f08a156394d6e4ad965b283e8fd45b7b04"
+    },
+    {
+      "name": "sl_s9_prim_anch.weights.best",
+      "hidden_size": 400,
+      "sha256": "453fa330381d33480b6720e14ed189f08a156394d6e4ad965b283e8fd45b7b04"
+    },
+    {
+      "name": "sl_s11_bg_deep.weights.best",
+      "hidden_size": 400,
+      "sha256": "621031738d7def6186a98c5944bacbdcf1cc912588bac3aad7bb99d00f3a7a80"
+    },
+    {
+      "name": "sl_s11_bg_middle.weights.best",
+      "hidden_size": 400,
+      "sha256": "e2c01a4caf321a96ea85d1bb706a94deeb5facb6a3f38285e38eb41087921059"
+    },
+    {
+      "name": "sl_s11_bg_double.weights.best",
+      "hidden_size": 400,
+      "sha256": "84f4a48e7393fdf5774295d66c0c8c90d90723f46eeb83135a750dc9a9bf600b"
+    },
+    {
+      "name": "sl_s11_bg_p3.weights.best",
+      "hidden_size": 400,
+      "sha256": "f793cc34fa20f5de29d0564e95d6c9408f4632e47ef9f4d502483a8a97a82268"
+    },
+    {
+      "name": "sl_s11_bg_containment.weights.best",
+      "hidden_size": 400,
+      "sha256": "6c9b8aad4b6694cba7aa1b83c616020b6e8aa922b7b7b99cf27b7558ffe964a1"
+    },
+    {
+      "name": "sl_s11_bg_snake.weights.best",
+      "hidden_size": 400,
+      "sha256": "4604df0029736b1117c92291fe1d0735120d9699237fb86c13b029ed13ac1ba6"
+    },
+    {
+      "name": "sl_s11_bg_massive.weights.best",
+      "hidden_size": 400,
+      "sha256": "d8960a41f2fd62467644546cbf9385b326e23da8cbc8e4577010aaa6bd8a0ce0"
+    }
+  ],
+  "bearoff_sha256": "907bbe0042dadfa14840a9f470b6b5adac213d5b2c17dc0e41aec27b087e3fe6",
+  "reference_manifest_sha256": "0a1100ae991cac3c17139cd4f5187e62da79af6525c13a1343d477c754c14cdf",
+  "levels": [
+    "1ply",
+    "2ply",
+    "3ply",
+    "4ply",
+    "truncated1",
+    "truncated2",
+    "truncated3"
+  ],
+  "results": {
+    "1ply": {
+      "checker_play": {
+        "calls": 100,
+        "total_ms": 5.657413,
+        "median_ms": 0.038979,
+        "p95_ms": 0.144667,
+        "rollout_error": {
+          "equity": {
+            "n": 378,
+            "mae": 0.028855997428031355
+          },
+          "cubeless_equity": {
+            "n": 378,
+            "mae": 0.026620020228770466
+          },
+          "p.win": {
+            "n": 378,
+            "mae": 0.008412815788208893
+          },
+          "p.gammon_win": {
+            "n": 378,
+            "mae": 0.007883763560817644
+          },
+          "p.backgammon_win": {
+            "n": 378,
+            "mae": 0.003392621062763153
+          },
+          "p.gammon_loss": {
+            "n": 378,
+            "mae": 0.009020975851294358
+          },
+          "p.backgammon_loss": {
+            "n": 378,
+            "mae": 0.0032474409062194505
+          }
+        },
+        "decisions": {
+          "matches_reference_top_board": 82,
+          "best_board_has_rollout": 99
+        },
+        "checker_depths_on_rollout_endpoints": {
+          "1-ply": 378
+        }
+      },
+      "cube_action": {
+        "calls": 100,
+        "total_ms": 1.273832,
+        "median_ms": 0.0114375,
+        "p95_ms": 0.016916,
+        "rollout_error": {
+          "equity_nd": {
+            "n": 100,
+            "mae": 0.0644861506856978
+          },
+          "equity_dt": {
+            "n": 100,
+            "mae": 0.08731750541832298
+          },
+          "equity_dp": {
+            "n": 100,
+            "mae": 0.0
+          },
+          "optimal_equity": {
+            "n": 100,
+            "mae": 0.06303631225600839
+          },
+          "cubeless_equity": {
+            "n": 100,
+            "mae": 0.03608048671856522
+          },
+          "p.win": {
+            "n": 100,
+            "mae": 0.012011432349681854
+          },
+          "p.gammon_win": {
+            "n": 100,
+            "mae": 0.011474006308954659
+          },
+          "p.backgammon_win": {
+            "n": 100,
+            "mae": 0.005566682611861609
+          },
+          "p.gammon_loss": {
+            "n": 100,
+            "mae": 0.006937911459834609
+          },
+          "p.backgammon_loss": {
+            "n": 100,
+            "mae": 0.00511977003219755
+          }
+        },
+        "decisions": {
+          "matches_reference_cube_action": 88
+        },
+        "checker_depths_on_rollout_endpoints": {}
+      },
+      "post_move_analytics": {
+        "calls": 100,
+        "total_ms": 0.74146,
+        "median_ms": 0.0071045,
+        "p95_ms": 0.009667,
+        "rollout_error": {
+          "cubeful_equity": {
+            "n": 100,
+            "mae": 0.07487883688881994
+          },
+          "cubeless_equity": {
+            "n": 100,
+            "mae": 0.03611796433106065
+          },
+          "p.win": {
+            "n": 100,
+            "mae": 0.012030173974926584
+          },
+          "p.gammon_win": {
+            "n": 100,
+            "mae": 0.006937911459834609
+          },
+          "p.backgammon_win": {
+            "n": 100,
+            "mae": 0.00511977003219755
+          },
+          "p.gammon_loss": {
+            "n": 100,
+            "mae": 0.011474006308954659
+          },
+          "p.backgammon_loss": {
+            "n": 100,
+            "mae": 0.005566682611861609
+          }
+        },
+        "decisions": {},
+        "checker_depths_on_rollout_endpoints": {}
+      }
+    },
+    "2ply": {
+      "checker_play": {
+        "calls": 100,
+        "total_ms": 106.728217,
+        "median_ms": 1.0009165,
+        "p95_ms": 2.262,
+        "rollout_error": {
+          "equity": {
+            "n": 378,
+            "mae": 0.023206590591834858
+          },
+          "cubeless_equity": {
+            "n": 378,
+            "mae": 0.01927188842578548
+          },
+          "p.win": {
+            "n": 378,
+            "mae": 0.005390458417787438
+          },
+          "p.gammon_win": {
+            "n": 378,
+            "mae": 0.00690419734408512
+          },
+          "p.backgammon_win": {
+            "n": 378,
+            "mae": 0.0027285492659976677
+          },
+          "p.gammon_loss": {
+            "n": 378,
+            "mae": 0.0074837532201525725
+          },
+          "p.backgammon_loss": {
+            "n": 378,
+            "mae": 0.003319508377368897
+          }
+        },
+        "decisions": {
+          "matches_reference_top_board": 82,
+          "best_board_has_rollout": 100
+        },
+        "checker_depths_on_rollout_endpoints": {
+          "2-ply": 306,
+          "1-ply": 72
+        }
+      },
+      "cube_action": {
+        "calls": 100,
+        "total_ms": 30.830169,
+        "median_ms": 0.290709,
+        "p95_ms": 0.567583,
+        "rollout_error": {
+          "equity_nd": {
+            "n": 100,
+            "mae": 0.054953124448657034
+          },
+          "equity_dt": {
+            "n": 100,
+            "mae": 0.062736442591995
+          },
+          "equity_dp": {
+            "n": 100,
+            "mae": 0.0
+          },
+          "optimal_equity": {
+            "n": 100,
+            "mae": 0.050183115676045414
+          },
+          "cubeless_equity": {
+            "n": 100,
+            "mae": 0.027957566790282728
+          },
+          "p.win": {
+            "n": 100,
+            "mae": 0.008485690653324128
+          },
+          "p.gammon_win": {
+            "n": 100,
+            "mae": 0.008121209238552939
+          },
+          "p.backgammon_win": {
+            "n": 100,
+            "mae": 0.005412289173619058
+          },
+          "p.gammon_loss": {
+            "n": 100,
+            "mae": 0.006657173933498157
+          },
+          "p.backgammon_loss": {
+            "n": 100,
+            "mae": 0.005106400490913359
+          }
+        },
+        "decisions": {
+          "matches_reference_cube_action": 88
+        },
+        "checker_depths_on_rollout_endpoints": {}
+      },
+      "post_move_analytics": {
+        "calls": 100,
+        "total_ms": 12.952745,
+        "median_ms": 0.1379165,
+        "p95_ms": 0.205791,
+        "rollout_error": {
+          "cubeful_equity": {
+            "n": 100,
+            "mae": 0.06490197602659464
+          },
+          "cubeless_equity": {
+            "n": 100,
+            "mae": 0.027825301867851523
+          },
+          "p.win": {
+            "n": 100,
+            "mae": 0.008382975701242685
+          },
+          "p.gammon_win": {
+            "n": 100,
+            "mae": 0.006661691244379213
+          },
+          "p.backgammon_win": {
+            "n": 100,
+            "mae": 0.005106121384597202
+          },
+          "p.gammon_loss": {
+            "n": 100,
+            "mae": 0.008225004638907948
+          },
+          "p.backgammon_loss": {
+            "n": 100,
+            "mae": 0.00540928943366481
+          }
+        },
+        "decisions": {},
+        "checker_depths_on_rollout_endpoints": {}
+      }
+    },
+    "3ply": {
+      "checker_play": {
+        "calls": 100,
+        "total_ms": 4033.675956,
+        "median_ms": 24.245479,
+        "p95_ms": 109.0975,
+        "rollout_error": {
+          "equity": {
+            "n": 378,
+            "mae": 0.019430847331166467
+          },
+          "cubeless_equity": {
+            "n": 378,
+            "mae": 0.017543447250253755
+          },
+          "p.win": {
+            "n": 378,
+            "mae": 0.005070324573231578
+          },
+          "p.gammon_win": {
+            "n": 378,
+            "mae": 0.0050695176614259305
+          },
+          "p.backgammon_win": {
+            "n": 378,
+            "mae": 0.002637242516246451
+          },
+          "p.gammon_loss": {
+            "n": 378,
+            "mae": 0.005773496416795846
+          },
+          "p.backgammon_loss": {
+            "n": 378,
+            "mae": 0.003065100243921891
+          }
+        },
+        "decisions": {
+          "matches_reference_top_board": 88,
+          "best_board_has_rollout": 100
+        },
+        "checker_depths_on_rollout_endpoints": {
+          "3-ply": 378
+        }
+      },
+      "cube_action": {
+        "calls": 100,
+        "total_ms": 363.883124,
+        "median_ms": 3.3478955,
+        "p95_ms": 7.995416,
+        "rollout_error": {
+          "equity_nd": {
+            "n": 100,
+            "mae": 0.0429475037381053
+          },
+          "equity_dt": {
+            "n": 100,
+            "mae": 0.05057674456387758
+          },
+          "equity_dp": {
+            "n": 100,
+            "mae": 0.0
+          },
+          "optimal_equity": {
+            "n": 100,
+            "mae": 0.044563567005097865
+          },
+          "cubeless_equity": {
+            "n": 100,
+            "mae": 0.027812443375587463
+          },
+          "p.win": {
+            "n": 100,
+            "mae": 0.008722940981388093
+          },
+          "p.gammon_win": {
+            "n": 100,
+            "mae": 0.00792346781493639
+          },
+          "p.backgammon_win": {
+            "n": 100,
+            "mae": 0.005324011040670769
+          },
+          "p.gammon_loss": {
+            "n": 100,
+            "mae": 0.006069143388020635
+          },
+          "p.backgammon_loss": {
+            "n": 100,
+            "mae": 0.005047375556846134
+          }
+        },
+        "decisions": {
+          "matches_reference_cube_action": 95
+        },
+        "checker_depths_on_rollout_endpoints": {}
+      },
+      "post_move_analytics": {
+        "calls": 100,
+        "total_ms": 166.024372,
+        "median_ms": 1.745,
+        "p95_ms": 2.835584,
+        "rollout_error": {
+          "cubeful_equity": {
+            "n": 100,
+            "mae": 0.0702810975164175
+          },
+          "cubeless_equity": {
+            "n": 100,
+            "mae": 0.02770865122865871
+          },
+          "p.win": {
+            "n": 100,
+            "mae": 0.008716976288706064
+          },
+          "p.gammon_win": {
+            "n": 100,
+            "mae": 0.006096878995893817
+          },
+          "p.backgammon_win": {
+            "n": 100,
+            "mae": 0.005049041613483212
+          },
+          "p.gammon_loss": {
+            "n": 100,
+            "mae": 0.008021107557264217
+          },
+          "p.backgammon_loss": {
+            "n": 100,
+            "mae": 0.005323890084451079
+          }
+        },
+        "decisions": {},
+        "checker_depths_on_rollout_endpoints": {}
+      }
+    },
+    "4ply": {
+      "checker_play": {
+        "calls": 100,
+        "total_ms": 67192.435668,
+        "median_ms": 334.745854,
+        "p95_ms": 1904.391042,
+        "rollout_error": {
+          "equity": {
+            "n": 378,
+            "mae": 0.01606884281299801
+          },
+          "cubeless_equity": {
+            "n": 378,
+            "mae": 0.012233016592840729
+          },
+          "p.win": {
+            "n": 378,
+            "mae": 0.003877520475854042
+          },
+          "p.gammon_win": {
+            "n": 378,
+            "mae": 0.004633624731735295
+          },
+          "p.backgammon_win": {
+            "n": 378,
+            "mae": 0.0016745618043085692
+          },
+          "p.gammon_loss": {
+            "n": 378,
+            "mae": 0.00515452411095925
+          },
+          "p.backgammon_loss": {
+            "n": 378,
+            "mae": 0.0030418217689447747
+          }
+        },
+        "decisions": {
+          "matches_reference_top_board": 90,
+          "best_board_has_rollout": 100
+        },
+        "checker_depths_on_rollout_endpoints": {
+          "4-ply": 378
+        }
+      },
+      "cube_action": {
+        "calls": 100,
+        "total_ms": 7914.770246,
+        "median_ms": 85.1995625,
+        "p95_ms": 157.923083,
+        "rollout_error": {
+          "equity_nd": {
+            "n": 100,
+            "mae": 0.03459257395938039
+          },
+          "equity_dt": {
+            "n": 100,
+            "mae": 0.03887130908668041
+          },
+          "equity_dp": {
+            "n": 100,
+            "mae": 0.0
+          },
+          "optimal_equity": {
+            "n": 100,
+            "mae": 0.0360991151817143
+          },
+          "cubeless_equity": {
+            "n": 100,
+            "mae": 0.02078081972897053
+          },
+          "p.win": {
+            "n": 100,
+            "mae": 0.0059917673468589784
+          },
+          "p.gammon_win": {
+            "n": 100,
+            "mae": 0.007067649831313974
+          },
+          "p.backgammon_win": {
+            "n": 100,
+            "mae": 0.005228642726529244
+          },
+          "p.gammon_loss": {
+            "n": 100,
+            "mae": 0.0061495182807058055
+          },
+          "p.backgammon_loss": {
+            "n": 100,
+            "mae": 0.00511710824341506
+          }
+        },
+        "decisions": {
+          "matches_reference_cube_action": 98
+        },
+        "checker_depths_on_rollout_endpoints": {}
+      },
+      "post_move_analytics": {
+        "calls": 100,
+        "total_ms": 3179.562666,
+        "median_ms": 36.284604,
+        "p95_ms": 57.688917,
+        "rollout_error": {
+          "cubeful_equity": {
+            "n": 100,
+            "mae": 0.05986424883827567
+          },
+          "cubeless_equity": {
+            "n": 100,
+            "mae": 0.02127819856186676
+          },
+          "p.win": {
+            "n": 100,
+            "mae": 0.006193651799112559
+          },
+          "p.gammon_win": {
+            "n": 100,
+            "mae": 0.006142449874322224
+          },
+          "p.backgammon_win": {
+            "n": 100,
+            "mae": 0.0051171041595110016
+          },
+          "p.gammon_loss": {
+            "n": 100,
+            "mae": 0.007125734702011686
+          },
+          "p.backgammon_loss": {
+            "n": 100,
+            "mae": 0.005234688930923142
+          }
+        },
+        "decisions": {},
+        "checker_depths_on_rollout_endpoints": {}
+      }
+    },
+    "truncated1": {
+      "checker_play": {
+        "calls": 100,
+        "total_ms": 6077.823207,
+        "median_ms": 47.982188,
+        "p95_ms": 135.983292,
+        "rollout_error": {
+          "equity": {
+            "n": 378,
+            "mae": 0.017001926415042237
+          },
+          "cubeless_equity": {
+            "n": 378,
+            "mae": 0.014707244539995121
+          },
+          "p.win": {
+            "n": 378,
+            "mae": 0.0039386274010715875
+          },
+          "p.gammon_win": {
+            "n": 378,
+            "mae": 0.005719550192269031
+          },
+          "p.backgammon_win": {
+            "n": 378,
+            "mae": 0.0027329243342641175
+          },
+          "p.gammon_loss": {
+            "n": 378,
+            "mae": 0.005345372492536183
+          },
+          "p.backgammon_loss": {
+            "n": 378,
+            "mae": 0.002986958362306577
+          }
+        },
+        "decisions": {
+          "matches_reference_top_board": 89,
+          "best_board_has_rollout": 100
+        },
+        "checker_depths_on_rollout_endpoints": {
+          "Rollout": 302,
+          "1-ply": 76
+        }
+      },
+      "cube_action": {
+        "calls": 100,
+        "total_ms": 2185.094966,
+        "median_ms": 20.018375,
+        "p95_ms": 53.543209,
+        "rollout_error": {
+          "equity_nd": {
+            "n": 100,
+            "mae": 0.02730462169274688
+          },
+          "equity_dt": {
+            "n": 100,
+            "mae": 0.03455639623105526
+          },
+          "equity_dp": {
+            "n": 100,
+            "mae": 0.0
+          },
+          "optimal_equity": {
+            "n": 100,
+            "mae": 0.028372202571481465
+          },
+          "cubeless_equity": {
+            "n": 100,
+            "mae": 0.01979825470596552
+          },
+          "p.win": {
+            "n": 100,
+            "mae": 0.00579705536365509
+          },
+          "p.gammon_win": {
+            "n": 100,
+            "mae": 0.006335421461271738
+          },
+          "p.backgammon_win": {
+            "n": 100,
+            "mae": 0.005259442347299342
+          },
+          "p.gammon_loss": {
+            "n": 100,
+            "mae": 0.005748786611890111
+          },
+          "p.backgammon_loss": {
+            "n": 100,
+            "mae": 0.005082541264257827
+          }
+        },
+        "decisions": {
+          "matches_reference_cube_action": 98
+        },
+        "checker_depths_on_rollout_endpoints": {}
+      },
+      "post_move_analytics": {
+        "calls": 100,
+        "total_ms": 1764.658748,
+        "median_ms": 20.489979499999997,
+        "p95_ms": 29.0455,
+        "rollout_error": {
+          "cubeful_equity": {
+            "n": 100,
+            "mae": 0.028372202571481465
+          },
+          "cubeless_equity": {
+            "n": 100,
+            "mae": 0.019852276779711246
+          },
+          "p.win": {
+            "n": 100,
+            "mae": 0.005824066400527954
+          },
+          "p.gammon_win": {
+            "n": 100,
+            "mae": 0.005748786611890111
+          },
+          "p.backgammon_win": {
+            "n": 100,
+            "mae": 0.005082541264257827
+          },
+          "p.gammon_loss": {
+            "n": 100,
+            "mae": 0.006335421461271738
+          },
+          "p.backgammon_loss": {
+            "n": 100,
+            "mae": 0.005259442347299342
+          }
+        },
+        "decisions": {},
+        "checker_depths_on_rollout_endpoints": {}
+      }
+    },
+    "truncated2": {
+      "checker_play": {
+        "calls": 100,
+        "total_ms": 47388.778538,
+        "median_ms": 441.2739165,
+        "p95_ms": 1298.344,
+        "rollout_error": {
+          "equity": {
+            "n": 378,
+            "mae": 0.011875714353509663
+          },
+          "cubeless_equity": {
+            "n": 378,
+            "mae": 0.012368969306935639
+          },
+          "p.win": {
+            "n": 378,
+            "mae": 0.003245976108467861
+          },
+          "p.gammon_win": {
+            "n": 378,
+            "mae": 0.004654880901165315
+          },
+          "p.backgammon_win": {
+            "n": 378,
+            "mae": 0.0018652619080611256
+          },
+          "p.gammon_loss": {
+            "n": 378,
+            "mae": 0.004458244435899782
+          },
+          "p.backgammon_loss": {
+            "n": 378,
+            "mae": 0.002798361562037231
+          }
+        },
+        "decisions": {
+          "matches_reference_top_board": 90,
+          "best_board_has_rollout": 100
+        },
+        "checker_depths_on_rollout_endpoints": {
+          "Rollout": 329,
+          "2-ply": 49
+        }
+      },
+      "cube_action": {
+        "calls": 100,
+        "total_ms": 17924.940498,
+        "median_ms": 215.09579150000002,
+        "p95_ms": 301.19375,
+        "rollout_error": {
+          "equity_nd": {
+            "n": 100,
+            "mae": 0.028849956300109624
+          },
+          "equity_dt": {
+            "n": 100,
+            "mae": 0.03993067096918821
+          },
+          "equity_dp": {
+            "n": 100,
+            "mae": 0.0
+          },
+          "optimal_equity": {
+            "n": 100,
+            "mae": 0.030865630116313696
+          },
+          "cubeless_equity": {
+            "n": 100,
+            "mae": 0.0227343213185668
+          },
+          "p.win": {
+            "n": 100,
+            "mae": 0.007029149830341339
+          },
+          "p.gammon_win": {
+            "n": 100,
+            "mae": 0.0063513084519315035
+          },
+          "p.backgammon_win": {
+            "n": 100,
+            "mae": 0.005281483194820282
+          },
+          "p.gammon_loss": {
+            "n": 100,
+            "mae": 0.004555957233901822
+          },
+          "p.backgammon_loss": {
+            "n": 100,
+            "mae": 0.004947419977009133
+          }
+        },
+        "decisions": {
+          "matches_reference_cube_action": 96
+        },
+        "checker_depths_on_rollout_endpoints": {}
+      },
+      "post_move_analytics": {
+        "calls": 100,
+        "total_ms": 17926.402833,
+        "median_ms": 217.87295849999998,
+        "p95_ms": 297.056708,
+        "rollout_error": {
+          "cubeful_equity": {
+            "n": 100,
+            "mae": 0.030865630116313696
+          },
+          "cubeless_equity": {
+            "n": 100,
+            "mae": 0.022746134959161283
+          },
+          "p.win": {
+            "n": 100,
+            "mae": 0.007035056948661804
+          },
+          "p.gammon_win": {
+            "n": 100,
+            "mae": 0.004555957233901822
+          },
+          "p.backgammon_win": {
+            "n": 100,
+            "mae": 0.004947419977009133
+          },
+          "p.gammon_loss": {
+            "n": 100,
+            "mae": 0.0063513084519315035
+          },
+          "p.backgammon_loss": {
+            "n": 100,
+            "mae": 0.005281483194820282
+          }
+        },
+        "decisions": {},
+        "checker_depths_on_rollout_endpoints": {}
+      }
+    },
+    "truncated3": {
+      "checker_play": {
+        "calls": 100,
+        "total_ms": 259759.151961,
+        "median_ms": 1969.329625,
+        "p95_ms": 6674.207416,
+        "rollout_error": {
+          "equity": {
+            "n": 378,
+            "mae": 0.010706546630288503
+          },
+          "cubeless_equity": {
+            "n": 378,
+            "mae": 0.01109570147123141
+          },
+          "p.win": {
+            "n": 378,
+            "mae": 0.002789064454066292
+          },
+          "p.gammon_win": {
+            "n": 378,
+            "mae": 0.004590810405596321
+          },
+          "p.backgammon_win": {
+            "n": 378,
+            "mae": 0.0015423003600645844
+          },
+          "p.gammon_loss": {
+            "n": 378,
+            "mae": 0.004302938025766292
+          },
+          "p.backgammon_loss": {
+            "n": 378,
+            "mae": 0.0026662554754873424
+          }
+        },
+        "decisions": {
+          "matches_reference_top_board": 92,
+          "best_board_has_rollout": 100
+        },
+        "checker_depths_on_rollout_endpoints": {
+          "Rollout": 356,
+          "2-ply": 22
+        }
+      },
+      "cube_action": {
+        "calls": 100,
+        "total_ms": 103434.896667,
+        "median_ms": 1098.9078335,
+        "p95_ms": 1911.536917,
+        "rollout_error": {
+          "equity_nd": {
+            "n": 100,
+            "mae": 0.01776079601375386
+          },
+          "equity_dt": {
+            "n": 100,
+            "mae": 0.025098295118659734
+          },
+          "equity_dp": {
+            "n": 100,
+            "mae": 0.0
+          },
+          "optimal_equity": {
+            "n": 100,
+            "mae": 0.018914641502778978
+          },
+          "cubeless_equity": {
+            "n": 100,
+            "mae": 0.016584324426949026
+          },
+          "p.win": {
+            "n": 100,
+            "mae": 0.003861064016819
+          },
+          "p.gammon_win": {
+            "n": 100,
+            "mae": 0.005466427269593099
+          },
+          "p.backgammon_win": {
+            "n": 100,
+            "mae": 0.005237288348806146
+          },
+          "p.gammon_loss": {
+            "n": 100,
+            "mae": 0.004301417502416242
+          },
+          "p.backgammon_loss": {
+            "n": 100,
+            "mae": 0.004902721312154199
+          }
+        },
+        "decisions": {
+          "matches_reference_cube_action": 98
+        },
+        "checker_depths_on_rollout_endpoints": {}
+      },
+      "post_move_analytics": {
+        "calls": 100,
+        "total_ms": 103277.727293,
+        "median_ms": 1104.2113749999999,
+        "p95_ms": 1903.76775,
+        "rollout_error": {
+          "cubeful_equity": {
+            "n": 100,
+            "mae": 0.018914641502778978
+          },
+          "cubeless_equity": {
+            "n": 100,
+            "mae": 0.016601525135338305
+          },
+          "p.win": {
+            "n": 100,
+            "mae": 0.0038696640729904176
+          },
+          "p.gammon_win": {
+            "n": 100,
+            "mae": 0.004301417502416242
+          },
+          "p.backgammon_win": {
+            "n": 100,
+            "mae": 0.004902721312154199
+          },
+          "p.gammon_loss": {
+            "n": 100,
+            "mae": 0.005466427269593099
+          },
+          "p.backgammon_loss": {
+            "n": 100,
+            "mae": 0.005237288348806146
+          }
+        },
+        "decisions": {},
+        "checker_depths_on_rollout_endpoints": {}
+      }
+    }
+  },
+  "load_avg_end": [
+    7.904296875,
+    6.9501953125,
+    5.10693359375
+  ],
+  "finished_utc": "2026-11-27T15:44:55.109004+00:00",
+  "results_sha256": "12417128b608c5e74ff5c651f4624304f7785f27637c283fbb5b503f6405a8e4"
+}
