@@ -45,14 +45,19 @@ add_library(bgbot_lib STATIC
     ${BGBOT_CPU_ROOT}/src/game.cpp
     ${BGBOT_CPU_ROOT}/src/benchmark.cpp
     ${BGBOT_CPU_ROOT}/src/encoding.cpp
+    ${BGBOT_CPU_ROOT}/src/game_plan.cpp
     ${BGBOT_CPU_ROOT}/src/neural_net.cpp
     ${BGBOT_CPU_ROOT}/src/training.cpp
     ${BGBOT_CPU_ROOT}/src/multipy.cpp
-    ${BGBOT_CPU_ROOT}/src/rollout.cpp
+    ${BGBOT_CPU_ROOT}/src/rollout_dice.cpp
+    ${BGBOT_CPU_ROOT}/src/rollout_cache.cpp
+    ${BGBOT_CPU_ROOT}/src/rollout_trial.cpp
+    ${BGBOT_CPU_ROOT}/src/rollout_runner.cpp
     ${BGBOT_CPU_ROOT}/src/cube.cpp
     ${BGBOT_CPU_ROOT}/src/cube_eval.cpp
     ${BGBOT_CPU_ROOT}/src/match_equity.cpp
-    ${BGBOT_CPU_ROOT}/src/bearoff.cpp
+    ${BGBOT_CPU_ROOT}/src/bearoff_db.cpp
+    ${BGBOT_CPU_ROOT}/src/bearoff_strategy.cpp
 )
 target_include_directories(bgbot_lib PUBLIC ${BGBOT_CPU_ROOT}/include)
 target_compile_options(bgbot_lib PRIVATE ${BGBOT_OPT_FLAGS})
@@ -85,32 +90,32 @@ endif()
 
 if(BGBOT_BUILD_APPS)
     # 4-ply cube profiler
-    add_executable(bgbot_profile_4ply ${BGBOT_CPU_ROOT}/src/profile_cube_4ply.cpp)
+    add_executable(bgbot_profile_4ply ${BGBOT_CPU_ROOT}/apps/profile_cube_4ply.cpp)
     target_link_libraries(bgbot_profile_4ply PRIVATE bgbot_lib)
 
     # Truncated rollout benchmark/profilers
-    add_executable(benchmark_truncated_rollout ${BGBOT_CPU_ROOT}/src/benchmark_truncated_rollout.cpp)
+    add_executable(benchmark_truncated_rollout ${BGBOT_CPU_ROOT}/apps/benchmark_truncated_rollout.cpp)
     target_link_libraries(benchmark_truncated_rollout PRIVATE bgbot_lib)
 
-    add_executable(benchmark_3t ${BGBOT_CPU_ROOT}/src/benchmark_3t.cpp)
+    add_executable(benchmark_3t ${BGBOT_CPU_ROOT}/apps/benchmark_3t.cpp)
     target_link_libraries(benchmark_3t PRIVATE bgbot_lib)
 
-    add_executable(benchmark_4ply ${BGBOT_CPU_ROOT}/src/benchmark_4ply.cpp)
+    add_executable(benchmark_4ply ${BGBOT_CPU_ROOT}/apps/benchmark_4ply.cpp)
     target_link_libraries(benchmark_4ply PRIVATE bgbot_lib)
 
-    add_executable(benchmark_4ply_opt ${BGBOT_CPU_ROOT}/src/benchmark_4ply_opt.cpp)
+    add_executable(benchmark_4ply_opt ${BGBOT_CPU_ROOT}/apps/benchmark_4ply_opt.cpp)
     target_link_libraries(benchmark_4ply_opt PRIVATE bgbot_lib)
 
-    add_executable(test_4ply_accuracy ${BGBOT_CPU_ROOT}/src/test_4ply_accuracy.cpp)
+    add_executable(test_4ply_accuracy ${BGBOT_CPU_ROOT}/apps/test_4ply_accuracy.cpp)
     target_link_libraries(test_4ply_accuracy PRIVATE bgbot_lib)
 
-    add_executable(profile_3t ${BGBOT_CPU_ROOT}/src/profile_3t.cpp)
+    add_executable(profile_3t ${BGBOT_CPU_ROOT}/apps/profile_3t.cpp)
     target_link_libraries(profile_3t PRIVATE bgbot_lib)
 
-    add_executable(profile_3t_detailed ${BGBOT_CPU_ROOT}/src/profile_3t_detailed.cpp)
+    add_executable(profile_3t_detailed ${BGBOT_CPU_ROOT}/apps/profile_3t_detailed.cpp)
     target_link_libraries(profile_3t_detailed PRIVATE bgbot_lib)
 
-    add_executable(profile_cube_benchmark ${BGBOT_CPU_ROOT}/src/profile_cube_benchmark.cpp)
+    add_executable(profile_cube_benchmark ${BGBOT_CPU_ROOT}/apps/profile_cube_benchmark.cpp)
     target_link_libraries(profile_cube_benchmark PRIVATE bgbot_lib)
 endif()
 
@@ -118,10 +123,10 @@ if(BGBOT_BUILD_EXPERIMENTS)
     foreach(app IN ITEMS
             benchmark_3t_experiment benchmark_3t_profile profile_0ply
             profile_nn_inference profile_training test_benchmark_crash)
-        add_executable(${app} ${BGBOT_CPU_ROOT}/src/${app}.cpp)
+        add_executable(${app} ${BGBOT_CPU_ROOT}/apps/${app}.cpp)
         target_link_libraries(${app} PRIVATE bgbot_lib)
     endforeach()
-    add_executable(bgbot_pubeval_demo ${BGBOT_CPU_ROOT}/src/main.cpp)
+    add_executable(bgbot_pubeval_demo ${BGBOT_CPU_ROOT}/apps/main.cpp)
     target_link_libraries(bgbot_pubeval_demo PRIVATE bgbot_lib)
 endif()
 

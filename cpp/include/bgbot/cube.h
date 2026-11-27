@@ -310,6 +310,49 @@ struct TwoPlyDetails {
     std::vector<PlayerRollDetail> dt_player_rolls; // DT scenario: 21 entries
 };
 
+// Compute a CubeDecision from raw ND and DT values.
+//
+// Convention for raw inputs:
+//   - Money play: nd_raw is cubeful equity per current cube. dt_raw is either
+//     cubeful equity per *doubled* cube (dt_is_basis_scaled == false, as
+//     produced by cl2cf_money / cubeful_eval_recursive, multiplied by 2 here)
+//     or already scaled to current-cube units (dt_is_basis_scaled == true, as
+//     produced by cubeful_cube_decision rollouts).
+//   - Match play: nd_raw and dt_raw are both MWC values (dt_is_basis_scaled is
+//     ignored). The decision is made in MWC space (including post-Crawford
+//     auto-double) and all reported equities are normalized via mwc2eq at
+//     cube.cube_value.
+CubeDecision decision_from_raw_equities(
+    const CubeInfo& cube,
+    float nd_raw,
+    float dt_raw,
+    bool dt_is_basis_scaled = false);
+
+// Scale a standard error in MWC space to equity space by the local slope of
+// mwc2eq around `mean_mwc`. mwc2eq is piecewise linear, so a small numerical
+// derivative is exact within the active segment.
+float mwc_se_to_eq_se(float mwc_se, float mean_mwc,
+                      int away1, int away2, int cube_value,
+                      bool is_crawford);
+
+// Per-cube 1-ply cubeful candidate filter, unioned across `cubes`.
+// Evaluates 1-ply probabilities for all `candidates` via `filter_strategy`
+// (clamped to each candidate board), ranks candidates per cube by `cl2cf`
+// (breaking exact ties on `cubeless_equity`), keeps up to `max_moves` within
+// `threshold` of each cube's best, and returns the deduplicated survivor
+// indices. If `probs_out` is non-null, fills it with the clamped per-candidate
+// probabilities.
+std::vector<int> filter_candidates_cubeful_1ply(
+    const Strategy& filter_strategy,
+    const std::vector<Board>& candidates,
+    const Board& pre_move_board,
+    const CubeInfo* cubes,
+    int n_cubes,
+    float cube_x,
+    int max_moves,
+    float threshold,
+    std::vector<std::array<float, NUM_OUTPUTS>>* probs_out = nullptr);
+
 // Compute cube decision for a pre-roll position (1-ply / raw NN).
 // `probs` are cubeless pre-roll probabilities from the player's perspective.
 // Uses Janowski interpolation with the given cube efficiency.
@@ -535,18 +578,5 @@ void clear_cubeful_eval_cache();
 // Fingerprint of a cube-state array. Used for the cubeful evaluation cache
 // keys and for validating shared cube-decision caches across rollout trials.
 uint64_t cube_state_fingerprint(const CubeInfo* cubes, int n);
-
-// Profiling counters for cubeful recursion (debug only)
-void reset_cubeful_counters();
-void print_cubeful_counters();
-
-struct CubefulCounters {
-    int64_t leaf_count;
-    int64_t internal_count;
-    int64_t cache_hit_count;
-    int64_t move_gen_count;
-    int64_t total_candidates;
-};
-CubefulCounters get_cubeful_counters();
 
 } // namespace bgbot
