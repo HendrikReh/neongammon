@@ -152,7 +152,8 @@ def main():
 
     import bgbot_cpp as native
     from neongammon import BatchModels
-    from neongammon.analyzer import _CubefulAnalyzer, _MultiPlyAnalyzer
+    from neongammon.cubeful import _CubefulAnalyzer
+    from neongammon.strategies import _MultiPlyAnalyzer
 
     models = BatchModels(bearoff_db=True)
     if models.bearoff_db is None:
