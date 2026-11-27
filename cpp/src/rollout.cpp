@@ -438,11 +438,6 @@ static void build_rollout_strategies(
     truncation_strat = base;
 }
 
-// Common post-construction init for both RolloutStrategy constructors.
-void RolloutStrategy_common_init(RolloutStrategy& self,
-                                  const RolloutConfig& config,
-                                  int cached_max_moves);
-
 RolloutStrategy::RolloutStrategy(std::shared_ptr<Strategy> base, RolloutConfig config)
     : base_(std::move(base))
     , config_(config)
