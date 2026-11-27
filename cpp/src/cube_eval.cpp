@@ -13,10 +13,10 @@
 //     updates per sibling) with per-candidate game-plan NN selection, then
 //     pick by 1-ply cubeful equity against the primary cube state.
 //   * At plies==2 internal nodes the leaf value of the picked move reuses the
-//     pick batch's NN output (leaf = invert(NN(chosen))) � no leaf NN evals.
+//     pick batch's NN output (leaf = invert(NN(chosen))), avoiding leaf NN evals.
 //   * The cubeless probs of the tree are accumulated through the same
-//     traversal and can be returned via probs_out � one walk serves both
-//     cubeful equities and cubeless probabilities.
+//     traversal. One walk can return both cubeful equities and the probabilities
+//     of the chosen continuations via probs_out.
 //   * Memoization is a per-thread cache keyed by (board, plies, cci, fTop,
 //     cube-state fingerprint); entries stay valid across calls and threads
 //     never invalidate each other. clear_cubeful_eval_cache() resets it.
@@ -526,9 +526,8 @@ struct EvalCtx {
 // Compute leaf values from precomputed post-move probs of the previous
 // mover's chosen board. `board` is the leaf pre-roll position (leaf mover's
 // POV); post_probs == strategy.evaluate_probs(flip(board), ...), i.e. the NN
-// output for the previous mover's post-move board � the same NN evaluation
-// the parent's pick batch already performed, so plies==2 subtrees evaluate
-// their leaves for free.
+// output for the previous mover's post-move board. The parent's pick batch
+// already evaluated it, so plies==2 subtrees can reuse it at the leaves.
 void leaf_from_post_probs(
     const Board& board,
     const CubeInfo aci_in[], int cci, bool fTop,
@@ -945,13 +944,17 @@ void eval_roll_node(
             p.ctx, p.batch_node, r, live_idx, cand_probs);
 
         // Cubeful pick vs the primary cube state with money cubeless tie-break.
+        const CubeInfo& primary_cube = p.aciCubePos[0];
+        const bool needs_cube_efficiency = !cube_is_dead(primary_cube);
         cf_vals.resize(n_eval);
         for (int c = 0; c < n_eval; ++c) {
-            const Board& cand = (*eval_candidates)[c];
-            bool crace = is_race(cand);
-            auto [pp, op] = pip_counts(cand);
-            float cube_x = cube_efficiency(cand_probs[c], crace, pp, op);
-            cf_vals[c] = cl2cf(cand_probs[c], p.aciCubePos[0], cube_x);
+            float cube_x = 0.0f;
+            if (needs_cube_efficiency) {
+                const Board& cand = (*eval_candidates)[c];
+                auto [pp, op] = pip_counts(cand);
+                cube_x = cube_efficiency(cand_probs[c], is_race(cand), pp, op);
+            }
+            cf_vals[c] = cl2cf(cand_probs[c], primary_cube, cube_x);
         }
         const int local_best =
             pick_best_with_tiebreak(cf_vals.data(), cand_probs.data(), n_eval);

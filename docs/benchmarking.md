@@ -638,6 +638,34 @@ python scripts/experiments/cube_3ply/measure_overlap.py \
   build/baseline build/overlap
 ```
 
+### Skipping cube efficiency for dead-cube candidate picks
+
+The cubeless probability traversal in `cube_action` uses a capped cube.
+Candidate scoring now skips the race check and pip counts when the cube
+has reached its cap, since the existing equity conversion ignores cube
+efficiency in that case. Both paths use the shared neural-network
+batching and move tie-break.
+
+On an Apple M4 Pro with macOS 27.0.1, CPython 3.14.7, Apple Clang 21,
+SDK 27.2, and the Stage 11 models, two runs measured warm 3-ply
+`cube_action` calls at four search threads and single-thread BLAS.
+Each run alternated the two Release builds across 32 fresh-process
+pairs and measured five warm calls per position after three warmups.
+All returned fields matched in both runs. Entries are median
+milliseconds for the baseline at `81aec61` and the patched build.
+
+| Position | Run 1, baseline → patched | Run 2, baseline → patched |
+| --- | ---: | ---: |
+| 5-away/4-away, centered | 1.556 → 1.547 | 1.548 → 1.572 |
+| Money, player owns the 2-cube | 5.399 → 5.210 | 5.358 → 5.191 |
+| Snake, centered money cube | 1.531 → 1.514 | 1.526 → 1.536 |
+
+The owned-money fixture improved by 3.1–3.5%. The two shorter fixtures
+varied in both directions. The comparison driver from the preceding
+experiment can also compare these builds.
+[Comparison driver](../scripts/experiments/cube_3ply/measure_overlap.py) ·
+[Issue #63](https://github.com/HendrikReh/neongammon/issues/63)
+
 ## Rollout and N-Ply Regression Benchmarks
 
 Saved-baseline regression scripts (each supports `--save`/`--compare` with a material band of `max(SE, 0.01)` for equities and `0.005` for probabilities; the cubeless rollout bench widens the prob band to each prob's own SE):
