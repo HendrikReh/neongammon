@@ -101,7 +101,7 @@ has positions. Constructing a 3-ply analyzer takes 17-20 ms instead of
 adapted 27 engine optimization commits for Apple Silicon (`BGBOT_USE_ACCELERATE=ON`),
 spanning:
 
-- **Cross-roll VR batching** ([`rollout_vr.h`](../cpp/include/bgbot/rollout_vr.h)):
+- **Cross-roll VR batching** ([`rollout_vr.h`](https://github.com/HendrikReh/neongammon/blob/main/cpp/include/bgbot/rollout_vr.h)):
   evaluates all 21 rolls' candidates in one grouped `cblas_sgemm` pass on Apple
   Accelerate with `VrEndpointDedup` endpoint deduplication (and a shared
   pre-roll hidden base on the portable path), eliminating redundant `Move1Cache`

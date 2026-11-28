@@ -73,7 +73,7 @@ VECLIB_MAXIMUM_THREADS=1 PYTHONPATH=build:python \
     python scripts/probe_five_ply.py --threads 4 > five-ply-pilot.json
 ```
 
-[The probe](../scripts/probe_five_ply.py) pins 16 rollout-tier rows from the
+[The probe](https://github.com/HendrikReh/neongammon/blob/main/scripts/probe_five_ply.py) pins 16 rollout-tier rows from the
 tracked money and five-point match benchmarks, with four checker and four cube
 rows per context. It carries each row's cube owner, value, and match score into
 the native search, with Jacoby and beavers enabled for money. For each checker
@@ -284,7 +284,7 @@ Median wall time per public Python call, in milliseconds. “First” is the fir
 | Money, player owns 2-cube | 9.05 | 4.66 | 5.97 | 2.83 | Double/take |
 | SNAKE, centered money cube | 3.51 | 2.05 | 1.56 | 0.60 | No double |
 
-All shared result fields, including ND/DT/DP equities, matched exactly for every pair. A second complete run returned median times within 0.06 ms of the first. The owned money cube had the largest absolute warm gap (3.14 ms). Profile the additional cubeless probability search on that fixture first. Any change to candidate reuse also needs comparison against the independent cubeless traversal, since the cube and cubeless policies can choose different continuations. [Parity cases](../tests/test_cube_candidate_batch_reuse.py)
+All shared result fields, including ND/DT/DP equities, matched exactly for every pair. A second complete run returned median times within 0.06 ms of the first. The owned money cube had the largest absolute warm gap (3.14 ms). Profile the additional cubeless probability search on that fixture first. Any change to candidate reuse also needs comparison against the independent cubeless traversal, since the cube and cubeless policies can choose different continuations. [Parity cases](https://github.com/HendrikReh/neongammon/blob/main/tests/test_cube_candidate_batch_reuse.py)
 
 To reproduce from the repository root, set `ENGINE_PYTHON` to the interpreter of the verified 3.2.0 installation and run the benchmark without concurrent builds or test suites.
 
@@ -306,7 +306,7 @@ A second run measured **3.11 ms** for the warm cubeless traversal (55.6%). This 
 
 Both builds produced identical rich results on every repeat. The decision-only method agreed on all nine shared fields, and the independent traversal used for per-roll details agreed exactly on all five probabilities and cubeless equity. For this fixture, measure how many candidate batches the cubeless traversal can reuse before changing the Accelerate batch policy.
 
-To reproduce, use a fresh build directory, the CPython 3.12 interpreter containing the official wheel (`ENGINE_PYTHON`), and CMake, Ninja and pybind11's CMake package on the build path. The patch adds timing probes to a disposable copy of the release source. The driver runs a fresh interpreter per build per pair, alternating the order. [Timer locations](../scripts/experiments/cube_3ply/phase-timers.patch) · [Parity checks and sample aggregation](../scripts/experiments/cube_3ply/measure_phases.py)
+To reproduce, use a fresh build directory, the CPython 3.12 interpreter containing the official wheel (`ENGINE_PYTHON`), and CMake, Ninja and pybind11's CMake package on the build path. The patch adds timing probes to a disposable copy of the release source. The driver runs a fresh interpreter per build per pair, alternating the order. [Timer locations](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/cube_3ply/phase-timers.patch) · [Parity checks and sample aggregation](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/cube_3ply/measure_phases.py)
 
 ```sh
 profile_dir="$PWD/build/cube-phase-profile"
@@ -350,7 +350,7 @@ Keep the current Accelerate policy on this workload. A broader lookup for identi
 
 On the verified seed-42 match fixture, normal and disabled sharing both matched the pristine **same-toolchain** build exactly on every field for 44 checker and 43 cube rows at 3-ply. The pristine build and official wheel agreed on all discrete fields. They matched exactly on 35/44 checker and 42/43 cube rows, with maximum absolute float differences of `7.75e-7` and `6.82e-13`. The local compiler was Apple Clang 21 (SDK 27.2) and the wheel records SDK 15.5. The official NeonDojo sidecar verifier independently matched scalar and batched results exactly on all 87 rows at **both 3- and 4-ply**.
 
-To reproduce, set `ENGINE_PYTHON` to the locked 3.2.1 interpreter and `FIXTURE_SCRIPT` to NeonDojo's `tools/open-sage/verify_game_batches.py`. Put CMake, Ninja and a Python interpreter with pybind11 on `PATH`. All diagnostic builds use a disposable export of tag `v3.2.1` under the supplied directory. The installed wheel supplies Python and model assets. [Build script](../scripts/experiments/cube_3ply/build_probes.sh) · [Native probes](../scripts/experiments/cube_3ply/candidate-probe.patch) · [Counting, timing and parity driver](../scripts/experiments/cube_3ply/measure_reuse.py)
+To reproduce, set `ENGINE_PYTHON` to the locked 3.2.1 interpreter and `FIXTURE_SCRIPT` to NeonDojo's `tools/open-sage/verify_game_batches.py`. Put CMake, Ninja and a Python interpreter with pybind11 on `PATH`. All diagnostic builds use a disposable export of tag `v3.2.1` under the supplied directory. The installed wheel supplies Python and model assets. [Build script](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/cube_3ply/build_probes.sh) · [Native probes](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/cube_3ply/candidate-probe.patch) · [Counting, timing and parity driver](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/cube_3ply/measure_reuse.py)
 
 ```sh
 export ENGINE_PYTHON
@@ -403,7 +403,7 @@ a Python interpreter with pybind11 on `PATH`. Set `ENGINE_PYTHON` to the locked
 CPython 3.12 NeonGammon 3.2.1 interpreter and `FIXTURE_SCRIPT` to NeonDojo's
 `tools/open-sage/verify_game_batches.py`. The driver loads one local extension per
 process and uses the installed wheel for Python code and model assets.
-[Timing and parity driver](../scripts/experiments/lazy_cube_cache/measure.py)
+[Timing and parity driver](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/lazy_cube_cache/measure.py)
 
 ```sh
 out=build/lazy-cache-ab
@@ -473,7 +473,7 @@ an App Store process using about one core.
 Set `ENGINE_PYTHON` to the verified 3.2.1 interpreter and `FIXTURE_SCRIPT` to
 NeonDojo's `tools/open-sage/verify_game_batches.py`. Put CMake, Ninja and Python
 with pybind11 on the build path. Both builds use the same compiler, SDK, source
-revision and verified model assets. [Build script](../scripts/experiments/pcore_pool/build.sh) · [Experimental patch](../scripts/experiments/pcore_pool/candidate.patch) · [Timing and parity driver](../scripts/experiments/pcore_pool/measure.py)
+revision and verified model assets. [Build script](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/pcore_pool/build.sh) · [Experimental patch](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/pcore_pool/candidate.patch) · [Timing and parity driver](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/pcore_pool/measure.py)
 
 ```sh
 exp=scripts/experiments/pcore_pool
@@ -551,11 +551,11 @@ Desktop services continued to run.
 Set `ENGINE_PYTHON` to the locked NeonGammon 3.2.1 interpreter and
 `FIXTURE_SCRIPT` to NeonDojo's `tools/open-sage/verify_game_batches.py`.
 Put CMake, Ninja and a Python interpreter with pybind11 on the build path.
-[Build script](../scripts/experiments/tiny_output/build.sh) ·
-[NEON candidate](../scripts/experiments/tiny_output/candidate.patch) ·
-[Dot-only control](../scripts/experiments/tiny_output/dot_only.patch) ·
-[Counter patch](../scripts/experiments/tiny_output/trace.patch) ·
-[Measurement driver](../scripts/experiments/tiny_output/measure.py)
+[Build script](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/tiny_output/build.sh) ·
+[NEON candidate](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/tiny_output/candidate.patch) ·
+[Dot-only control](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/tiny_output/dot_only.patch) ·
+[Counter patch](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/tiny_output/trace.patch) ·
+[Measurement driver](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/tiny_output/measure.py)
 
 ```sh
 exp=scripts/experiments/tiny_output
@@ -598,8 +598,8 @@ production engine retains the existing grouping.
 
 Set `ENGINE_PYTHON` and `FIXTURE_SCRIPT` as in the preceding experiment, with
 CMake, Ninja, and a Python interpreter with pybind11 on the build path.
-[Build script](../scripts/experiments/candidate_grouping/build.sh) ·
-[Experimental patch](../scripts/experiments/candidate_grouping/candidate.patch)
+[Build script](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/candidate_grouping/build.sh) ·
+[Experimental patch](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/candidate_grouping/candidate.patch)
 
 ```sh
 out=build/candidate-grouping-ab
@@ -628,9 +628,9 @@ process after three discarded warmups. Every returned field matched.
 
 The production path keeps the sequential search. Build two Release
 extensions from `44a207e` with Accelerate enabled, applying the
-[overlap patch](../scripts/experiments/cube_3ply/overlap_traversals.patch) to
+[overlap patch](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/cube_3ply/overlap_traversals.patch) to
 the second checkout. From the repository root, run the
-[comparison driver](../scripts/experiments/cube_3ply/measure_overlap.py)
+[comparison driver](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/cube_3ply/measure_overlap.py)
 with the directories containing those two extensions.
 
 ```sh
@@ -663,7 +663,7 @@ milliseconds for the baseline at `81aec61` and the patched build.
 The owned-money fixture improved by 3.1–3.5%. The two shorter fixtures
 varied in both directions. The comparison driver from the preceding
 experiment can also compare these builds.
-[Comparison driver](../scripts/experiments/cube_3ply/measure_overlap.py) ·
+[Comparison driver](https://github.com/HendrikReh/neongammon/blob/main/scripts/experiments/cube_3ply/measure_overlap.py) ·
 [Issue #63](https://github.com/HendrikReh/neongammon/issues/63)
 
 ## Rollout and N-Ply Regression Benchmarks
@@ -682,13 +682,13 @@ The fixed corpus covers 100 checker decisions, 100 cube decisions and the 100
 corresponding post-move positions. It includes money games and five-point
 matches, with frozen full-game rollout references. The M4 Pro baseline records
 public API timings and full outputs at 1–4 ply and 1T–3T.
-[Corpus and reproduction command](../data/multi_ply_benchmark/README.md) ·
-[M4 Pro baseline and rollout comparisons](../data/multi_ply_benchmark/baselines/m4-pro-20261127/README.md)
+[Corpus and reproduction command](https://github.com/HendrikReh/neongammon/blob/main/data/multi_ply_benchmark/README.md) ·
+[M4 Pro baseline and rollout comparisons](https://github.com/HendrikReh/neongammon/blob/main/data/multi_ply_benchmark/baselines/m4-pro-20261127/README.md)
 
 ### Apple Silicon Timing Baselines (v3.1.1, M4 Pro)
 
 For fast local latency checks without external position files, run
-[`scripts/archive/historical/bench_analyzer_overhead.py`](../scripts/archive/historical/bench_analyzer_overhead.py)
+[`scripts/archive/historical/bench_analyzer_overhead.py`](https://github.com/HendrikReh/neongammon/blob/main/scripts/archive/historical/bench_analyzer_overhead.py)
 against `stage11` with `BGBOT_USE_ACCELERATE=ON`. On an idle Apple Silicon M4 Pro
 at `v3.1.1` (3 rounds, median ms per call):
 

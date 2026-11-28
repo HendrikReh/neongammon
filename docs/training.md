@@ -17,7 +17,7 @@
 ## Training Pipeline
 
 Stage-specific training and benchmark recipes for Stages 4–10 live in
-[`scripts/archive/`](../scripts/archive/README.md). Their existing script paths
+[`scripts/archive/`](https://github.com/HendrikReh/neongammon/blob/main/scripts/archive/README.md). Their existing script paths
 also work. Archived recipes write their default experiment reports under `logs/`.
 
 **CRITICAL: TD pre-training is required before SL.** SL from random init finds

@@ -1,5 +1,3 @@
 # Documentation site (GitHub Pages). Build locally with:
-#   python -m pip install -r requirements-docs.txt && mkdocs serve
-mkdocs==1.6.1
-mkdocs-material==9.8.1
-pymdown-extensions==13.0
+#   python -m pip install -r requirements-docs.txt && zensical build --clean --strict
+zensical==0.1.4

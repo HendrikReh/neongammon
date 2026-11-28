@@ -4,7 +4,7 @@ NeonGammon has two entry points for different tasks. Use `simulate_game()` or
 `simulate_match()` to play out games with a policy. Use `BgBotAnalyzer` to rank
 moves, examine equities, or analyze cube decisions. PureTD is an explicit simulation policy. The analyzer defaults to cubeful Stage 11 at
 1-ply, with optional weights and evaluation levels. [Simulation API](simulation.md)
-· [Analyzer configuration](../python/neongammon/facade.py) · [Model registry](../python/neongammon/weights.py)
+· [Analyzer configuration](https://github.com/HendrikReh/neongammon/blob/main/python/neongammon/facade.py) · [Model registry](https://github.com/HendrikReh/neongammon/blob/main/python/neongammon/weights.py)
 
 ## Which engine plays the position?
 
@@ -71,7 +71,7 @@ both variables are unset, the explicit `default_money_policy()` factory looks fo
 and `build/puretd/cubeful.bin`. The tested filter requires a compatible ABI 7
 library that exports `bgc_set_search`. Missing or unloadable files, incompatible
 libraries and rejected models cause the factory to return `None`. An error
-from PureTD while selecting a move surfaces to the caller. [Loading and fallback](../python/neongammon/puretd.py)
+from PureTD while selecting a move surfaces to the caller. [Loading and fallback](https://github.com/HendrikReh/neongammon/blob/main/python/neongammon/puretd.py)
 
 ## How Stage 11 evaluates board positions
 
@@ -95,7 +95,7 @@ before the three backgame categories, then checks early containment before
 using the ordinary plan pair. A snake at the root can pin its network for
 contact nodes in the search. Race and bearoff positions retain their own
 evaluators. This routing applies when Stage 11 evaluates the position,
-including Cube decisions in the PureTD hybrid. [Network routing](../cpp/src/neural_net_routing.cpp)
+including Cube decisions in the PureTD hybrid. [Network routing](https://github.com/HendrikReh/neongammon/blob/main/cpp/src/neural_net_routing.cpp)
 · [Bearoff database](bearoff.md) · [Root routing](multi-ply.md#root-routing-pinned-nn-selection)
 
 ## Lookahead and move filters
@@ -113,7 +113,7 @@ corresponds to NeonGammon's `2ply`. The two filters use their own scores and
 candidate rules. In `BgBotAnalyzer.checker_play()`, use `force_boards` to give a
 specific legal post-move board, such as the move actually played, the full
 requested evaluation depth even if a filter would otherwise discard it.
-[Cubeful checker-play implementation](../python/neongammon/cubeful.py) · [Multi-ply search](multi-ply.md)
+[Cubeful checker-play implementation](https://github.com/HendrikReh/neongammon/blob/main/python/neongammon/cubeful.py) · [Multi-ply search](multi-ply.md)
 
 ## Rollouts
 

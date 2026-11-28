@@ -1,6 +1,6 @@
 # NeonGammon Documentation
 
-Reference guides, technical specifications, training runbooks, and benchmark archives for NeonGammon. For installation, Quick Start, and license details, see the repository [README.md](../README.md).
+Reference guides, technical specifications, training runbooks, and benchmark archives for NeonGammon. For installation, Quick Start, and license details, see the repository [README.md](https://github.com/HendrikReh/neongammon/blob/main/README.md).
 
 ## Usage & API
 
@@ -39,6 +39,6 @@ Reference guides, technical specifications, training runbooks, and benchmark arc
 
 ## Repository Root Docs
 
-- [README.md](../README.md) — Overview, Quick Start, Apple Silicon build instructions, and MPL-2.0 license summary
-- [CHANGELOG.md](../CHANGELOG.md) — Release history
-- [CLAUDE.md](../CLAUDE.md) (mirrored by [AGENTS.md](../AGENTS.md)) — Coding agent rules, build/test commands, invariants, and gotchas
+- [README.md](https://github.com/HendrikReh/neongammon/blob/main/README.md) — Overview, Quick Start, Apple Silicon build instructions, and MPL-2.0 license summary
+- [CHANGELOG.md](https://github.com/HendrikReh/neongammon/blob/main/CHANGELOG.md) — Release history
+- [CLAUDE.md](https://github.com/HendrikReh/neongammon/blob/main/CLAUDE.md) (mirrored by [AGENTS.md](https://github.com/HendrikReh/neongammon/blob/main/AGENTS.md)) — Coding agent rules, build/test commands, invariants, and gotchas

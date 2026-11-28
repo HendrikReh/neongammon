@@ -1008,7 +1008,7 @@ actually rolled dice's candidates in canonical `ALL_ROLLS` die order.
 
 On an M4 Pro (arm64, Release with Accelerate), we compared `df95fbb` and the
 full-game cache change using Stage 11 and the contact position `_CONTACT_CUBE`
-in [test_rollout_prefill.py](../tests/test_rollout_prefill.py). We timed
+in [test_rollout_prefill.py](https://github.com/HendrikReh/neongammon/blob/main/tests/test_rollout_prefill.py). We timed
 `BgBotAnalyzer.cube_action(board)` on the centered money cube with
 `eval_level="rollout", cubeful=True, n_trials=288, truncation_depth=0,
 decision_ply=1, parallel_threads=4, seed=42, ultra_late_threshold=9999,
@@ -1281,7 +1281,7 @@ never clobber an outer frame's candidate vector.
 
 At every VR half-move (and during `populate_move1_cache_entry`),
 `evaluate_vr_rolls` dispatches to `try_rollout_vr_rolls`
-([`cpp/include/bgbot/rollout_vr.h`](../cpp/include/bgbot/rollout_vr.h)) whenever
+([`cpp/include/bgbot/rollout_vr.h`](https://github.com/HendrikReh/neongammon/blob/main/cpp/include/bgbot/rollout_vr.h)) whenever
 the base strategy is an unblended `BackgameAwarePairStrategy` and the opponent
 is not already in the bearoff home board (so no bearoff-DB boundary exists):
 
@@ -1564,7 +1564,7 @@ default `parallel_threads=0`, both stages use the budget resolved from
 (`truncation_ply=2`) — neither is shown as a column above.)
 
 These per-level defaults are defined in one place — the `BgBotAnalyzer.__init__`
-dispatch in [python/neongammon/facade.py](../python/neongammon/facade.py), in the
+dispatch in [python/neongammon/facade.py](https://github.com/HendrikReh/neongammon/blob/main/python/neongammon/facade.py), in the
 `elif eval_level == "truncated1"/"truncated2"/"truncated3"/"rollout":` blocks.
 Change them there and all callers (including the host app) pick up the new
 defaults.
