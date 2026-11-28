@@ -104,7 +104,18 @@ Full results and replication instructions — including running XG under CrossOv
 
 ## Documentation
 
-The guides below are also published as a searchable site at **[hendrikreh.github.io/neongammon](https://hendrikreh.github.io/neongammon/)**, rebuilt from `docs/` on every change to `main`.
+The guides below are also published as a searchable site at **[hendrikreh.github.io/neongammon](https://hendrikreh.github.io/neongammon/)**, rebuilt by Zensical when the documentation or its build configuration changes on `main`.
+
+To preview the site locally, use Python 3.11 or newer and run these commands from the repository root:
+
+```bash
+python3 -m venv build/docs-venv
+source build/docs-venv/bin/activate
+python -m pip install -r requirements-docs.txt
+zensical serve
+```
+
+Run `zensical build --clean --strict` to check page links and section anchors before publishing. The generated site is written to `site/`.
 
 | Document | Contents |
 |---|---|

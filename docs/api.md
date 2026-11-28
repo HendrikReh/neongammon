@@ -523,7 +523,7 @@ present) return `None` — the caller decides how to record "no luck computed".
 Wheels and source distributions include weights for the production model (`stage11`)
 and `stage9`. The shared package manifest lists 24 distinct weight files. Stage
 11 uses 21 of them. Stage 9 also needs its original pure-race network and its
-two backgame networks. [Package manifest](../pyproject.toml)
+two backgame networks. [Package manifest](https://github.com/HendrikReh/neongammon/blob/main/pyproject.toml)
 
 The other registered models (`stage3` through `stage8`, including `stage5small`,
 and `stage10`) require weights from the Git checkout.
@@ -552,7 +552,7 @@ order before choosing the normal contact-pair slot. Slot zero uses the
 pure-race encoder. The other slots use the extended-contact encoder. A
 specialist can pin contact evaluation below the root via `root_pins`.
 The Stage 9–11 registry entries provide concrete examples in
-[`weights.py`](../python/neongammon/weights.py).
+[`weights.py`](https://github.com/HendrikReh/neongammon/blob/main/python/neongammon/weights.py).
 
 ### Return Types
 

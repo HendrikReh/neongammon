@@ -1,0 +1,90 @@
+[project]
+site_name = "NeonGammon Documentation"
+site_description = "Neural-network backgammon engine for Apple Silicon — reference guides, specifications, training runbooks, and benchmarks."
+site_url = "https://hendrikreh.github.io/neongammon/"
+repo_url = "https://github.com/HendrikReh/neongammon"
+repo_name = "HendrikReh/neongammon"
+edit_uri = "edit/main/docs/"
+copyright = "NeonGammon is licensed under MPL-2.0."
+
+docs_dir = "docs"
+site_dir = "site"
+use_directory_urls = true
+
+nav = [
+  { "NeonDojo manual" = "https://hendrikreh.github.io/neondojo/" },
+  { "NeonGammon manual" = "README.md" },
+  { "Usage & API" = [
+    { Engine = "engine.md" },
+    { Simulation = "simulation.md" },
+    { "API reference" = "api.md" },
+    { "Bear-off database" = "bearoff.md" },
+  ] },
+  { "Algorithms & Architecture" = [
+    { "Multi-ply search" = "multi-ply.md" },
+    { Rollouts = "rollout.md" },
+  ] },
+  { "Training & Benchmarking" = [
+    { Training = "training.md" },
+    { Benchmarking = "benchmarking.md" },
+    { "XG comparison" = "xg-comparison.md" },
+    { "Model benchmarks" = "model-benchmarks.md" },
+    { "Strength references" = "strength-references.md" },
+  ] },
+  { "History & Archives" = [
+    { "Model history" = "model-history.md" },
+    { "AI-assisted development" = "vibing.md" },
+    { "Performance handoff 1" = "performance-handoff.md" },
+    { "Performance handoff 2" = "performance-handoff-2.md" },
+  ] },
+]
+
+[project.validation]
+invalid_links = true
+invalid_link_anchors = true
+
+[project.theme]
+variant = "classic"
+custom_dir = "docs-theme"
+logo = "assets/neondojo-logo.svg"
+favicon = "assets/neondojo-logo.svg"
+features = [
+  "navigation.sections",
+  "navigation.top",
+  "navigation.footer",
+  "search.highlight",
+  "content.code.copy",
+  "content.action.edit",
+  "toc.follow",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "indigo"
+accent = "pink"
+toggle.icon = "material/weather-night"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "indigo"
+accent = "pink"
+toggle.icon = "material/weather-sunny"
+toggle.name = "Switch to light mode"
+
+[project.markdown_extensions]
+tables = {}
+admonition = {}
+attr_list = {}
+md_in_html = {}
+footnotes = {}
+# Keep the published heading anchors and their GitHub counterparts.
+toc.permalink = true
+toc.slugify.object = "pymdownx.slugs.slugify"
+toc.slugify.kwds.case = "lower"
+"pymdownx.highlight" = {}
+"pymdownx.inlinehilite" = {}
+"pymdownx.superfences" = {}
+"pymdownx.details" = {}

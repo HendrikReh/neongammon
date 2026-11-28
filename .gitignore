@@ -87,5 +87,6 @@ models/race_diag/
 models/s11_diag/
 models/rank_diag/
 
-# MkDocs output
-site/
+# Zensical output and cache
+/site/
+/.cache/
